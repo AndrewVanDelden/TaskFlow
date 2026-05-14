@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+
+# User-specific files
+*.user
+.vs/
+.vscode/
+
+# SQLite database (local dev only — don't commit this)
+*.db
+*.db-shm
+*.db-wal
+
+# Environment secrets (you'll add these on Day 4 with JWT)
+appsettings.Secrets.json
