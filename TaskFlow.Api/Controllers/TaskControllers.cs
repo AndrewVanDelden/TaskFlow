@@ -21,22 +21,39 @@ public class TasksController : ControllerBase
     }
 
     // ── GET /api/tasks ────────────────────────────────────────────────────────
-    // Returns all tasks. Optional query params: ?status=Todo, ?priority=High
     [HttpGet]
     [ProducesResponseType(typeof(IEnumerable<TaskResponseDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetAll(
-        [FromQuery] TaskStatus? status,
-        [FromQuery] TaskPriority? priority)
+        [FromQuery] string? status,
+        [FromQuery] string? priority)
     {
         var query = _db.Tasks
             .Include(t => t.AssignedTo)
             .AsQueryable();
 
-        if (status.HasValue)
-            query = query.Where(t => t.Status == status.Value);
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            if (!Enum.TryParse<TaskStatus>(status, ignoreCase: true, out var parsedStatus))
+                return BadRequest(new
+                {
+                    message = $"Invalid status '{status}'.",
+                    validValues = Enum.GetNames<TaskStatus>()
+                });
 
-        if (priority.HasValue)
-            query = query.Where(t => t.Priority == priority.Value);
+            query = query.Where(t => t.Status == parsedStatus);
+        }
+
+        if (!string.IsNullOrWhiteSpace(priority))
+        {
+            if (!Enum.TryParse<TaskPriority>(priority, ignoreCase: true, out var parsedPriority))
+                return BadRequest(new
+                {
+                    message = $"Invalid priority '{priority}'.",
+                    validValues = Enum.GetNames<TaskPriority>()
+                });
+
+            query = query.Where(t => t.Priority == parsedPriority);
+        }
 
         var tasks = await query
             .OrderBy(t => t.DueDate)
@@ -46,7 +63,6 @@ public class TasksController : ControllerBase
 
         return Ok(tasks);
     }
-
     // ── GET /api/tasks/{id} ───────────────────────────────────────────────────
     [HttpGet("{id:int}")]
     [ProducesResponseType(typeof(TaskResponseDto), StatusCodes.Status200OK)]
