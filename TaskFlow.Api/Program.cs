@@ -4,7 +4,10 @@ using TaskFlow.Api.Data;
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Controllers ──────────────────────────────────────────────────────────────
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+        options.JsonSerializerOptions.Converters.Add(
+            new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
 // ── Swagger / OpenAPI ────────────────────────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();
@@ -56,7 +59,7 @@ if (app.Environment.IsDevelopment())
 }
 
 if (!app.Environment.IsDevelopment())
-    app.UseHttpsRedirection();
+    app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 app.UseCors("DevPolicy");
 app.UseAuthorization();
 app.MapControllers();
