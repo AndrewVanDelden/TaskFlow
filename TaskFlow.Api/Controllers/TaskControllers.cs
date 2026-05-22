@@ -4,11 +4,13 @@ using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs;
 using TaskFlow.Api.Models;
 using TaskStatus = TaskFlow.Api.Models.TaskStatus;
+using Microsoft.AspNetCore.Authorization;
 
 namespace TaskFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class TasksController : ControllerBase
 {
     private readonly AppDbContext _db;

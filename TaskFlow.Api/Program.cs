@@ -1,15 +1,21 @@
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using TaskFlow.Api.Data;
+using TaskFlow.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Controllers ──────────────────────────────────────────────────────────────
+// ── Controllers + JSON enum serialization ────────────────────────────────────
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
         options.JsonSerializerOptions.Converters.Add(
             new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
-// ── Swagger / OpenAPI ────────────────────────────────────────────────────────
+// ── Swagger — with JWT auth support ─────────────────────────────────────────
+// This adds the "Authorize" padlock button to the Swagger UI
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -17,15 +23,66 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "TaskFlow API",
         Version = "v1",
-        Description = "A workflow task manager API — built as a portfolio project."
+        Description = "A workflow task manager API with autonomous AI agents."
+    });
+
+    // Tell Swagger how to pass a JWT token
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Enter your JWT token. Example: eyJhbGci..."
+    });
+
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
     });
 });
 
-// ── Database (EF Core + SQLite) ───────────────────────────────────────────────
+// ── Database ─────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// ── CORS (allow React dev server on Vite default port) ───────────────────────
+// ── JWT Authentication ────────────────────────────────────────────────────────
+var jwtKey = builder.Configuration["Jwt:Key"]!;
+var jwtIssuer = builder.Configuration["Jwt:Issuer"]!;
+var jwtAudience = builder.Configuration["Jwt:Audience"]!;
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,          // Rejects expired tokens
+            ValidateIssuerSigningKey = true,  // Rejects tampered tokens
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+// ── Services ──────────────────────────────────────────────────────────────────
+builder.Services.AddScoped<JwtService>();
+
+// ── CORS ─────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("DevPolicy", policy =>
@@ -40,14 +97,12 @@ builder.Services.AddCors(options =>
 // ─────────────────────────────────────────────────────────────────────────────
 var app = builder.Build();
 
-// ── Auto-create the SQLite database on startup ───────────────────────────────
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.EnsureCreated();
 }
 
-// ── Middleware pipeline ───────────────────────────────────────────────────────
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -58,10 +113,15 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-if (!app.Environment.IsDevelopment())
-    app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
+app.UseHttpsRedirection();
 app.UseCors("DevPolicy");
-app.UseAuthorization();
-app.MapControllers();
 
+// ORDER MATTERS — Authentication must come before Authorization
+app.UseAuthentication();
+app.UseAuthorization();
+
+if (app.Environment.IsDevelopment())
+    app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
+
+app.MapControllers();
 app.Run();
