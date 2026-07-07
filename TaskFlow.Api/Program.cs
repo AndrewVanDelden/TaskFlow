@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using TaskFlow.Api.Agents;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Services;
 
@@ -81,6 +82,16 @@ builder.Services.AddAuthorization();
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<JwtService>();
+
+// ── Agent Infrastructure ──────────────────────────────────────────────────────
+// Register each agent as a scoped service implementing ITaskFlowAgent
+// The AgentRunner discovers these automatically via GetServices<ITaskFlowAgent>()
+builder.Services.AddScoped<ITaskFlowAgent, TaskPrioritizerAgent>();
+builder.Services.AddScoped<ITaskFlowAgent, StaleTaskAgent>();
+
+// Register the AgentRunner as a hosted background service
+// This starts automatically when the app starts
+builder.Services.AddHostedService<AgentRunner>();
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
