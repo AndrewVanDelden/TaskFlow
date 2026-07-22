@@ -14,3 +14,4 @@ obj/
 
 # Environment secrets (you'll add these on Day 4 with JWT)
 appsettings.Secrets.json
+appsettings.json
