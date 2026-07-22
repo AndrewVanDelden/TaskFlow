@@ -5,6 +5,7 @@ namespace TaskFlow.Api.Models;
 public class AgentLog
 {
     public int Id { get; set; }
+    public int? TaskId { get; set; }
 
     [Required]
     [MaxLength(100)]
