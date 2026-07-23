@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Models;
+using TaskFlow.Api.Services;
 
 namespace TaskFlow.Api.Agents;
 
@@ -17,27 +18,31 @@ namespace TaskFlow.Api.Agents;
 /// </summary>
 public class StaleTaskAgent : ITaskFlowAgent
 {
-    private readonly AppDbContext _db;
+   private readonly AppDbContext _db;
     private readonly IConfiguration _config;
     private readonly ILogger<StaleTaskAgent> _logger;
+    private readonly IAgentNotifier _notifier;
 
     // Safety cap so a misbehaving tool loop cannot run unbounded against the API.
     private const int MaxToolLoopIterations = 10;
 
     public string Name => "StaleTaskDetector";
 
-    public TimeSpan Interval =>
-        TimeSpan.FromMinutes(_config.GetValue<int>("Agents:StaleTaskIntervalMinutes", 60));
-
-    public StaleTaskAgent(
+   public StaleTaskAgent(
         AppDbContext db,
         IConfiguration config,
-        ILogger<StaleTaskAgent> logger)
+        ILogger<StaleTaskAgent> logger,
+        IAgentNotifier notifier)
     {
         _db = db;
         _config = config;
         _logger = logger;
+        _notifier = notifier;
     }
+
+    public TimeSpan Interval =>
+        TimeSpan.FromMinutes(_config.GetValue<int>("Agents:StaleTaskIntervalMinutes", 60));
+
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -60,6 +65,8 @@ public class StaleTaskAgent : ITaskFlowAgent
         _logger.LogInformation(
             "[{Agent}] Found {Count} stale task(s) (>{Hours}h without update).",
             Name, staleTasks.Count, thresholdHours);
+
+        await _notifier.AgentCycleAsync(Name, "started", cancellationToken);
 
         // MEMORY — what has this agent already done in the last 7 days?
         var memoryCutoff = DateTime.UtcNow.AddDays(-7);
@@ -183,6 +190,7 @@ public class StaleTaskAgent : ITaskFlowAgent
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
 
+        await _notifier.AgentCycleAsync(Name, "completed", cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
     }
 
@@ -290,6 +298,16 @@ public class StaleTaskAgent : ITaskFlowAgent
             && !text.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
     }
 
+    // Persists an agent log and broadcasts it to any connected dashboards.
+    // All three tool handlers record actions this way, so the persist-and-notify
+    // steps live here once. Each handler still builds its own log contents.
+    private async Task RecordActionAsync(AgentLog log, CancellationToken cancellationToken)
+    {
+        _db.AgentLogs.Add(log);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _notifier.AgentActionAsync(log, cancellationToken);
+    }
+
     // ── ESCALATE ───────────────────────────────────────────────────────────────
     private async Task<ContentBase> EscalateAsync(
         ToolUseContent toolUse, CancellationToken cancellationToken)
@@ -305,7 +323,7 @@ public class StaleTaskAgent : ITaskFlowAgent
         task.Priority = TaskPriority.High;
         task.UpdatedAt = DateTime.UtcNow;
 
-        _db.AgentLogs.Add(new AgentLog
+        await RecordActionAsync(new AgentLog
         {
             AgentName = Name,
             Action = "Escalated",
@@ -313,9 +331,7 @@ public class StaleTaskAgent : ITaskFlowAgent
             Details = $"Priority {previous} -> High. {args.Reason}",
             Success = true,
             CreatedAt = DateTime.UtcNow
-        });
-
-        await _db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
 
         _logger.LogInformation(
             "[{Agent}] Escalated Task {Id} '{Title}': {From} -> High. {Reason}",
@@ -348,7 +364,7 @@ public class StaleTaskAgent : ITaskFlowAgent
         task.AssignedToId = args.NewUserId;   // null = unassign
         task.UpdatedAt = DateTime.UtcNow;
 
-        _db.AgentLogs.Add(new AgentLog
+        await RecordActionAsync(new AgentLog
         {
             AgentName = Name,
             Action = "Reassigned",
@@ -357,9 +373,7 @@ public class StaleTaskAgent : ITaskFlowAgent
                       $"{args.NewUserId?.ToString() ?? "unassigned"}. {args.Reason}",
             Success = true,
             CreatedAt = DateTime.UtcNow
-        });
-
-        await _db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
 
         _logger.LogInformation(
             "[{Agent}] Reassigned Task {Id} '{Title}': owner {From} -> {To}. {Reason}",
@@ -385,7 +399,7 @@ public class StaleTaskAgent : ITaskFlowAgent
         if (task is null)
             return ToolResult(toolUse, $"Task {args.TaskId} not found.");
 
-        _db.AgentLogs.Add(new AgentLog
+        await RecordActionAsync(new AgentLog
         {
             AgentName = Name,
             Action = "FlaggedForReview",
@@ -393,9 +407,7 @@ public class StaleTaskAgent : ITaskFlowAgent
             Details = args.Concern,
             Success = true,
             CreatedAt = DateTime.UtcNow
-        });
-
-        await _db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
 
         _logger.LogInformation(
             "[{Agent}] Flagged Task {Id} '{Title}' for review: {Concern}",

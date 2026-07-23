@@ -6,6 +6,7 @@ using Microsoft.OpenApi.Models;
 using TaskFlow.Api.Agents;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Services;
+using TaskFlow.Api.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -76,12 +77,31 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidAudience = jwtAudience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
         };
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorization();
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<JwtService>();
+// ── SignalR ──────────────────────────────────────────────────────────────────
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();
 
 // ── Agent Infrastructure ──────────────────────────────────────────────────────
 // Register each agent as a scoped service implementing ITaskFlowAgent
@@ -101,7 +121,8 @@ builder.Services.AddCors(options =>
         policy
             .WithOrigins("http://localhost:5173")
             .AllowAnyHeader()
-            .AllowAnyMethod();
+            .AllowAnyMethod()
+            .AllowCredentials();   // required for SignalR websockets
     });
 });
 
@@ -134,5 +155,6 @@ app.UseAuthorization();
 if (app.Environment.IsDevelopment())
     app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 
+app.MapHub<AgentHub>("/hubs/agents");
 app.MapControllers();
 app.Run();
