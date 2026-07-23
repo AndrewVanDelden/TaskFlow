@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Models;
+using TaskFlow.Api.Services;
 
 namespace TaskFlow.Api.Agents;
 
@@ -23,6 +24,7 @@ public class TaskPrioritizerAgent : ITaskFlowAgent
     private readonly AppDbContext _db;
     private readonly IConfiguration _config;
     private readonly ILogger<TaskPrioritizerAgent> _logger;
+    private readonly IAgentNotifier _notifier;
 
     public string Name => "TaskPrioritizer";
 
@@ -32,11 +34,13 @@ public class TaskPrioritizerAgent : ITaskFlowAgent
     public TaskPrioritizerAgent(
         AppDbContext db,
         IConfiguration config,
-        ILogger<TaskPrioritizerAgent> logger)
+        ILogger<TaskPrioritizerAgent> logger,
+        IAgentNotifier notifier)
     {
         _db = db;
         _config = config;
         _logger = logger;
+        _notifier = notifier;
     }
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -55,6 +59,8 @@ public class TaskPrioritizerAgent : ITaskFlowAgent
         }
 
         _logger.LogInformation("[{Agent}] Analyzing {Count} open task(s)...", Name, tasks.Count);
+
+        await _notifier.AgentCycleAsync(Name, "started", cancellationToken);
 
         // ── REASON ────────────────────────────────────────────────────────────
         var apiKey = _config["Anthropic:ApiKey"];
@@ -184,7 +190,17 @@ public class TaskPrioritizerAgent : ITaskFlowAgent
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
 
+        await _notifier.AgentCycleAsync(Name, "completed", cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    // Persists an agent log and broadcasts it to any connected dashboards.
+    // Keeps the persist-and-notify steps in one place.
+    private async Task RecordActionAsync(AgentLog log, CancellationToken cancellationToken)
+    {
+        _db.AgentLogs.Add(log);
+        await _db.SaveChangesAsync(cancellationToken);
+        await _notifier.AgentActionAsync(log, cancellationToken);
     }
 
     // ── TOOL EXECUTION ─────────────────────────────────────────────────────────
@@ -232,7 +248,17 @@ public class TaskPrioritizerAgent : ITaskFlowAgent
             task.Priority = priority;
             task.UpdatedAt = DateTime.UtcNow;
 
-            await _db.SaveChangesAsync(cancellationToken);
+            // Record + broadcast the update. This also persists the task change,
+            // since RecordActionAsync calls SaveChangesAsync.
+            await RecordActionAsync(new AgentLog
+            {
+                AgentName = Name,
+                Action = "PriorityUpdated",
+                TaskId = task.Id,
+                Details = $"Priority {previousPriority} -> {priority}. {args.Reasoning}",
+                Success = true,
+                CreatedAt = DateTime.UtcNow
+            }, cancellationToken);
 
             _logger.LogInformation(
                 "[{Agent}] Updated Task {Id} '{Title}': {From} → {To}. Reason: {Reason}",
