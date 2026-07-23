@@ -1,4 +1,3 @@
-using Anthropic.SDK;
 using Anthropic.SDK.Common;
 using Anthropic.SDK.Messaging;
 using Microsoft.EntityFrameworkCore;
@@ -8,45 +7,40 @@ using System.Text.Json.Serialization;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Services;
+using Tool = Anthropic.SDK.Common.Tool;
 
 namespace TaskFlow.Api.Agents;
 
 /// <summary>
-/// Autonomously re-prioritizes open tasks using Claude.
-/// Runs on a configurable interval. Each cycle:
-///   1. Reads all open tasks from the database
-///   2. Sends them to Claude with an UpdateTaskPriority tool
-///   3. Executes Claude's priority decisions
-///   4. Logs the results
+/// Autonomously re-prioritizes open tasks using Claude. Each cycle it reads the
+/// open tasks, asks Claude to re-rank them via a single <c>update_task_priority</c>
+/// tool, applies each decision, and logs a summary.
+///
+/// The Claude conversation mechanics live in <see cref="ClaudeAgentBase"/>; this
+/// class only supplies the prompt, the tool, and the per-tool handler.
 /// </summary>
-public class TaskPrioritizerAgent : ITaskFlowAgent
+public class TaskPrioritizerAgent : ClaudeAgentBase
 {
-    private readonly AppDbContext _db;
-    private readonly IConfiguration _config;
-    private readonly ILogger<TaskPrioritizerAgent> _logger;
-    private readonly IAgentNotifier _notifier;
-
-    public string Name => "TaskPrioritizer";
-
-    public TimeSpan Interval =>
-        TimeSpan.FromMinutes(_config.GetValue<int>("Agents:PrioritizerIntervalMinutes", 30));
+    private const string UpdatePriorityTool = "update_task_priority";
 
     public TaskPrioritizerAgent(
         AppDbContext db,
         IConfiguration config,
         ILogger<TaskPrioritizerAgent> logger,
         IAgentNotifier notifier)
+        : base(db, config, logger, notifier)
     {
-        _db = db;
-        _config = config;
-        _logger = logger;
-        _notifier = notifier;
     }
 
-    public async Task RunAsync(CancellationToken cancellationToken)
+    public override string Name => "TaskPrioritizer";
+
+    public override TimeSpan Interval =>
+        TimeSpan.FromMinutes(Config.GetValue("Agents:PrioritizerIntervalMinutes", 30));
+
+    public override async Task RunAsync(CancellationToken cancellationToken)
     {
-        // ── OBSERVE ────────────────────────────────────────────────────────────
-        var tasks = await _db.Tasks
+        // ── OBSERVE ──────────────────────────────────────────────────────────────
+        var tasks = await Db.Tasks
             .Include(t => t.AssignedTo)
             .Where(t => t.Status != Models.TaskStatus.Done)
             .OrderBy(t => t.Id)
@@ -54,234 +48,107 @@ public class TaskPrioritizerAgent : ITaskFlowAgent
 
         if (tasks.Count == 0)
         {
-            _logger.LogInformation("[{Agent}] No open tasks. Skipping cycle.", Name);
+            Logger.LogInformation("[{Agent}] No open tasks. Skipping cycle.", Name);
             return;
         }
 
-        _logger.LogInformation("[{Agent}] Analyzing {Count} open task(s)...", Name, tasks.Count);
+        Logger.LogInformation("[{Agent}] Analyzing {Count} open task(s)...", Name, tasks.Count);
+        await NotifyCycleStartedAsync(cancellationToken);
 
-        await _notifier.AgentCycleAsync(Name, "started", cancellationToken);
-
-        // ── REASON ────────────────────────────────────────────────────────────
-        var apiKey = _config["Anthropic:ApiKey"];
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            _logger.LogWarning("[{Agent}] Anthropic API key not configured. Skipping cycle.", Name);
+        // ── REASON + ACT ─────────────────────────────────────────────────────────
+        if (!TryCreateClaudeClient(out var client, out var model, out var maxTokens))
             return;
-        }
 
-        var client = new AnthropicClient(apiKey);
-        var model = _config["Anthropic:Model"] ?? "claude-sonnet-4-6";
-        var maxTokens = _config.GetValue<int>("Anthropic:MaxTokens", 1024);
+        var updatesApplied = await RunToolConversationAsync(
+            client, model, maxTokens,
+            prompt: BuildPrompt(tasks),
+            tools: BuildTools(),
+            dispatch: ExecuteToolAsync,
+            cancellationToken);
 
-        // Build the tool Claude will use to update priorities.
-        // MessageParameters.Tools expects Anthropic.SDK.Common.Tool, whose schema is a
-        // raw JSON node/string on Function — not the Messaging.InputSchema/Property types.
-        var updatePriorityInputSchema = JsonSerializer.Serialize(new
-        {
-            type = "object",
-            properties = new Dictionary<string, object>
-            {
-                ["task_id"] = new
-                {
-                    type = "integer",
-                    description = "The numeric ID of the task to update."
-                },
-                ["priority"] = new
-                {
-                    type = "string",
-                    @enum = new[] { "Low", "Medium", "High" },
-                    description = "The new priority level."
-                },
-                ["reasoning"] = new
-                {
-                    type = "string",
-                    description = "One sentence explaining why this priority was chosen."
-                }
-            },
-            required = new[] { "task_id", "priority", "reasoning" }
-        });
-
-        var tools = new List<Anthropic.SDK.Common.Tool>
-        {
-            new Function(
-                "update_task_priority",
-                "Updates the priority of a task. Call this once per task that needs a priority change.",
-                updatePriorityInputSchema)
-        };
-
-        // Build the user prompt with current task state
-        var prompt = BuildPrompt(tasks);
-
-        var messages = new List<Message>
-        {
-            new Message(RoleType.User, prompt)
-        };
-
-        // ── TOOL USE LOOP ─────────────────────────────────────────────────────
-        // Claude may call the tool multiple times (once per task it wants to update).
-        // We keep looping until Claude signals it is finished (end_turn).
-        var updatesApplied = 0;
-        var continueLoop = true;
-
-        while (continueLoop && !cancellationToken.IsCancellationRequested)
-        {
-            var response = await client.Messages.GetClaudeMessageAsync(
-                new MessageParameters
-                {
-                    Model = model,
-                    MaxTokens = maxTokens,
-                    Tools = tools,
-                    Messages = messages
-                },
-                cancellationToken);
-
-            // Add Claude's response to the conversation history, preserving the structured
-            // content blocks (including ToolUseContent) so subsequent tool_result blocks
-            // have a matching tool_use block to reference.
-            messages.Add(new Message { Role = RoleType.Assistant, Content = response.Content });
-
-            if (response.StopReason == "tool_use")
-            {
-                // Claude wants to call a tool — find all tool_use blocks in the response
-                var toolUseBlocks = response.Content
-                    .OfType<ToolUseContent>()
-                    .ToList();
-
-                var toolResults = new List<ContentBase>();
-
-                foreach (var toolUse in toolUseBlocks)
-                {
-                    var result = await ExecuteToolAsync(toolUse, cancellationToken);
-                    toolResults.Add(result);
-
-                    if (result is ToolResultContent tr && tr.Content?.ToString()?.Contains("Updated") == true)
-                        updatesApplied++;
-                }
-
-                // Send the tool results back to Claude so it can continue reasoning
-                messages.Add(new Message { Role = RoleType.User, Content = toolResults.Cast<ContentBase>().ToList() });
-            }
-            else
-            {
-                // StopReason is "end_turn" — Claude is done
-                continueLoop = false;
-
-                // Log any final text Claude included in its response
-                var finalText = response.Content
-                    .OfType<TextContent>()
-                    .FirstOrDefault()?.Text;
-
-                if (!string.IsNullOrWhiteSpace(finalText))
-                    _logger.LogInformation("[{Agent}] Claude summary: {Text}", Name, finalText);
-            }
-        }
-
-        // ── LOG RESULTS ────────────────────────────────────────────────────────
-        _logger.LogInformation(
+        // ── CYCLE SUMMARY ────────────────────────────────────────────────────────
+        Logger.LogInformation(
             "[{Agent}] Cycle complete. {Updates} priority update(s) applied.", Name, updatesApplied);
 
-        await _db.AgentLogs.AddAsync(new AgentLog
+        Db.AgentLogs.Add(new AgentLog
         {
             AgentName = Name,
-            Action = updatesApplied > 0 ? "PrioritiesUpdated" : "NoChangesNeeded",
+            Action = updatesApplied > 0 ? AgentActions.PrioritiesUpdated : AgentActions.NoChangesNeeded,
             Details = $"Analyzed {tasks.Count} task(s). Applied {updatesApplied} priority update(s).",
             Success = true,
             CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
+        });
 
-        await _notifier.AgentCycleAsync(Name, "completed", cancellationToken);
-        await _db.SaveChangesAsync(cancellationToken);
+        await NotifyCycleCompletedAsync(cancellationToken);
+        await Db.SaveChangesAsync(cancellationToken);
     }
 
-    // Persists an agent log and broadcasts it to any connected dashboards.
-    // Keeps the persist-and-notify steps in one place.
-    private async Task RecordActionAsync(AgentLog log, CancellationToken cancellationToken)
-    {
-        _db.AgentLogs.Add(log);
-        await _db.SaveChangesAsync(cancellationToken);
-        await _notifier.AgentActionAsync(log, cancellationToken);
-    }
+    // ── TOOL DEFINITION ──────────────────────────────────────────────────────────
+    private static List<Tool> BuildTools() =>
+    [
+        DefineTool(
+            UpdatePriorityTool,
+            "Updates the priority of a task. Call this once per task that needs a priority change.",
+            new
+            {
+                type = "object",
+                properties = new Dictionary<string, object>
+                {
+                    ["task_id"] = new { type = "integer", description = "The numeric ID of the task to update." },
+                    ["priority"] = new
+                    {
+                        type = "string",
+                        @enum = new[] { "Low", "Medium", "High" },
+                        description = "The new priority level."
+                    },
+                    ["reasoning"] = new { type = "string", description = "One sentence explaining why this priority was chosen." }
+                },
+                required = new[] { "task_id", "priority", "reasoning" }
+            })
+    ];
 
-    // ── TOOL EXECUTION ─────────────────────────────────────────────────────────
+    // ── TOOL HANDLER ─────────────────────────────────────────────────────────────
     private async Task<ContentBase> ExecuteToolAsync(
         ToolUseContent toolUse,
         CancellationToken cancellationToken)
     {
-        if (toolUse.Name != "update_task_priority")
+        if (toolUse.Name != UpdatePriorityTool)
+            return ToolResult(toolUse, $"Error: unknown tool {toolUse.Name}");
+
+        var args = toolUse.Input.Deserialize<UpdatePriorityArgs>()
+            ?? throw new InvalidOperationException("Failed to deserialize update_task_priority arguments.");
+
+        if (!Enum.TryParse<TaskPriority>(args.Priority, ignoreCase: true, out var priority))
+            return ToolResult(toolUse, $"Invalid priority value: {args.Priority}");
+
+        var task = await Db.Tasks.FindAsync([args.TaskId], cancellationToken);
+        if (task is null)
+            return ToolResult(toolUse, $"Task {args.TaskId} not found.");
+
+        var previousPriority = task.Priority;
+        task.Priority = priority;
+        task.UpdatedAt = DateTime.UtcNow;
+
+        // RecordActionAsync also persists the task change, since it calls SaveChangesAsync.
+        await RecordActionAsync(new AgentLog
         {
-            return new ToolResultContent
-            {
-                ToolUseId = toolUse.Id,
-                Content = new List<ContentBase> { new TextContent { Text = $"Unknown tool: {toolUse.Name}" } }
-            };
-        }
+            AgentName = Name,
+            Action = AgentActions.PriorityUpdated,
+            TaskId = task.Id,
+            Details = $"Priority {previousPriority} -> {priority}. {args.Reasoning}",
+            Success = true,
+            CreatedAt = DateTime.UtcNow
+        }, cancellationToken);
 
-        try
-        {
-            // Parse the arguments Claude sent
-            var args = toolUse.Input.Deserialize<UpdatePriorityArgs>()
-                ?? throw new InvalidOperationException("Failed to deserialize tool arguments.");
+        Logger.LogInformation(
+            "[{Agent}] Updated Task {Id} '{Title}': {From} -> {To}. Reason: {Reason}",
+            Name, task.Id, task.Title, previousPriority, priority, args.Reasoning);
 
-            // Map the string Claude returns to your enum
-            if (!Enum.TryParse<TaskPriority>(args.Priority, ignoreCase: true, out var priority))
-            {
-                return new ToolResultContent
-                {
-                    ToolUseId = toolUse.Id,
-                    Content = new List<ContentBase> { new TextContent { Text = $"Invalid priority value: {args.Priority}" } }
-                };
-            }
-
-            // ACT — write to the database
-            var task = await _db.Tasks.FindAsync(new object[] { args.TaskId }, cancellationToken);
-            if (task is null)
-            {
-                return new ToolResultContent
-                {
-                    ToolUseId = toolUse.Id,
-                    Content = new List<ContentBase> { new TextContent { Text = $"Task {args.TaskId} not found." } }
-                };
-            }
-
-            var previousPriority = task.Priority;
-            task.Priority = priority;
-            task.UpdatedAt = DateTime.UtcNow;
-
-            // Record + broadcast the update. This also persists the task change,
-            // since RecordActionAsync calls SaveChangesAsync.
-            await RecordActionAsync(new AgentLog
-            {
-                AgentName = Name,
-                Action = "PriorityUpdated",
-                TaskId = task.Id,
-                Details = $"Priority {previousPriority} -> {priority}. {args.Reasoning}",
-                Success = true,
-                CreatedAt = DateTime.UtcNow
-            }, cancellationToken);
-
-            _logger.LogInformation(
-                "[{Agent}] Updated Task {Id} '{Title}': {From} → {To}. Reason: {Reason}",
-                Name, task.Id, task.Title, previousPriority, priority, args.Reasoning);
-
-            return new ToolResultContent
-            {
-                ToolUseId = toolUse.Id,
-                Content = new List<ContentBase> { new TextContent { Text = $"Updated Task {task.Id} ('{task.Title}') priority: {previousPriority} → {priority}." } }
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[{Agent}] Tool execution failed for tool use {Id}", Name, toolUse.Id);
-            return new ToolResultContent
-            {
-                ToolUseId = toolUse.Id,
-                Content = new List<ContentBase> { new TextContent { Text = $"Error: {ex.Message}" } }
-            };
-        }
+        return ToolResult(toolUse,
+            $"Updated Task {task.Id} ('{task.Title}') priority: {previousPriority} -> {priority}.");
     }
 
-    // ── PROMPT BUILDER ─────────────────────────────────────────────────────────
+    // ── PROMPT BUILDER ───────────────────────────────────────────────────────────
     private static string BuildPrompt(List<TaskItem> tasks)
     {
         var sb = new StringBuilder();
@@ -313,11 +180,10 @@ public class TaskPrioritizerAgent : ITaskFlowAgent
         return sb.ToString();
     }
 
-    // ── ARGUMENT DTO ───────────────────────────────────────────────────────────
-    // This maps directly to what Claude sends back in the tool call arguments
+    // ── ARGUMENT RECORD ──────────────────────────────────────────────────────────
+    // Maps directly to the JSON arguments Claude sends for the update_task_priority tool.
     private sealed record UpdatePriorityArgs(
         [property: JsonPropertyName("task_id")] int TaskId,
         [property: JsonPropertyName("priority")] string Priority,
-        [property: JsonPropertyName("reasoning")] string Reasoning
-    );
+        [property: JsonPropertyName("reasoning")] string Reasoning);
 }
