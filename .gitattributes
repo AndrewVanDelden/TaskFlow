@@ -1,0 +1,26 @@
+# Normalize line endings so the whole tree never "flips" again.
+# Text files are stored with LF in the repo; Git converts on checkout per platform.
+* text=auto
+
+# Explicit text types
+*.cs        text
+*.csproj    text
+*.json      text
+*.ts        text
+*.tsx       text
+*.js        text
+*.jsx       text
+*.css       text
+*.html      text
+*.md        text
+*.slnx      text
+*.http      text
+
+# Binary files Git must never touch
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.ico       binary
+*.gif       binary
+*.woff      binary
+*.woff2     binary
