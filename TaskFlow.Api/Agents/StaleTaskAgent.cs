@@ -1,4 +1,3 @@
-using Anthropic.SDK;
 using Anthropic.SDK.Common;
 using Anthropic.SDK.Messaging;
 using Microsoft.EntityFrameworkCore;
@@ -8,49 +7,49 @@ using System.Text.Json.Serialization;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Services;
+using Tool = Anthropic.SDK.Common.Tool;
 
 namespace TaskFlow.Api.Agents;
 
 /// <summary>
 /// Detects tasks that have gone stale and takes corrective action via Claude.
-/// Unlike the Prioritizer, this agent selects between three tools per task
-/// and uses its own AgentLog history as memory to avoid repeating actions.
+/// Unlike the prioritizer, this agent chooses between three tools per task and
+/// uses its own <see cref="AgentLog"/> history as memory to avoid repeating
+/// actions on the same task across cycles.
+///
+/// The Claude conversation mechanics live in <see cref="ClaudeAgentBase"/>; this
+/// class only supplies the tools, the prompt, and the per-tool handlers.
 /// </summary>
-public class StaleTaskAgent : ITaskFlowAgent
+public class StaleTaskAgent : ClaudeAgentBase
 {
-   private readonly AppDbContext _db;
-    private readonly IConfiguration _config;
-    private readonly ILogger<StaleTaskAgent> _logger;
-    private readonly IAgentNotifier _notifier;
+    private const string EscalateTool = "escalate_task";
+    private const string ReassignTool = "reassign_task";
+    private const string FlagTool = "flag_for_review";
 
-    // Safety cap so a misbehaving tool loop cannot run unbounded against the API.
-    private const int MaxToolLoopIterations = 10;
+    /// <summary>A user with at least this many open tasks is considered overloaded.</summary>
+    private const int OverloadedTaskCount = 5;
 
-    public string Name => "StaleTaskDetector";
-
-   public StaleTaskAgent(
+    public StaleTaskAgent(
         AppDbContext db,
         IConfiguration config,
         ILogger<StaleTaskAgent> logger,
         IAgentNotifier notifier)
+        : base(db, config, logger, notifier)
     {
-        _db = db;
-        _config = config;
-        _logger = logger;
-        _notifier = notifier;
     }
 
-    public TimeSpan Interval =>
-        TimeSpan.FromMinutes(_config.GetValue<int>("Agents:StaleTaskIntervalMinutes", 60));
+    public override string Name => "StaleTaskDetector";
 
+    public override TimeSpan Interval =>
+        TimeSpan.FromMinutes(Config.GetValue("Agents:StaleTaskIntervalMinutes", 60));
 
-    public async Task RunAsync(CancellationToken cancellationToken)
+    public override async Task RunAsync(CancellationToken cancellationToken)
     {
-        // ── OBSERVE ────────────────────────────────────────────────────────────
-        var thresholdHours = _config.GetValue<int>("Agents:StaleTaskThresholdHours", 48);
+        // ── OBSERVE ──────────────────────────────────────────────────────────────
+        var thresholdHours = Config.GetValue("Agents:StaleTaskThresholdHours", 48);
         var cutoff = DateTime.UtcNow.AddHours(-thresholdHours);
 
-        var staleTasks = await _db.Tasks
+        var staleTasks = await Db.Tasks
             .Include(t => t.AssignedTo)
             .Where(t => t.Status != Models.TaskStatus.Done && t.UpdatedAt < cutoff)
             .OrderBy(t => t.UpdatedAt)
@@ -58,205 +57,137 @@ public class StaleTaskAgent : ITaskFlowAgent
 
         if (staleTasks.Count == 0)
         {
-            _logger.LogInformation("[{Agent}] No stale tasks found. Skipping cycle.", Name);
+            Logger.LogInformation("[{Agent}] No stale tasks found. Skipping cycle.", Name);
             return;
         }
 
-        _logger.LogInformation(
+        Logger.LogInformation(
             "[{Agent}] Found {Count} stale task(s) (>{Hours}h without update).",
             Name, staleTasks.Count, thresholdHours);
 
-        await _notifier.AgentCycleAsync(Name, "started", cancellationToken);
+        await NotifyCycleStartedAsync(cancellationToken);
 
-        // MEMORY — what has this agent already done in the last 7 days?
+        var contextJson = await BuildContextJsonAsync(cancellationToken);
+        var recentActions = await GetRecentActionsAsync(cancellationToken);
+
+        // ── REASON + ACT ─────────────────────────────────────────────────────────
+        if (!TryCreateClaudeClient(out var client, out var model, out var maxTokens))
+            return;
+
+        var actionsApplied = await RunToolConversationAsync(
+            client, model, maxTokens,
+            prompt: BuildPrompt(staleTasks, recentActions, contextJson, thresholdHours),
+            tools: BuildTools(),
+            dispatch: ExecuteToolAsync,
+            cancellationToken);
+
+        // ── CYCLE SUMMARY ────────────────────────────────────────────────────────
+        Logger.LogInformation(
+            "[{Agent}] Cycle complete. {Count} action(s) taken.", Name, actionsApplied);
+
+        Db.AgentLogs.Add(new AgentLog
+        {
+            AgentName = Name,
+            Action = actionsApplied > 0 ? AgentActions.CycleActions : AgentActions.NoActionNeeded,
+            TaskId = null,   // cycle-level summary, not tied to one task
+            Details = $"Reviewed {staleTasks.Count} stale task(s). Took {actionsApplied} action(s).",
+            Success = true,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await NotifyCycleCompletedAsync(cancellationToken);
+        await Db.SaveChangesAsync(cancellationToken);
+    }
+
+    // ── CONTEXT GATHERING ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The agent's own recent actions (last 7 days, task-scoped) form its memory,
+    /// so it does not repeat an action it already took on the same task.
+    /// </summary>
+    private Task<List<AgentLog>> GetRecentActionsAsync(CancellationToken cancellationToken)
+    {
         var memoryCutoff = DateTime.UtcNow.AddDays(-7);
-        var recentActions = await _db.AgentLogs
+        return Db.AgentLogs
             .Where(l => l.AgentName == Name && l.CreatedAt > memoryCutoff && l.TaskId != null)
             .OrderByDescending(l => l.CreatedAt)
             .Take(50)
             .ToListAsync(cancellationToken);
+    }
 
-        // Workload context so Claude can judge "overloaded"
-        var workload = await _db.Tasks
+    /// <summary>
+    /// Serializes team roster and per-user open-task counts so Claude can judge
+    /// whether an owner is overloaded when deciding to reassign.
+    /// </summary>
+    private async Task<string> BuildContextJsonAsync(CancellationToken cancellationToken)
+    {
+        var workload = await Db.Tasks
             .Where(t => t.Status != Models.TaskStatus.Done && t.AssignedToId != null)
             .GroupBy(t => t.AssignedToId!.Value)
             .Select(g => new { UserId = g.Key, OpenCount = g.Count() })
             .ToListAsync(cancellationToken);
 
-        var users = await _db.Users
+        var users = await Db.Users
             .Select(u => new { u.Id, u.Name })
             .ToListAsync(cancellationToken);
 
-        // Serialize here, where the concrete types are still known.
-        var contextJson = JsonSerializer.Serialize(new { users, workload });
+        return JsonSerializer.Serialize(new { users, workload });
+    }
 
-        // ── REASON ────────────────────────────────────────────────────────────
-        var apiKey = _config["Anthropic:ApiKey"];
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            _logger.LogWarning("[{Agent}] Anthropic API key not configured. Skipping cycle.", Name);
-            return;
-        }
-
-        var client = new AnthropicClient(apiKey);
-        var model = _config["Anthropic:Model"] ?? "claude-sonnet-4-6";
-        var maxTokens = _config.GetValue<int>("Anthropic:MaxTokens", 1024);
-
-        var tools = BuildTools();
-        var prompt = BuildPrompt(staleTasks, recentActions, contextJson, thresholdHours);
-
-        var messages = new List<Message>
-        {
-            new Message(RoleType.User, prompt)
-        };
-
-        // ── TOOL USE LOOP ─────────────────────────────────────────────────────
-        var actionsApplied = 0;
-        var continueLoop = true;
-        var iterations = 0;
-
-        while (continueLoop
-               && iterations < MaxToolLoopIterations
-               && !cancellationToken.IsCancellationRequested)
-        {
-            iterations++;
-
-            var response = await client.Messages.GetClaudeMessageAsync(
-                new MessageParameters
+    // ── TOOL DEFINITIONS ─────────────────────────────────────────────────────────
+    private static List<Tool> BuildTools() =>
+    [
+        DefineTool(
+            EscalateTool,
+            "Escalate a stale but important task by setting its priority to High. " +
+            "Use when the task is clearly still needed and is overdue. " +
+            "Do NOT use if the task is already High priority - flag it for review instead.",
+            new
+            {
+                type = "object",
+                properties = new Dictionary<string, object>
                 {
-                    Model = model,
-                    MaxTokens = maxTokens,
-                    Tools = tools,
-                    Messages = messages
+                    ["task_id"] = new { type = "integer", description = "The ID of the task to escalate." },
+                    ["reason"] = new { type = "string", description = "One sentence explaining why this needs escalation." }
                 },
-                cancellationToken);
+                required = new[] { "task_id", "reason" }
+            }),
 
-            // Preserve the structured content blocks so tool_result blocks can
-            // reference their matching tool_use block.
-            messages.Add(new Message { Role = RoleType.Assistant, Content = response.Content });
-
-            if (response.StopReason == "tool_use")
+        DefineTool(
+            ReassignTool,
+            "Reassign a task to a different user, or unassign it so it returns to the pool. " +
+            $"Use when the task is unassigned and needs an owner, or when the current owner " +
+            $"has {OverloadedTaskCount} or more open tasks and is overloaded.",
+            new
             {
-                var toolUseBlocks = response.Content.OfType<ToolUseContent>().ToList();
-                var toolResults = new List<ContentBase>();
-
-                foreach (var toolUse in toolUseBlocks)
+                type = "object",
+                properties = new Dictionary<string, object>
                 {
-                    var result = await ExecuteToolAsync(toolUse, cancellationToken);
-                    toolResults.Add(result);
+                    ["task_id"] = new { type = "integer", description = "The ID of the task to reassign." },
+                    ["new_user_id"] = new { type = "integer", description = "Target user ID. Omit to unassign the task." },
+                    ["reason"] = new { type = "string", description = "One sentence explaining the reassignment." }
+                },
+                required = new[] { "task_id", "reason" }
+            }),
 
-                    if (WasSuccessful(result))
-                        actionsApplied++;
-                }
-
-                messages.Add(new Message
+        DefineTool(
+            FlagTool,
+            "Flag a task for human review without modifying it. " +
+            "Use when the right action is ambiguous, the task may no longer be relevant, " +
+            "or the decision requires context you do not have. Prefer this over guessing.",
+            new
+            {
+                type = "object",
+                properties = new Dictionary<string, object>
                 {
-                    Role = RoleType.User,
-                    Content = toolResults
-                });
-            }
-            else
-            {
-                // StopReason is "end_turn" — Claude is done
-                continueLoop = false;
+                    ["task_id"] = new { type = "integer", description = "The ID of the task to flag." },
+                    ["concern"] = new { type = "string", description = "What specifically a human should look at." }
+                },
+                required = new[] { "task_id", "concern" }
+            })
+    ];
 
-                var finalText = response.Content
-                    .OfType<TextContent>()
-                    .FirstOrDefault()?.Text;
-
-                if (!string.IsNullOrWhiteSpace(finalText))
-                    _logger.LogInformation("[{Agent}] Claude summary: {Text}", Name, finalText);
-            }
-        }
-
-        if (continueLoop && iterations >= MaxToolLoopIterations)
-        {
-            _logger.LogWarning(
-                "[{Agent}] Hit max tool-loop iterations ({Max}). Ending cycle early.",
-                Name, MaxToolLoopIterations);
-        }
-
-        // ── CYCLE SUMMARY ──────────────────────────────────────────────────────
-        _logger.LogInformation(
-            "[{Agent}] Cycle complete. {Count} action(s) taken.", Name, actionsApplied);
-
-        await _db.AgentLogs.AddAsync(new AgentLog
-        {
-            AgentName = Name,
-            Action = actionsApplied > 0 ? "CycleActions" : "NoActionNeeded",
-            TaskId = null,   // cycle-level summary, not tied to one task
-            Details = $"Reviewed {staleTasks.Count} stale task(s). Took {actionsApplied} action(s).",
-            Success = true,
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
-
-        await _notifier.AgentCycleAsync(Name, "completed", cancellationToken);
-        await _db.SaveChangesAsync(cancellationToken);
-    }
-
-    // ── TOOL DEFINITIONS ───────────────────────────────────────────────────────
-    private static List<Anthropic.SDK.Common.Tool> BuildTools()
-    {
-        var escalateSchema = JsonSerializer.Serialize(new
-        {
-            type = "object",
-            properties = new Dictionary<string, object>
-            {
-                ["task_id"] = new { type = "integer", description = "The ID of the task to escalate." },
-                ["reason"] = new { type = "string", description = "One sentence explaining why this needs escalation." }
-            },
-            required = new[] { "task_id", "reason" }
-        });
-
-        var reassignSchema = JsonSerializer.Serialize(new
-        {
-            type = "object",
-            properties = new Dictionary<string, object>
-            {
-                ["task_id"] = new { type = "integer", description = "The ID of the task to reassign." },
-                ["new_user_id"] = new { type = "integer", description = "Target user ID. Omit to unassign the task." },
-                ["reason"] = new { type = "string", description = "One sentence explaining the reassignment." }
-            },
-            required = new[] { "task_id", "reason" }
-        });
-
-        var flagSchema = JsonSerializer.Serialize(new
-        {
-            type = "object",
-            properties = new Dictionary<string, object>
-            {
-                ["task_id"] = new { type = "integer", description = "The ID of the task to flag." },
-                ["concern"] = new { type = "string", description = "What specifically a human should look at." }
-            },
-            required = new[] { "task_id", "concern" }
-        });
-
-        return new List<Anthropic.SDK.Common.Tool>
-        {
-            new Function(
-                "escalate_task",
-                "Escalate a stale but important task by setting its priority to High. " +
-                "Use when the task is clearly still needed and is overdue. " +
-                "Do NOT use if the task is already High priority - flag it for review instead.",
-                escalateSchema),
-
-            new Function(
-                "reassign_task",
-                "Reassign a task to a different user, or unassign it so it returns to the pool. " +
-                "Use when the task is unassigned and needs an owner, or when the current owner " +
-                "has 5 or more open tasks and is overloaded.",
-                reassignSchema),
-
-            new Function(
-                "flag_for_review",
-                "Flag a task for human review without modifying it. " +
-                "Use when the right action is ambiguous, the task may no longer be relevant, " +
-                "or the decision requires context you do not have. Prefer this over guessing.",
-                flagSchema)
-        };
-    }
-
-    // ── TOOL DISPATCH ──────────────────────────────────────────────────────────
+    // ── TOOL DISPATCH ────────────────────────────────────────────────────────────
     private async Task<ContentBase> ExecuteToolAsync(
         ToolUseContent toolUse,
         CancellationToken cancellationToken)
@@ -265,57 +196,26 @@ public class StaleTaskAgent : ITaskFlowAgent
         {
             return toolUse.Name switch
             {
-                "escalate_task"   => await EscalateAsync(toolUse, cancellationToken),
-                "reassign_task"   => await ReassignAsync(toolUse, cancellationToken),
-                "flag_for_review" => await FlagAsync(toolUse, cancellationToken),
-                _                 => ToolResult(toolUse, $"Error: unknown tool {toolUse.Name}")
+                EscalateTool => await EscalateAsync(toolUse, cancellationToken),
+                ReassignTool => await ReassignAsync(toolUse, cancellationToken),
+                FlagTool     => await FlagAsync(toolUse, cancellationToken),
+                _            => ToolResult(toolUse, $"Error: unknown tool {toolUse.Name}")
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[{Agent}] Tool execution failed for {Tool}", Name, toolUse.Name);
+            Logger.LogError(ex, "[{Agent}] Tool execution failed for {Tool}", Name, toolUse.Name);
             return ToolResult(toolUse, $"Error: {ex.Message}");
         }
     }
 
-    // Builds the ToolResultContent shape the SDK expects.
-    private static ToolResultContent ToolResult(ToolUseContent toolUse, string text) =>
-        new ToolResultContent
-        {
-            ToolUseId = toolUse.Id,
-            Content = new List<ContentBase> { new TextContent { Text = text } }
-        };
-
-    // A tool call only counts as an action if it did not report an error.
-    private static bool WasSuccessful(ContentBase result)
-    {
-        var text = (result as ToolResultContent)?.Content?
-            .OfType<TextContent>()
-            .FirstOrDefault()?.Text ?? string.Empty;
-
-        return !text.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
-            && !text.Contains("not found", StringComparison.OrdinalIgnoreCase)
-            && !text.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
-    }
-
-    // Persists an agent log and broadcasts it to any connected dashboards.
-    // All three tool handlers record actions this way, so the persist-and-notify
-    // steps live here once. Each handler still builds its own log contents.
-    private async Task RecordActionAsync(AgentLog log, CancellationToken cancellationToken)
-    {
-        _db.AgentLogs.Add(log);
-        await _db.SaveChangesAsync(cancellationToken);
-        await _notifier.AgentActionAsync(log, cancellationToken);
-    }
-
-    // ── ESCALATE ───────────────────────────────────────────────────────────────
-    private async Task<ContentBase> EscalateAsync(
-        ToolUseContent toolUse, CancellationToken cancellationToken)
+    // ── ESCALATE ─────────────────────────────────────────────────────────────────
+    private async Task<ContentBase> EscalateAsync(ToolUseContent toolUse, CancellationToken cancellationToken)
     {
         var args = toolUse.Input.Deserialize<EscalateArgs>()
             ?? throw new InvalidOperationException("Failed to deserialize escalate_task arguments.");
 
-        var task = await _db.Tasks.FindAsync(new object[] { args.TaskId }, cancellationToken);
+        var task = await Db.Tasks.FindAsync([args.TaskId], cancellationToken);
         if (task is null)
             return ToolResult(toolUse, $"Task {args.TaskId} not found.");
 
@@ -326,36 +226,33 @@ public class StaleTaskAgent : ITaskFlowAgent
         await RecordActionAsync(new AgentLog
         {
             AgentName = Name,
-            Action = "Escalated",
+            Action = AgentActions.Escalated,
             TaskId = task.Id,
             Details = $"Priority {previous} -> High. {args.Reason}",
             Success = true,
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
 
-        _logger.LogInformation(
+        Logger.LogInformation(
             "[{Agent}] Escalated Task {Id} '{Title}': {From} -> High. {Reason}",
             Name, task.Id, task.Title, previous, args.Reason);
 
-        return ToolResult(toolUse,
-            $"Escalated Task {task.Id} ('{task.Title}') from {previous} to High.");
+        return ToolResult(toolUse, $"Escalated Task {task.Id} ('{task.Title}') from {previous} to High.");
     }
 
-    // ── REASSIGN ───────────────────────────────────────────────────────────────
-    private async Task<ContentBase> ReassignAsync(
-        ToolUseContent toolUse, CancellationToken cancellationToken)
+    // ── REASSIGN ─────────────────────────────────────────────────────────────────
+    private async Task<ContentBase> ReassignAsync(ToolUseContent toolUse, CancellationToken cancellationToken)
     {
         var args = toolUse.Input.Deserialize<ReassignArgs>()
             ?? throw new InvalidOperationException("Failed to deserialize reassign_task arguments.");
 
-        var task = await _db.Tasks.FindAsync(new object[] { args.TaskId }, cancellationToken);
+        var task = await Db.Tasks.FindAsync([args.TaskId], cancellationToken);
         if (task is null)
             return ToolResult(toolUse, $"Task {args.TaskId} not found.");
 
         if (args.NewUserId.HasValue)
         {
-            var exists = await _db.Users
-                .AnyAsync(u => u.Id == args.NewUserId.Value, cancellationToken);
+            var exists = await Db.Users.AnyAsync(u => u.Id == args.NewUserId.Value, cancellationToken);
             if (!exists)
                 return ToolResult(toolUse, $"User {args.NewUserId} does not exist.");
         }
@@ -367,7 +264,7 @@ public class StaleTaskAgent : ITaskFlowAgent
         await RecordActionAsync(new AgentLog
         {
             AgentName = Name,
-            Action = "Reassigned",
+            Action = AgentActions.Reassigned,
             TaskId = task.Id,
             Details = $"Owner {previousOwner?.ToString() ?? "none"} -> " +
                       $"{args.NewUserId?.ToString() ?? "unassigned"}. {args.Reason}",
@@ -375,7 +272,7 @@ public class StaleTaskAgent : ITaskFlowAgent
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
 
-        _logger.LogInformation(
+        Logger.LogInformation(
             "[{Agent}] Reassigned Task {Id} '{Title}': owner {From} -> {To}. {Reason}",
             Name, task.Id, task.Title,
             previousOwner?.ToString() ?? "none",
@@ -383,41 +280,38 @@ public class StaleTaskAgent : ITaskFlowAgent
             args.Reason);
 
         return ToolResult(toolUse,
-            $"Reassigned Task {task.Id} ('{task.Title}') to " +
-            $"{(args.NewUserId?.ToString() ?? "unassigned")}.");
+            $"Reassigned Task {task.Id} ('{task.Title}') to {(args.NewUserId?.ToString() ?? "unassigned")}.");
     }
 
-    // ── FLAG FOR REVIEW ────────────────────────────────────────────────────────
+    // ── FLAG FOR REVIEW ──────────────────────────────────────────────────────────
     // Note: does NOT modify the task. Log only. That is intentional.
-    private async Task<ContentBase> FlagAsync(
-        ToolUseContent toolUse, CancellationToken cancellationToken)
+    private async Task<ContentBase> FlagAsync(ToolUseContent toolUse, CancellationToken cancellationToken)
     {
         var args = toolUse.Input.Deserialize<FlagArgs>()
             ?? throw new InvalidOperationException("Failed to deserialize flag_for_review arguments.");
 
-        var task = await _db.Tasks.FindAsync(new object[] { args.TaskId }, cancellationToken);
+        var task = await Db.Tasks.FindAsync([args.TaskId], cancellationToken);
         if (task is null)
             return ToolResult(toolUse, $"Task {args.TaskId} not found.");
 
         await RecordActionAsync(new AgentLog
         {
             AgentName = Name,
-            Action = "FlaggedForReview",
+            Action = AgentActions.FlaggedForReview,
             TaskId = task.Id,
             Details = args.Concern,
             Success = true,
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
 
-        _logger.LogInformation(
+        Logger.LogInformation(
             "[{Agent}] Flagged Task {Id} '{Title}' for review: {Concern}",
             Name, task.Id, task.Title, args.Concern);
 
-        return ToolResult(toolUse,
-            $"Flagged Task {task.Id} ('{task.Title}') for human review.");
+        return ToolResult(toolUse, $"Flagged Task {task.Id} ('{task.Title}') for human review.");
     }
 
-    // ── PROMPT BUILDER ─────────────────────────────────────────────────────────
+    // ── PROMPT BUILDER ───────────────────────────────────────────────────────────
     private static string BuildPrompt(
         List<TaskItem> staleTasks,
         List<AgentLog> recentActions,
@@ -431,7 +325,7 @@ public class StaleTaskAgent : ITaskFlowAgent
         sb.AppendLine();
         sb.AppendLine("For each stale task, choose AT MOST ONE action:");
         sb.AppendLine("  - escalate_task    : still needed and overdue -> raise priority to High");
-        sb.AppendLine("  - reassign_task    : unassigned, or the owner has 5+ open tasks");
+        sb.AppendLine($"  - reassign_task    : unassigned, or the owner has {OverloadedTaskCount}+ open tasks");
         sb.AppendLine("  - flag_for_review  : ambiguous, possibly obsolete, or needs a human decision");
         sb.AppendLine();
         sb.AppendLine("Rules:");
@@ -478,7 +372,8 @@ public class StaleTaskAgent : ITaskFlowAgent
         return sb.ToString();
     }
 
-    // ── ARGUMENT RECORDS ───────────────────────────────────────────────────────
+    // ── ARGUMENT RECORDS ─────────────────────────────────────────────────────────
+    // Each maps directly to the JSON arguments Claude sends for the matching tool.
     private sealed record EscalateArgs(
         [property: JsonPropertyName("task_id")] int TaskId,
         [property: JsonPropertyName("reason")] string Reason);
