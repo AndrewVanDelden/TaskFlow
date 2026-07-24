@@ -14,7 +14,7 @@ public class TaskItem
     [MaxLength(2000)]
     public string? Description { get; set; }
 
-    public TaskStatus Status { get; set; } = TaskStatus.Todo;
+    public WorkflowStatus Status { get; set; } = WorkflowStatus.Todo;
 
     public TaskPriority Priority { get; set; } = TaskPriority.Medium;
 
