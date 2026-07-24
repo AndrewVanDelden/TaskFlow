@@ -1061,7 +1061,14 @@ public class AgentLogRepository : IAgentLogRepository
 
 ### C4. Register in DI
 
-In `Program.cs`, near the other service registrations:
+First add the repositories namespace to the usings at the top of `Program.cs`
+(without it you get `CS0246: ITaskRepository could not be found`):
+
+```csharp
+using TaskFlow.Api.Repositories;
+```
+
+Then, near the other service registrations:
 
 ```csharp
 builder.Services.AddScoped<ITaskRepository, TaskRepository>();
