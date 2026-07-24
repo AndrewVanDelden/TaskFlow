@@ -75,42 +75,59 @@ The whole system on one page. A request flows straight down through the layers; 
 agents run their own loop on the side; live updates push back up to the browser. Every
 arrow is one direction of dependency, and that is deliberate: each layer knows only about
 the layer directly beneath it, which is exactly what makes each layer testable in
-isolation (see the Tests box).
+isolation (a test fakes the layer just below the one under test).
 
 ```mermaid
+%%{init: {'theme':'base', 'themeVariables': {'lineColor':'#94a3b8','fontSize':'13px'}}}%%
 flowchart TB
-    subgraph WEB["TaskFlow.Web  (React + Vite)"]
-        direction LR
-        CMP[components<br/>UI] --> HK[hooks<br/>state / effects] --> APIC[api/<br/>fetch + JWT]
+    subgraph WEB["TaskFlow.Web (React)"]
+        direction TB
+        CMP["components (UI)"] --> HK["hooks (state + effects)"] --> APIC["api/ (fetch + JWT)"]
     end
 
-    subgraph API["TaskFlow.Api  (.NET 8)"]
-        CT["Controllers<br/>thin — HTTP only"]
-        SV["Services<br/>business rules → Result&lt;T&gt;"]
-        RP["Repositories<br/>data access only"]
-        EF["EF Core · AppDbContext"]
-        DB[("SQLite<br/>taskflow.db")]
-        CT --> SV --> RP --> EF --> DB
-
-        subgraph AG["Agents  (IHostedService)"]
-            direction TB
-            PR[TaskPrioritizer]
-            ST[StaleTaskDetector]
-            ICL[IClaudeClient<br/>seam]
-        end
-        AG -->|reads / writes| RP
-        HUB["AgentHub<br/>SignalR"]
-        AG --> HUB
+    subgraph API["TaskFlow.Api (.NET) — request pipeline"]
+        direction TB
+        CT["Controllers (HTTP only)"] --> SV["Services (rules → Result&lt;T&gt;)"] --> RP["Repositories (data access)"] --> EF["EF Core / AppDbContext"] --> DB[("SQLite")]
     end
 
-    CLAUDE["Anthropic Claude API<br/>tool calling = the reason step"]
-    TESTS["TaskFlow.Tests (xUnit)<br/>each layer mocks the one below;<br/>repositories + agents use real in-memory SQLite / stubbed IClaudeClient"]
+    subgraph AGENTS["Background Agents (IHostedService)"]
+        direction TB
+        PRI["Prioritizer + StaleDetector"] --> ICL["IClaudeClient (seam)"]
+    end
 
-    APIC -->|HTTPS + JWT| CT
-    HUB -. live push .-> HK
-    ICL -. agent loop .-> CLAUDE
-    TESTS -. verifies .-> API
+    CLAUDE["Anthropic Claude API"]
+
+    APIC -->|"HTTPS + JWT"| CT
+    PRI -->|"reads / writes"| RP
+    ICL -->|"reason step"| CLAUDE
+    PRI --> HUB["AgentHub (SignalR)"]
+    HUB -.->|"live push"| HK
+
+    classDef web  fill:#eff6ff,stroke:#3b82f6,color:#0f172a;
+    classDef ctl  fill:#dbeafe,stroke:#3b82f6,color:#0f172a;
+    classDef svc  fill:#dcfce7,stroke:#22c55e,color:#0f172a;
+    classDef repo fill:#fef9c3,stroke:#eab308,color:#0f172a;
+    classDef data fill:#ede9fe,stroke:#8b5cf6,color:#0f172a;
+    classDef agent fill:#fce7f3,stroke:#ec4899,color:#0f172a;
+    classDef ext  fill:#ffedd5,stroke:#f97316,color:#0f172a;
+
+    class CMP,HK,APIC web;
+    class CT ctl;
+    class SV svc;
+    class RP repo;
+    class EF,DB data;
+    class PRI,ICL,HUB agent;
+    class CLAUDE ext;
+
+    style WEB fill:#f8fafc,stroke:#cbd5e1;
+    style API fill:#f8fafc,stroke:#cbd5e1;
+    style AGENTS fill:#f8fafc,stroke:#cbd5e1;
 ```
+
+> Not seeing it render? In VS Code you need a Mermaid preview extension (e.g. "Markdown
+> Preview Mermaid Support"); on GitHub it renders automatically. The `TaskFlow.Tests`
+> project is left out of the picture on purpose to keep it clean — it mirrors these layers,
+> each test faking the layer directly beneath it.
 
 **How to read it.** A browser request goes `api/ → Controllers → Services → Repositories
 → EF → SQLite`, and the response comes back up the same chain. The two agents run

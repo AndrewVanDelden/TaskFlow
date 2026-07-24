@@ -1,6 +1,9 @@
 # Rules to follow for AI who are reading this:
 
 - TDD is How we will build everything
+- **When adding code, add its test coverage in the same change — up front, not later.**
+  If asked to add a method/class/file, deliver the tests that cover it alongside it. Do not
+  hand over new implementation code with "tests can come later."
 - we will adhere to strictly DRY and SOLID principles.
 - Do not agree with me on everything. Come back with sound advice from the principles.
 - Do not bandaid any fixes. If it is wrong then lets work to fix it.
