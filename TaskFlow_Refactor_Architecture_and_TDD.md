@@ -12,14 +12,15 @@ the house down. We add rooms while people are still living in it.
 
 ## ▶ RESUME HERE (current status)
 
-- **Branch:** `feature/slice-c-repositories`
-- **Done:** Slice A (test harness) and Slice B (JwtService → `TokenResult`, AuthController
-  deduped) are complete. The `TaskStatus` → `WorkflowStatus` rename is complete across all
-  files (see Naming Conventions below).
-- **In progress:** Slice C — repository layer. `ITaskRepository`/`TaskRepository` exist;
-  `TaskRepositoryTests` exists. Finish the remaining repositories (`IUserRepository`,
-  `IAgentLogRepository`) + tests, register in DI, then PR.
-- **Next after C:** Slice D (service layer).
+- **Branch:** start a new `feature/slice-d-services` off `develop`.
+- **Done:** Slice A (test harness), Slice B (JwtService → `TokenResult`, AuthController
+  deduped), and Slice C (repository layer: Task/User/AgentLog repositories + tests,
+  registered in DI) are complete. The `TaskStatus` → `WorkflowStatus` rename is complete
+  across all files (see Naming Conventions below).
+- **In progress:** Slice D, step D1 — service layer. Create the `Result<T>` type in
+  `TaskFlow.Api/Common/`, then build `TaskService`/`AuthService` test-first (tests mock the
+  repositories with Moq). Move business rules out of the controllers.
+- **Next after D:** Slice E (thin controllers onto services).
 - **How to work:** follow this document top to bottom. Each slice has explicit file paths,
   RED tests, GREEN code, a pastable PR description, and merge/delete steps. Bring bugs to
   chat; every fix gets recorded back into this document.
