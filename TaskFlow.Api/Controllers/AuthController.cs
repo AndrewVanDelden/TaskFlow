@@ -4,6 +4,7 @@ using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Services;
+using TaskFlow.Api.Common;
 
 namespace TaskFlow.Api.Controllers;
 
@@ -57,16 +58,8 @@ public class AuthController : ControllerBase
 
         _logger.LogInformation("New user registered: {Email}", user.Email);
 
-        var token = _jwtService.GenerateToken(user);
-        var expiryHours = double.Parse(_config["Jwt:ExpiryHours"] ?? "8");
-
-        return CreatedAtAction(nameof(Register), new AuthResponseDto
-        {
-            Token = token,
-            Name = user.Name,
-            Email = user.Email,
-            ExpiresAt = DateTime.UtcNow.AddHours(expiryHours)
-        });
+        var result = _jwtService.GenerateToken(user);
+        return CreatedAtAction(nameof(Register), BuildAuthResponse(user, result));
     }
 
     // ── POST /api/auth/login ──────────────────────────────────────────────────
@@ -85,15 +78,16 @@ public class AuthController : ControllerBase
 
         _logger.LogInformation("User logged in: {Email}", user.Email);
 
-        var token = _jwtService.GenerateToken(user);
-        var expiryHours = double.Parse(_config["Jwt:ExpiryHours"] ?? "8");
-
-        return Ok(new AuthResponseDto
-        {
-            Token = token,
-            Name = user.Name,
-            Email = user.Email,
-            ExpiresAt = DateTime.UtcNow.AddHours(expiryHours)
-        });
+        var result = _jwtService.GenerateToken(user);
+        return Ok(BuildAuthResponse(user, result));
     }
+
+    // new private helper — one place that maps a user + token into the response DTO:
+    private static AuthResponseDto BuildAuthResponse(User user, TokenResult token) => new()
+    {
+        Token = token.Token,
+        Name = user.Name,
+        Email = user.Email,
+        ExpiresAt = token.ExpiresAt
+    };
 }
