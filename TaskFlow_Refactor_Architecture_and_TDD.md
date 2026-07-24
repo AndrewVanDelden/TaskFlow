@@ -10,23 +10,52 @@ the house down. We add rooms while people are still living in it.
 
 ---
 
-## ▶ RESUME HERE (current status)
+# Rules to follow for AI who are reading this:
 
-- **Branch:** start a new `feature/slice-d-services` off `develop`.
-- **Done:** Slice A (test harness), Slice B (JwtService → `TokenResult`, AuthController
-  deduped), and Slice C (repository layer: Task/User/AgentLog repositories + tests,
-  registered in DI) are complete. The `TaskStatus` → `WorkflowStatus` rename is complete
-  across all files (see Naming Conventions below).
-- **In progress:** Slice D, step D1 — service layer. Create the `Result<T>` type in
-  `TaskFlow.Api/Common/`, then build `TaskService`/`AuthService` test-first (tests mock the
-  repositories with Moq). Move business rules out of the controllers.
-- **Next after D:** Slice E (thin controllers onto services).
+- TDD is How we will build everything
+- we will adhere to strictly DRY and SOLID principles.
+- Do not agree with me on everything. Come back with sound advice from the principles.
+- Do not bandaid any fixes. If it is wrong then lets work to fix it.
 - **How to work:** follow this document top to bottom. Each slice has explicit file paths,
   RED tests, GREEN code, a pastable PR description, and merge/delete steps. Bring bugs to
   chat; every fix gets recorded back into this document.
+- **Tooling boundary (important):** Claude can create and edit files directly in the repo,
+  but Claude's sandbox CANNOT run `git` (it is permission-blocked from writing `.git`) and
+  does not run `dotnet`. So: Claude writes the code and tests into the repo; YOU run every
+  `git` and `dotnet test`/`dotnet build` command on your machine and report the result.
+  This matches the TDD loop (you run, Claude writes).
 - **Standing rules that were violated once and must not be again:** domain types never
   reuse .NET BCL names (see Naming Conventions); fix collisions by renaming at the source,
   not aliasing; result types live in `Common/`.
+
+**Rules added after the AI violated them in this session (do not repeat):**
+
+- **Never claim you verified something you did not actually check.** Confirm against the
+  real artifact: exact file name, real contents, actual git state. (Violated: reported
+  `Result.cs` "missing" after checking the wrong name; the file was `Results.cs`. A false
+  verification is worse than admitting you have not checked.)
+- **Separate facts from inferences; never state an inference as fact.** Say what you
+  actually checked, and label everything else as an inference for the user to confirm.
+  (Violated: asserted "the solution does not build" without a build. The truth is whatever
+  `dotnet build` prints.)
+- **Never assume progress or mark work done without confirmation.** Do not tick off a step
+  (git run, file created, test passed) unless the repo or the user confirms it. When
+  unsure, check or ask. Do not guess. (Violated: marked D0/D1 complete on assumption.)
+- **Enforce TDD order; halt the moment implementation is being written before its failing
+  test.** If code is landing ahead of a confirmed RED, call it out and stop, even if the
+  user is the one moving ahead. (Violated: let D3 service code exist before D2 was red.)
+- **When the deliverable is code, deliver the actual code** with file path, namespace, and
+  usings, not a prose description of what it would do. Prose is for the test to encode, not
+  a substitute for the class. (Violated: gave an AuthService prose spec instead of the file.)
+- **Never hand over anything you claim works but have not tested.** Test it first, or state
+  plainly that it is untested and why. Applies to snippets, links, and commands. (Violated:
+  shipped a self-anchor link twice without testing that it resolves.)
+- **Hold the whole map, not just the slice in front of you.** Read the entire document
+  before advising so guidance fits the overall scope, not one local step. (Violated:
+  advised for several turns having only read part of the doc.)
+- **Do not attempt `git` or `dotnet` from the AI sandbox.** It cannot write `.git` and has
+  no `dotnet`; a failed attempt left a stale `.git/index.lock` the user had to remove by
+  hand. Hand every git/build/test command to the user (see Tooling boundary above).
 
 ---
 
@@ -39,6 +68,82 @@ the house down. We add rooms while people are still living in it.
 ---
 
 ## Part 1 — The Target Architecture (the "why")
+
+### The 10,000-foot view
+
+The whole system on one page. A request flows straight down through the layers; the
+agents run their own loop on the side; live updates push back up to the browser. Every
+arrow is one direction of dependency, and that is deliberate: each layer knows only about
+the layer directly beneath it, which is exactly what makes each layer testable in
+isolation (a test fakes the layer just below the one under test).
+
+```mermaid
+%%{init: {'theme':'base', 'themeVariables': {'lineColor':'#94a3b8','fontSize':'13px'}}}%%
+flowchart TB
+    subgraph WEB["TaskFlow.Web (React)"]
+        direction TB
+        CMP["components (UI)"] --> HK["hooks (state + effects)"] --> APIC["api/ (fetch + JWT)"]
+    end
+
+    subgraph API["TaskFlow.Api (.NET) — request pipeline"]
+        direction TB
+        CT["Controllers (HTTP only)"] --> SV["Services (rules → Result&lt;T&gt;)"] --> RP["Repositories (data access)"] --> EF["EF Core / AppDbContext"] --> DB[("SQLite")]
+    end
+
+    subgraph AGENTS["Background Agents (IHostedService)"]
+        direction TB
+        PRI["Prioritizer + StaleDetector"] --> ICL["IClaudeClient (seam)"]
+    end
+
+    CLAUDE["Anthropic Claude API"]
+
+    APIC -->|"HTTPS + JWT"| CT
+    PRI -->|"reads / writes"| RP
+    ICL -->|"reason step"| CLAUDE
+    PRI --> HUB["AgentHub (SignalR)"]
+    HUB -.->|"live push"| HK
+
+    classDef web  fill:#eff6ff,stroke:#3b82f6,color:#0f172a;
+    classDef ctl  fill:#dbeafe,stroke:#3b82f6,color:#0f172a;
+    classDef svc  fill:#dcfce7,stroke:#22c55e,color:#0f172a;
+    classDef repo fill:#fef9c3,stroke:#eab308,color:#0f172a;
+    classDef data fill:#ede9fe,stroke:#8b5cf6,color:#0f172a;
+    classDef agent fill:#fce7f3,stroke:#ec4899,color:#0f172a;
+    classDef ext  fill:#ffedd5,stroke:#f97316,color:#0f172a;
+
+    class CMP,HK,APIC web;
+    class CT ctl;
+    class SV svc;
+    class RP repo;
+    class EF,DB data;
+    class PRI,ICL,HUB agent;
+    class CLAUDE ext;
+
+    style WEB fill:#f8fafc,stroke:#cbd5e1;
+    style API fill:#f8fafc,stroke:#cbd5e1;
+    style AGENTS fill:#f8fafc,stroke:#cbd5e1;
+```
+
+> Not seeing it render? In VS Code you need a Mermaid preview extension (e.g. "Markdown
+> Preview Mermaid Support"); on GitHub it renders automatically. The `TaskFlow.Tests`
+> project is left out of the picture on purpose to keep it clean — it mirrors these layers,
+> each test faking the layer directly beneath it.
+
+**How to read it.** A browser request goes `api/ → Controllers → Services → Repositories
+→ EF → SQLite`, and the response comes back up the same chain. The two agents run
+independently as hosted background services: each loops observe → reason → act, doing its
+"reason" step through `IClaudeClient` to the Claude API, and its "act" step through the
+same repositories the controllers use. When an agent changes something, `AgentHub` pushes
+it to the browser over SignalR (the dashed line), so the board updates live with no
+refresh. The Tests project mirrors the layers: every layer is tested by faking the layer
+beneath it.
+
+**Where this is headed (Part 5).** The North Star reuses these exact layers: a document
+ingestion *service*, an executor *agent* on `IClaudeClient`, writing through the
+*repositories*, streamed live over *SignalR*. The refactor is not busywork before the fun
+part — it is the foundation the fun part stands on.
+
+### Why layers (the "why")
 
 Right now a controller does three jobs: receives the web request, runs the business
 rules, and queries the database. Three responsibilities in one class is exactly what
@@ -111,6 +216,12 @@ These apply to all code from here on:
 2. **Result/return types live in `TaskFlow.Api/Common/`**, not `Services/` (e.g.
    `TokenResult`, `Result<T>`). `Services/` is for classes with behavior.
 3. Fix name collisions by renaming at the source, not by aliasing around them.
+4. **Every code block in this document must name its exact file** on the line above it,
+   using the `**FILE — create new: \`path\`**` or `**FILE — edit existing: \`path\`**`
+   form, and the block must include its `namespace` and required `using` directives. A
+   block with no path is a defect in this doc — flag it and fix the doc, do not guess.
+   (Added after D3 shipped code blocks with no paths and left the reader unsure where the
+   service files go.)
 
 ## Part 2 — The TDD Loop (the workflow you keep)
 
@@ -217,6 +328,37 @@ also carried the old value and were updated:
    ```
    Recovery point commit: `6ca203d` ("rename web to TaskFlow.Web"). If the web source ever
    vanishes again, restore from there.
+
+4. **The CRLF/LF churn came back (Slice D, D0) — because item 2's `.gitattributes` was
+   never actually committed.** Resuming at Slice D, `develop`'s tree showed ~79 modified
+   files; the doc's own diagnostic (`git diff --ignore-all-space -- <file>` = empty means
+   pure noise) confirmed only `TaskFlow_Refactor_Architecture_and_TDD.md` had a real
+   change. `ls .gitattributes` at the repo root returned nothing — the file item 2
+   describes had never been added. Real fix, now applied: a root `.gitattributes` was
+   created with `* text=auto` plus explicit text types (`*.cs *.csproj *.slnx *.json *.md
+   *.ts *.tsx *.js *.jsx *.html *.css *.yml *.yaml *.http *.svg`), CRLF-pinned Windows
+   scripts (`*.ps1 *.cmd *.bat text eol=crlf`), and binary types (`*.png *.jpg *.jpeg
+   *.ico *.db *.db-shm *.db-wal`). Complete D0 on your machine:
+   ```powershell
+   git add TaskFlow_Refactor_Architecture_and_TDD.md
+   git commit -m "docs: update refactor guide (resume at slice D)"
+   git add .gitattributes
+   git commit -m "chore: add .gitattributes (text=auto) to stop CRLF/LF churn"
+   git add --renormalize .
+   git commit -m "chore: normalize line endings to LF per .gitattributes"
+   git status --short        # expect empty; if not, stop and investigate
+   git push origin develop
+   git checkout -b feature/slice-d-services
+   ```
+   The renormalize commit legitimately touches the ~79 files (that is the LF normalization
+   landing, not noise) and will not recur now that `.gitattributes` governs the repo.
+
+   **Gotcha recorded:** Claude's sandbox tried to run these commits and could not — it is
+   permission-blocked from writing `.git` (`Operation not permitted` on `.git/objects`,
+   plus no configured git identity) and it left a stale empty `.git/index.lock` it could
+   not delete. If a commit ever fails with a lock error, remove it first:
+   `Remove-Item .git\index.lock -Force`. All `git` commands must run in your own terminal,
+   not via Claude.
 
 ---
 
@@ -1125,14 +1267,18 @@ repositories. Services return a small `Result<T>` so they can report "not found"
 
 Branch: `feature/slice-d-services`
 
+Slice D adds three steps in order: D1 the `Result<T>` type, D2 the failing service
+tests, D3 the services that make them pass.
+
 ### D1. A transport-agnostic result type
 
-Create `TaskFlow.Api/Common/Result.cs`:
+Create `TaskFlow.Api/Common/Result.cs` (singular file name). If you already made a
+`Results.cs`, rename it to `Result.cs`:
 
 ```csharp
 namespace TaskFlow.Api.Common;
 
-public enum ResultStatus { Ok, NotFound, Conflict, Validation }
+public enum ResultStatus { Ok, NotFound, Conflict, Validation, Unauthorized }
 
 /// <summary>
 /// Outcome of a service operation, free of any HTTP concept. Controllers translate
@@ -1146,8 +1292,14 @@ public record Result<T>(ResultStatus Status, T? Value, string? Error)
     public static Result<T> NotFound(string error)    => new(ResultStatus.NotFound, default, error);
     public static Result<T> Conflict(string error)    => new(ResultStatus.Conflict, default, error);
     public static Result<T> Invalid(string error)     => new(ResultStatus.Validation, default, error);
+    public static Result<T> Unauthorized(string error) => new(ResultStatus.Unauthorized, default, error);
 }
 ```
+
+**Why `Unauthorized` is its own status.** `AuthController.Login` returns a 401 for bad
+credentials. The service models that outcome directly instead of reusing `Validation`
+(which maps to 400), so the controller stays a pure status-code mapper and the auth
+decision lives in the service, not the web layer. Slice E maps `Unauthorized => 401`.
 
 **Teaching note.** This is the Dependency Inversion payoff: the service depends on an
 abstract idea of success/failure, not on ASP.NET. That is what lets you unit-test the
@@ -1155,8 +1307,24 @@ rules with no web server in sight.
 
 ### D2. RED — service tests (mock the repositories)
 
-Example: creating a task must fail when the assignee does not exist. Create
-`TaskFlow.Tests/Services/TaskServiceTests.cs`:
+We prove the service's rules with tests *before* the service exists. These are pure unit
+tests: they exercise only the service's decision-making, with no database. Instead of a
+real repository we hand the service a **mock** — a fake `ITaskRepository` / `IUserRepository`
+whose behavior we script with Moq. That is the payoff of depending on interfaces: in a test
+you swap the real data layer for a stand-in you fully control.
+
+**Why mocks here, not the SQLite in-memory DB from Slice C?** The repositories run real
+queries, so they earned real (in-memory) SQLite. A service has no SQL of its own — its job
+is *rules and orchestration*. So we fake the data layer and assert on two things: the
+decision it returns, and which repository calls it did or did not make. Right tool per layer.
+
+Each test follows **Arrange / Act / Assert**:
+- **Arrange** — script the mocks (e.g. "pretend user 99 does not exist").
+- **Act** — call the service method under test.
+- **Assert** — check the returned `Result`, *and* that the service called the repository the
+  right number of times.
+
+Create `TaskFlow.Tests/Services/TaskServiceTests.cs`:
 
 ```csharp
 using FluentAssertions;
@@ -1207,30 +1375,94 @@ public class TaskServiceTests
 }
 ```
 
+**Reading the two tests:**
+
+**Test 1 — validation blocks a bad assignee.** We script the user mock so
+`ExistsAsync(99)` returns `false`, call `CreateAsync` with `AssignedToId = 99`, and assert
+two things. First, the status is `Validation` — the rule fired. Second, `AddAsync` was
+**never** called (`Times.Never`) — the service must not write to the database when
+validation fails. That second assertion is *behavior* verification: it is not enough that
+the returned value looks wrong; nothing should have been persisted.
+
+**Test 2 — the happy path.** The user exists, so `CreateAsync` should succeed, default the
+new task's status to `Todo`, and persist exactly once (`AddAsync` and `SaveChangesAsync`
+each `Times.Once`). This pins down both the return value and the side effects, so a later
+refactor can't quietly drop the save.
+
+Run it:
+
 ```bash
 dotnet test
 ```
 
-**Expect RED** — `TaskService`/`ITaskService` do not exist.
+**Expect RED — and note why.** `TaskService` and `ITaskService` do not exist yet, so this
+will not even compile. A compile failure is a legitimate red: the test describes an API you
+have not built. You build exactly that API in D3 to turn it green — nothing more, nothing
+less. That is the discipline: the test defines "done" first, the code chases it.
 
 ### D3. GREEN — the service
 
-`ITaskService.cs` and `TaskService.cs` (representative shape — final method set
-confirmed as we port each endpoint):
+GREEN means writing the *smallest* code that makes D2's two tests pass — nothing
+speculative. The failing tests are your spec: they demand a `TaskService` with a
+`CreateAsync` that validates the assignee, defaults the status, and persists once. So that
+is exactly what you build. The five other task methods have no tests yet, so they are not
+written yet.
+
+**Where every file in this step goes (all paths relative to the repo root
+`C:\Users\Sirgimp\Desktop\TaskFlow`):**
+
+| File | Path | New or edit |
+|------|------|-------------|
+| `ITaskService.cs` | `TaskFlow.Api/Services/ITaskService.cs` | create new |
+| `TaskService.cs`  | `TaskFlow.Api/Services/TaskService.cs`  | create new |
+| `IAuthService.cs` | `TaskFlow.Api/Services/IAuthService.cs` | create new |
+| `AuthService.cs`  | `TaskFlow.Api/Services/AuthService.cs`  | create new |
+| DI registration   | `TaskFlow.Api/Program.cs`               | edit existing |
+
+The `Services/` folder already exists (it holds `JwtService.cs`). `Result<T>` was created
+in D1 at `TaskFlow.Api/Common/Result.cs`. Each block below repeats its exact path,
+namespace, and `using` directives — per the standing rule.
+
+**FILE — create new: `TaskFlow.Api/Services/ITaskService.cs`**
 
 ```csharp
+using TaskFlow.Api.Common;
+using TaskFlow.Api.DTOs;
+
+namespace TaskFlow.Api.Services;
+
 public interface ITaskService
 {
     Task<Result<TaskResponseDto>> CreateAsync(CreateTaskDto dto, CancellationToken ct = default);
-    Task<Result<TaskResponseDto>> UpdateAsync(int id, UpdateTaskDto dto, CancellationToken ct = default);
-    Task<Result<TaskResponseDto>> UpdateStatusAsync(int id, UpdateTaskStatusDto dto, CancellationToken ct = default);
-    Task<Result<TaskResponseDto>> GetByIdAsync(int id, CancellationToken ct = default);
-    Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, CancellationToken ct = default);
-    Task<Result<bool>> DeleteAsync(int id, CancellationToken ct = default);
 }
 ```
 
+**Only `CreateAsync` is declared now — on purpose.** `TaskService.cs` only implements
+`CreateAsync`, and `CreateAsync` is the only method with a test (D2). Declaring the other
+five here would force five untested implementations, which is the anti-TDD move this slice
+exists to prevent. Add each remaining method **test-first, one at a time**, as you port its
+endpoint, so the interface grows only as fast as its tests. Target end state (added
+incrementally, before Slice E needs them):
+
 ```csharp
+// Added later, each behind its own RED test — do NOT paste all of these now:
+//   Task<Result<TaskResponseDto>> UpdateAsync(int id, UpdateTaskDto dto, CancellationToken ct = default);
+//   Task<Result<TaskResponseDto>> UpdateStatusAsync(int id, UpdateTaskStatusDto dto, CancellationToken ct = default);
+//   Task<Result<TaskResponseDto>> GetByIdAsync(int id, CancellationToken ct = default);
+//   Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, CancellationToken ct = default);
+//   Task<Result<bool>> DeleteAsync(int id, CancellationToken ct = default);
+```
+
+**FILE — create new: `TaskFlow.Api/Services/TaskService.cs`**
+
+```csharp
+using TaskFlow.Api.Common;
+using TaskFlow.Api.DTOs;
+using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
+
+namespace TaskFlow.Api.Services;
+
 public class TaskService : ITaskService
 {
     private readonly ITaskRepository _tasks;
@@ -1270,12 +1502,112 @@ public class TaskService : ITaskService
 }
 ```
 
-Also add `IAuthService`/`AuthService` moving the register/login rules (email-taken →
-Conflict, bad credentials → the generic 401 message) out of `AuthController`, using
-`IUserRepository` and `JwtService`. Its tests mock `IUserRepository` and assert the
-conflict/også success paths. (Full code confirmed at execution.)
+**How this satisfies the two D2 tests.** Read the method top to bottom against the tests:
+the **guard clause** (`if ... !ExistsAsync ... return Invalid`) is Test 1 — an unknown
+assignee returns `Validation` and exits *before* `AddAsync`, which is why the test can
+assert `AddAsync` was never called. The rest is Test 2 — build the task with `Status = Todo`,
+`AddAsync` then `SaveChangesAsync` exactly once, return `Ok`. The order matters: validate
+first, act second. A guard clause that returns early is how you keep a method's happy path
+flat and its failure paths obvious.
 
-Register the services in `Program.cs`:
+The interface, derived directly from the two `AuthController` actions (mirrors the
+`ITaskService` shape for consistency):
+
+```csharp
+using TaskFlow.Api.Common;
+using TaskFlow.Api.DTOs;
+
+namespace TaskFlow.Api.Services;
+
+public interface IAuthService
+{
+    Task<Result<AuthResponseDto>> RegisterAsync(RegisterDto dto, CancellationToken ct = default);
+    Task<Result<AuthResponseDto>> LoginAsync(LoginDto dto, CancellationToken ct = default);
+}
+```
+
+**FILE — create new: `TaskFlow.Api/Services/AuthService.cs`**
+
+Lifts the two `AuthController` bodies behind `IUserRepository`, verbatim in logic (email
+lowercased, BCrypt work factor 12, single generic login-failure message so failures are
+indistinguishable — no email enumeration). `BuildAuthResponse` is the same private mapper
+that lives in `AuthController` today; it moves here and the controller loses it in Slice E.
+
+```csharp
+using TaskFlow.Api.Common;
+using TaskFlow.Api.DTOs;
+using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
+
+namespace TaskFlow.Api.Services;
+
+public class AuthService : IAuthService
+{
+    private readonly IUserRepository _users;
+    private readonly JwtService _jwt;
+
+    public AuthService(IUserRepository users, JwtService jwt)
+    {
+        _users = users;
+        _jwt = jwt;
+    }
+
+    public async Task<Result<AuthResponseDto>> RegisterAsync(RegisterDto dto, CancellationToken ct = default)
+    {
+        var existing = await _users.GetByEmailAsync(dto.Email.ToLower(), ct);
+        if (existing is not null)
+            return Result<AuthResponseDto>.Conflict("An account with that email already exists.");
+
+        var user = new User
+        {
+            Name = dto.Name,
+            Email = dto.Email.ToLower(),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password, workFactor: 12),
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _users.AddAsync(user, ct);
+        await _users.SaveChangesAsync(ct);
+
+        var token = _jwt.GenerateToken(user);
+        return Result<AuthResponseDto>.Ok(BuildAuthResponse(user, token));
+    }
+
+    public async Task<Result<AuthResponseDto>> LoginAsync(LoginDto dto, CancellationToken ct = default)
+    {
+        var user = await _users.GetByEmailAsync(dto.Email.ToLower(), ct);
+        if (user is null || !BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))
+            return Result<AuthResponseDto>.Unauthorized("Invalid email or password.");
+
+        var token = _jwt.GenerateToken(user);
+        return Result<AuthResponseDto>.Ok(BuildAuthResponse(user, token));
+    }
+
+    private static AuthResponseDto BuildAuthResponse(User user, TokenResult token) => new()
+    {
+        Token = token.Token,
+        Name = user.Name,
+        Email = user.Email,
+        ExpiresAt = token.ExpiresAt
+    };
+}
+```
+
+Grounded in existing code: `IUserRepository.GetByEmailAsync/AddAsync/SaveChangesAsync`
+(Slice C), `JwtService.GenerateToken(User) → TokenResult` (Slice B), and `RegisterDto`
+/`LoginDto`/`AuthResponseDto` (already used by `AuthController`). `JwtService` is injected
+as the concrete type, matching how `AuthController` and DI use it today.
+
+> **TDD ordering:** the code above is the reference implementation. Per the loop, you make
+> it land *green* only after D2's RED `AuthService` test fails first. The doc holds the code
+> (same as it does for `TaskService`); the discipline is the order you type it, not whether
+> the doc shows it.
+
+**FILE — edit existing: `TaskFlow.Api/Program.cs`**
+
+Register the two services next to the repository registrations added in Slice C. The
+`using TaskFlow.Api.Services;` line should already be present from earlier; if the build
+reports `CS0246: ITaskService could not be found`, add it at the top:
 
 ```csharp
 builder.Services.AddScoped<ITaskService, TaskService>();
@@ -1346,37 +1678,80 @@ public static class ResultExtensions
     /// <summary>Maps a service Result onto the conventional HTTP status codes.</summary>
     public static IActionResult ToActionResult<T>(this Result<T> result) => result.Status switch
     {
-        ResultStatus.Ok         => new OkObjectResult(result.Value),
-        ResultStatus.NotFound   => new NotFoundObjectResult(new { message = result.Error }),
-        ResultStatus.Conflict   => new ConflictObjectResult(new { message = result.Error }),
-        ResultStatus.Validation => new BadRequestObjectResult(new { message = result.Error }),
-        _                       => new StatusCodeResult(500)
+        ResultStatus.Ok           => new OkObjectResult(result.Value),
+        ResultStatus.NotFound     => new NotFoundObjectResult(new { message = result.Error }),
+        ResultStatus.Conflict     => new ConflictObjectResult(new { message = result.Error }),
+        ResultStatus.Validation   => new BadRequestObjectResult(new { message = result.Error }),
+        ResultStatus.Unauthorized => new UnauthorizedObjectResult(new { message = result.Error }),
+        _                         => new StatusCodeResult(500)
     };
 }
 ```
 
+**Teaching note — what this is and why it lives here.** `ToActionResult` is an *extension
+method*: the `this Result<T>` in the parameter list lets you call `result.ToActionResult()`
+as if it were a method on `Result<T>`, even though `Result<T>` (in the service layer) knows
+nothing about ASP.NET. That keeps the direction of dependency right — the web layer knows
+about the service, not the other way around. And the entire "which status becomes which HTTP
+code" decision lives in this one table. If a `Conflict` should ever map to a 422 instead of
+409, you change it once, here, and every controller follows. That is DRY made concrete: one
+rule, one place.
+
 ### E2. RED — controller test with a mocked service
 
-Create `TaskFlow.Tests/Controllers/TasksControllerTests.cs`:
+This test isolates the controller's *one* job: turn a service `Result` into the right HTTP
+result. We mock the service so it returns a `Validation` result, then assert the controller
+produces a `400 BadRequest`. No database, no real service — just the mapping. Note we mock
+`ITaskService` here, not the repository: each layer's test fakes the layer directly beneath
+it (the service faked the repository in D2; the controller fakes the service now).
+
+**FILE — create new: `TaskFlow.Tests/Controllers/TasksControllerTests.cs`**
 
 ```csharp
-[Fact]
-public async Task Create_returns_400_when_service_reports_validation_error()
+using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
+using Moq;
+using TaskFlow.Api.Common;
+using TaskFlow.Api.Controllers;
+using TaskFlow.Api.DTOs;
+using TaskFlow.Api.Services;
+using Xunit;
+
+namespace TaskFlow.Tests.Controllers;
+
+public class TasksControllerTests
 {
-    var service = new Mock<ITaskService>();
-    service.Setup(s => s.CreateAsync(It.IsAny<CreateTaskDto>(), It.IsAny<CancellationToken>()))
-           .ReturnsAsync(Result<TaskResponseDto>.Invalid("bad"));
-    var sut = new TasksController(service.Object);
+    [Fact]
+    public async Task Create_returns_400_when_service_reports_validation_error()
+    {
+        var service = new Mock<ITaskService>();
+        service.Setup(s => s.CreateAsync(It.IsAny<CreateTaskDto>(), It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Result<TaskResponseDto>.Invalid("bad"));
+        var sut = new TasksController(service.Object);
 
-    var result = await sut.Create(new CreateTaskDto { Title = "x" });
+        var result = await sut.Create(new CreateTaskDto { Title = "x" });
 
-    result.Should().BeOfType<BadRequestObjectResult>();
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
 }
 ```
 
-**Expect RED** — `TasksController` still takes `AppDbContext`, not `ITaskService`.
+**Expect RED** — `TasksController` still takes `AppDbContext`, not `ITaskService`, so
+`new TasksController(service.Object)` will not compile. Compile-failure red again: the test
+describes the controller you are about to build.
 
 ### E3. GREEN — rewrite the controller thin
+
+**First, finish the service.** The thin controller below calls `GetAllAsync`, `GetByIdAsync`,
+`UpdateAsync`, `UpdateStatusAsync`, and `DeleteAsync` — the five methods D3 deliberately left
+out because they had no tests yet. A controller cannot call a method that does not exist, so
+this is where they get built. Add each to `ITaskService` and `TaskService` now, **test-first,
+one at a time**, exactly like `CreateAsync`: write its RED test in `TaskServiceTests`, watch it
+fail, implement it, watch it pass. Only when the service is complete do you rewrite the
+controller. (Each follows the same shape: load via the repository, apply any rule, return the
+right `Result` status — `NotFound` when the id is missing, `Ok` otherwise.)
+
+Once the service methods exist:
 
 ```csharp
 [ApiController]
@@ -1399,9 +1774,19 @@ public class TasksController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateTaskDto dto) =>
         (await _tasks.CreateAsync(dto)).ToActionResult();
 
-    // PUT, PATCH status, DELETE follow the same one-line pattern.
+    // PUT (Update), PATCH (UpdateStatus), DELETE follow the same one-line pattern:
+    // await the matching service method, then .ToActionResult().
 }
 ```
+
+**Teaching note — why the controller is now trivial.** Every action is a single line: call the
+service, map the `Result`. There is no `if`, no `try/catch`, no `DbContext`, no validation —
+all of that moved down to the service (where it is unit-tested) and the mapper (one place).
+A controller shaped like this has exactly one job, HTTP translation, and it is nearly
+impossible to hide a bug in one line. That flatness is the Single Responsibility Principle
+paying out: give each layer one job and each layer turns simple. Compare it to the original
+`TasksController`, which validated, queried EF, and shaped responses all at once — three jobs
+that were hard to test precisely because they were tangled together.
 
 Do the same for `AuthController` (inject `IAuthService`). Rename `TaskControllers.cs`
 to `TasksController.cs` while we are here (filename should match the class):
@@ -1494,34 +1879,213 @@ public interface IClaudeClient
 }
 ```
 
-Implement it as a wrapper over `AnthropicClient` (`ClaudeClient.cs`), registered in DI.
-`ClaudeAgentBase` takes `IClaudeClient` instead of newing up `AnthropicClient`, and its
-data access goes through `ITaskRepository` / `IAgentLogRepository` injected into the
-concrete agents. (Exact signatures confirmed at execution — this depends on the final
-Slice C repository surface, which is why we do it after C is merged.)
+**What a "seam" is, and why Claude is the last one we need.** A seam is a place where you
+can substitute one implementation for another — in practice, an interface. Every other
+dependency in the app is already behind a seam (repositories, services), so tests can swap
+in fakes. The one exception is the Claude client: today the agents `new` up an
+`AnthropicClient` and call it directly, which means any test of an agent would make a real
+network call, cost tokens, and be non-deterministic. Wrapping that call in `IClaudeClient`
+closes the last seam: a test can now hand the agent a fake client that returns a *canned*
+response, so you test the agent's observe→act logic with zero network calls. This matters
+enormously for the North Star — an executor agent doing real work must be testable in CI
+without hitting the live API.
+
+**FILE — create new: `TaskFlow.Api/Services/ClaudeClient.cs`** (the real implementation,
+a thin pass-through to the SDK — the same call the agents make today):
+
+```csharp
+using Anthropic.SDK;
+using Anthropic.SDK.Messaging;
+
+namespace TaskFlow.Api.Services;
+
+/// <summary>Production IClaudeClient: forwards to the Anthropic SDK.</summary>
+public class ClaudeClient : IClaudeClient
+{
+    private readonly AnthropicClient _client;
+
+    public ClaudeClient(IConfiguration config)
+    {
+        var apiKey = config["Anthropic:ApiKey"]
+            ?? throw new InvalidOperationException("Anthropic:ApiKey is not configured.");
+        _client = new AnthropicClient(apiKey);
+    }
+
+    public Task<MessageResponse> SendAsync(MessageParameters parameters, CancellationToken ct = default) =>
+        _client.Messages.GetClaudeMessageAsync(parameters, ct);
+}
+```
+
+**FILE — edit existing: `TaskFlow.Api/Program.cs`** — register it next to the other services:
+
+```csharp
+builder.Services.AddScoped<IClaudeClient, ClaudeClient>();
+```
+
+`ClaudeAgentBase` then takes `IClaudeClient` in its constructor instead of newing up
+`AnthropicClient`, and calls `_claude.SendAsync(parameters, ct)` where it used to call
+`client.Messages.GetClaudeMessageAsync(...)`. Its data access moves to `ITaskRepository` /
+`IAgentLogRepository` (from Slice C) injected into the concrete agents. The tool-use loop
+itself does not change shape — only *what it calls* changes, from concrete types to seams.
 
 ### F2. RED — a tool-handler test with real SQLite and a stub Claude
 
-The high-value test: when Claude asks the stale agent to escalate a task, the task's
-priority actually becomes High and an `AgentLog` is written. Using `SqliteInMemoryContext`
-for data and a Moq `IClaudeClient` returning a single canned `tool_use` for
-`escalate_task`, assert the database result.
+**What this test proves.** When Claude asks the stale agent to escalate a task, the task's
+priority actually becomes `High` in the database and an `Escalated` `AgentLog` is written.
+This is the payoff of the seam: we drive the agent with a *scripted* Claude response and
+check the real side effects, no network involved. It combines both test styles from earlier
+slices — real in-memory SQLite for the data (so the writes are genuine, like the repository
+tests) and a mock for the untestable dependency (`IClaudeClient`, like the service tests).
+
+The Arrange / Act / Assert shape:
+
+- **Arrange** — a `SqliteInMemoryContext` with real repositories over it, seeded with one
+  stale task; a stubbed `IClaudeClient` scripted to return a single `escalate_task` tool
+  call and then end its turn; a no-op notifier.
+- **Act** — run one agent cycle.
+- **Assert** — reload the task and check `Priority == High`, and that an `Escalated`
+  `AgentLog` row exists for it.
+
+**FILE — create new: `TaskFlow.Tests/Agents/StaleTaskAgentTests.cs`**
+
+```csharp
+using FluentAssertions;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using TaskFlow.Api.Agents;
+using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
+using TaskFlow.Api.Services;
+using TaskFlow.Tests.TestSupport;
+using Xunit;
+
+namespace TaskFlow.Tests.Agents;
+
+public class StaleTaskAgentTests
+{
+    [Fact]
+    public async Task Escalate_tool_call_sets_priority_High_and_logs_it()
+    {
+        using var db = new SqliteInMemoryContext();
+
+        // Arrange — one stale, open task (updated long ago, not Done).
+        var task = new TaskItem
+        {
+            Title = "Old task",
+            Status = WorkflowStatus.Todo,
+            Priority = TaskPriority.Medium,
+            UpdatedAt = DateTime.UtcNow.AddDays(-10)
+        };
+        db.Context.Tasks.Add(task);
+        await db.Context.SaveChangesAsync();
+
+        var tasks = new TaskRepository(db.Context);
+        var logs  = new AgentLogRepository(db.Context);
+
+        // Script Claude: escalate this task, then stop. (Helper covered below.)
+        var claude = StubClaude.ThatEscalates(task.Id, reason: "overdue 10 days");
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Anthropic:ApiKey"] = "test",
+            ["Agents:StaleTaskThresholdHours"] = "48"
+        }).Build();
+
+        var sut = new StaleTaskAgent(
+            tasks, logs, config,
+            NullLogger<StaleTaskAgent>.Instance,
+            Mock.Of<IAgentNotifier>(),
+            claude);
+
+        // Act
+        await sut.RunAsync(CancellationToken.None);
+
+        // Assert — real database side effects
+        var updated = await tasks.GetByIdAsync(task.Id);
+        updated!.Priority.Should().Be(TaskPriority.High);
+
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        recent.Should().Contain(l => l.Action == "Escalated" && l.TaskId == task.Id);
+    }
+}
+```
+
+> **One honest flag.** `StubClaude.ThatEscalates(...)` is a small test helper that builds a
+> canned `MessageResponse` containing one `escalate_task` tool-use block (then an
+> `end_turn`). Constructing that response object is the one piece whose exact shape depends
+> on the `Anthropic.SDK` types, so we finalize it when we run this — it is a test fixture,
+> not app code, and getting it wrong only fails the test, never ships. The assertions above
+> are the real contract and do not change. This is the same "representative code, confirmed
+> at execution" rule the doc uses for anything SDK-version-specific.
 
 ```bash
 dotnet test
 ```
 
-**Expect RED** until the agents are refactored onto the seams.
+**Expect RED** — the refactored `StaleTaskAgent` (repository + `IClaudeClient` constructor)
+does not exist yet, so this will not compile. You make it green in F3.
 
 ### F3. GREEN — refactor the agents
 
-Point `ClaudeAgentBase` and both agents at `IClaudeClient` and the repositories. The
-tool-use loop is unchanged in shape; only the client call and the data calls move
-behind interfaces. Tests go green; run the app to confirm the agents still fire.
+The tool-use loop keeps the same shape it had in Chunk 1; only *what it calls* changes,
+from concrete types to the seams. Three concrete edits make F2 pass:
+
+**1. `ClaudeAgentBase` constructor takes the seams, not concrete types.** It now receives
+`IClaudeClient`, `IAgentLogRepository`, `IAgentNotifier`, `ILogger`, and `IConfiguration` —
+no `AppDbContext`, no `AnthropicClient`:
+
+```csharp
+protected ClaudeAgentBase(
+    IClaudeClient claude,
+    IAgentLogRepository logs,
+    IAgentNotifier notifier,
+    ILogger logger,
+    IConfiguration config) { /* assign to protected fields */ }
+```
+
+**2. The loop's Claude call and the record helper go through the seams.** Where the old
+loop called `client.Messages.GetClaudeMessageAsync(parameters, ct)`, it now calls
+`await _claude.SendAsync(parameters, ct)`. Where `RecordActionAsync` wrote through
+`_db.AgentLogs`, it now writes through the repository:
+
+```csharp
+protected async Task RecordActionAsync(AgentLog log, CancellationToken ct)
+{
+    await _logs.AddAsync(log, ct);
+    await _logs.SaveChangesAsync(ct);
+    await _notifier.AgentActionAsync(log, ct);
+}
+```
+
+Everything else in the loop — build tools, send, check `StopReason == "tool_use"`, dispatch
+each tool, feed results back, stop on `end_turn` — is the Chunk 1 body unchanged.
+
+**3. Each concrete agent gets an `ITaskRepository` for its observe step.** The queries that
+used `_db.Tasks` move to repository methods added in Slice C:
+
+- `StaleTaskAgent`: `_tasks.GetStaleAsync(cutoff)`, `_tasks.GetOpenCountsByUserAsync()` for
+  workload, and `_logs.GetTaskScopedSinceAsync(Name, since, 50)` for its memory.
+- `TaskPrioritizerAgent`: `_tasks.GetOpenAsync()`.
+
+Its per-tool handlers (escalate / reassign / flag / update-priority) keep their logic but
+load and save through `_tasks` instead of `_db`. No handler touches `AppDbContext` or
+`AnthropicClient` after this.
+
+Run `dotnet test` (F2 goes green), then run the app and confirm both agents still fire on
+their intervals and broadcast to the dashboard — the behavior is identical; only the wiring
+underneath changed.
+
+> **Why this is the last big refactor.** After F, every dependency in the system sits behind
+> a seam: web → service → repository → EF, and agent → repository + `IClaudeClient`. That is
+> the full architecture from Part 1, and it is exactly the surface the North Star's executor
+> agent plugs into — it will be *another* `ClaudeAgentBase` subclass that reads a task,
+> reasons through `IClaudeClient`, and writes through the repositories.
 
 ### F4. Commit + PR
 
 ```bash
+git add .
 git commit -m "refactor(agents): extract ClaudeAgentBase on IClaudeClient + repositories; add handler tests"
 git push -u origin feature/slice-f-agents
 ```
@@ -1556,18 +2120,64 @@ PR into `develop`, merge, delete.
 
 ## Slice G — Final Backend Cleanup
 
+**Why a cleanup slice, and why last.** You do not polish while the structure is still
+moving — you would just re-polish after the next refactor. Now that every layer exists and
+is tested, the rough edges are safe to sweep. Good cleanup is not busywork: each item below
+removes a real risk (a silent bug, a magic string, an undocumented public API) or a warning.
+If an item does not remove a risk, it does not belong in this slice.
+
 Branch: `feature/slice-g-cleanup`
 
-- Fold in remaining constant use (SignalR event names `"AgentAction"`/`"AgentCycle"`
-  into a shared `HubEvents` constants class used by hub and notifier).
-- Unify the diagnostics controller's model default onto `AnthropicDefaults.Model`.
-- Add XML-doc summaries to any public type/member still missing one.
-- ~~Bump the vulnerable SQLite native package to clear the `NU1903` warning.~~
-  **Done early** (during Slice A). Fix was, from `TaskFlow.Api`:
-  `dotnet add package SQLitePCLRaw.lib.e_sqlite3` (adds a direct reference to the latest
-  patched native lib, overriding the vulnerable 2.1.11 pulled in transitively by EF Core
-  Sqlite). Fallback if it does not clear: `dotnet add package SQLitePCLRaw.bundle_e_sqlite3`.
-- Full run: `dotnet build` then `dotnet test` — everything green.
+**1. Centralize the SignalR event names (a cross-language contract).** The strings
+`"AgentAction"` and `"AgentCycle"` appear on the C# side (the notifier that sends them) and
+again on the TypeScript side (`AgentFeed`'s `connection.on("AgentAction", ...)`). They are a
+*contract between two languages*, and a typo on either side silently breaks the live feed —
+no error, the dashboard just stops updating. Pin the C# side to one constants class so the
+backend has a single source of truth.
+
+**FILE — create new: `TaskFlow.Api/Hubs/HubEvents.cs`**
+
+```csharp
+namespace TaskFlow.Api.Hubs;
+
+/// <summary>
+/// SignalR event names. These strings are a contract with the React client
+/// (see AgentFeed's connection.on handlers) — a typo on either side silently
+/// stops the live feed, so keep the two ends in sync.
+/// </summary>
+public static class HubEvents
+{
+    public const string AgentAction = "AgentAction";
+    public const string AgentCycle  = "AgentCycle";
+}
+```
+
+Then in `SignalRAgentNotifier`, replace the string literals with `HubEvents.AgentAction` /
+`HubEvents.AgentCycle`. (The React side keeps its own copy; there is no shared type across
+the language boundary — the constants class just guarantees the backend never disagrees with
+itself.)
+
+**2. Kill the last stray magic default.** `AgentDiagnosticsController` still defaults the
+model to a hard-coded `"claude-opus-4-5"` while everything else uses `AnthropicDefaults.Model`.
+That is exactly the inconsistency `AnthropicDefaults` exists to prevent — one place could
+call a different model than the agents. Change `_config["Anthropic:Model"] ?? "claude-opus-4-5"`
+to `_config["Anthropic:Model"] ?? AnthropicDefaults.Model` and add the `using`.
+
+**3. Document the public surface.** Add a one-line XML-doc `/// <summary>` to any public
+type or member still missing one (services, repositories, `Result<T>`, `IClaudeClient`).
+These show up in IntelliSense for anyone using the type, and they force you to state each
+type's single responsibility in a sentence — if you cannot, the type is probably doing too
+much.
+
+**4. Security patch — already done in Slice A.** ~~Bump the vulnerable SQLite native
+package.~~ Fixed early: from `TaskFlow.Api`, `dotnet add package SQLitePCLRaw.lib.e_sqlite3`
+adds a direct reference to the patched native lib, overriding the vulnerable 2.1.11 that EF
+Core Sqlite pulls in transitively (clears `NU1903`). Fallback if it does not clear:
+`dotnet add package SQLitePCLRaw.bundle_e_sqlite3`.
+
+**5. Prove it all still holds.** `dotnet build` (zero warnings) then `dotnet test` (all
+green). This is the moment the backend refactor is complete: controllers → services →
+repositories → EF, agents on `IClaudeClient` + repositories, every layer tested.
 
 ```bash
 git add .
@@ -1666,6 +2276,13 @@ backend.
 
 ## Slice H — Scaffold the Frontend Test Harness
 
+This is Slice A's counterpart for the frontend: stand up a test harness and prove it runs
+before writing any real tests. The frontend needs a completely different toolchain than the
+backend, because the browser is a different world. Instead of xUnit plus a real database,
+you simulate a DOM (jsdom), render components the way a user sees them (React Testing
+Library), and intercept network calls (MSW). Same idea as Slice A — write a throwaway test,
+watch it pass, prove the machinery works — just different machinery.
+
 Branch: `feature/slice-h-fe-test-harness`
 
 ### H1. Install the test tooling
@@ -1682,22 +2299,46 @@ npm install -D vitest @testing-library/react @testing-library/jest-dom @testing-
 
 ### H2. Configure Vitest
 
-Add a `test` block to `vite.config.ts`:
+Vitest reuses your Vite config, so the test setup lives right in `vite.config.ts`. One
+catch first: the `test` block is a Vitest extension, and the `defineConfig` imported from
+`'vite'` does not know about it — you get a TypeScript error on `test:`. Import
+`defineConfig` from `'vitest/config'` instead; it is the same function with the `test` types
+added. Change the top of `vite.config.ts`:
+
+```ts
+// was: import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
+```
+
+Then add the `test` block:
 
 ```ts
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: { port: 5173 },
   test: {
-    globals: true,
-    environment: 'jsdom',
-    setupFiles: './src/test/setup.ts',
-    css: true,
+    globals: true,                      // use describe/it/expect without importing them
+    environment: 'jsdom',               // fake browser DOM so components render in Node
+    setupFiles: './src/test/setup.ts',  // runs once before each test file
+    css: true,                          // handle CSS imports instead of erroring on them
   },
 })
 ```
 
-Create `src/test/setup.ts`:
+**What each option buys you:**
+- `globals: true` — write `describe` / `it` / `expect` without importing them in every file,
+  the way Jest works out of the box.
+- `environment: 'jsdom'` — tests run in Node, which has no DOM. jsdom provides a fake
+  browser DOM so `render(<Component/>)` has a `document` to render into. Without it, every
+  component test crashes.
+- `setupFiles` — a file that runs before each test file. We use it to load the jest-dom
+  matchers now, and to start MSW later (Slice K).
+- `css: true` — components `import './x.css'`; this tells Vitest to process those imports
+  rather than choke on them.
+
+Create `src/test/setup.ts` — the home for cross-test setup. Right now it just loads the
+extra DOM matchers (like `.toBeInTheDocument()` used in the smoke test below); Slice K adds
+the MSW server start/stop here:
 
 ```ts
 import '@testing-library/jest-dom'
@@ -1771,16 +2412,40 @@ but the smoke tests from H (and any component tests) guard it.
 
 ### I1. Create the folders and move files
 
+**Why these layers — this is separation of concerns for React.** The backend split one
+fat controller into controller/service/repository so each had one job. The frontend has the
+same disease in a different form: `Dashboard.tsx` fetches data, holds state, *and* renders
+markup, all at once. We split those jobs into folders, each with one responsibility and a
+clear dependency direction (each layer uses the one below it, never the reverse):
+
 ```
 src/
-├── api/         <- api.ts (split into client.ts, auth.ts, tasks.ts, agentLogs.ts)
-├── hooks/       <- useAgentFeed.ts, useAuth (from AuthContext), useTasks (new)
-├── components/  <- TaskCard, KanbanColumn, AgentFeed, AgentStatus (presentational)
-├── features/    <- Dashboard, Login (containers)
-├── lib/         <- formatting.ts, styles.ts, constants.ts
-├── types.ts
-└── test/
+├── api/         transport only — talks to the backend (fetch, JWT, endpoints)
+│                └─ api.ts splits into client.ts, auth.ts, tasks.ts, agentLogs.ts
+├── hooks/       state + side effects — useAgentFeed, useAuth, useTasks
+│                └─ the only place that calls api/ and holds React state
+├── components/  presentational — TaskCard, KanbanColumn, AgentFeed, AgentStatus
+│                └─ dumb: props in, markup out; no fetching, no global state
+├── features/    containers — Dashboard, Login
+│                └─ compose hooks + components into a screen
+├── lib/         pure shared helpers — formatting.ts, styles.ts, constants.ts
+│                └─ no React, no state; the leaf everything can import
+├── types.ts     shared TypeScript types (mirror the C# DTOs)
+└── test/        setup, MSW handlers, test utilities
 ```
+
+The mapping to the backend, so it clicks: `api/` is your transport layer (like the
+repositories — it is the only code that knows how to reach the outside world), `hooks/`
+holds the logic and state (like the services), `components/` are pure renderers, and
+`features/` wire them together (like a controller composing a request). Same principle:
+give each piece one job and it becomes testable and swappable.
+
+**How to move without breaking things.** Create the folders, then move files a layer at a
+time — `lib/` first (nothing depends on it having moved), then `components/`, then up. After
+each move, TypeScript flags *every* broken import for you: run `npm run dev` or check the
+Problems panel and treat that red list as a checklist. Fix the imports, confirm
+`npm run test` still passes, then move the next layer. The tests from Slice H are your
+safety net — if a move breaks behavior, a test goes red immediately.
 
 ### I2. Extract shared helpers (the DRY pass)
 
@@ -1885,21 +2550,74 @@ describe('TaskCard', () => {
 })
 ```
 
-(The `DndContext` wrapper is needed because `TaskCard` uses `useSortable`.)
+(The `DndContext` wrapper is needed because `TaskCard` uses `useSortable`, which throws if
+it renders outside a drag context.)
+
+**How to read this test — the RTL philosophy.** Notice what it asserts on:
+`screen.getByText('Ship it')`, `getByText('High')`, `getByText('Unassigned')` — the things a
+*user actually sees on screen*. It never checks props, state, or internal variable names.
+That is React Testing Library's one rule: *test your component the way a user uses it, not
+the way it is built.* The payoff is that these tests survive refactors — rename a variable,
+switch `useState` for `useReducer`, restructure the JSX, and as long as the card still shows
+"Ship it" and "High", the test stays green. A test that reached into `component.state.title`
+would break on a rename that changed nothing the user can see. (`getByText` also throws when
+the text is missing, so it doubles as the assertion — no separate "exists" check needed.)
 
 ```bash
 npm run test
 ```
 
-If `TaskCard` already renders these, this may pass immediately — that is fine, it locks
-the behavior in before we refactor. Add equivalent tests for `KanbanColumn`, `AgentFeed`
-(asserts an action label renders), and `AgentStatus` (Running vs Idle badge).
+If `TaskCard` already renders these, the test may pass immediately — that is fine and
+expected. This is a *characterization test*: you are pinning down the current visible
+behavior *before* the J2 refactor, so that if the refactor changes what the user sees, a
+test goes red and tells you. Add equivalent tests for `KanbanColumn`, `AgentFeed` (assert an
+action label renders), and `AgentStatus` (the Running vs Idle badge) — same style, assert on
+visible output only.
 
 ### J2. Refactor to pure components
 
-Ensure none of these fetch data or read global state — they only take props. Any that
-currently reach into a hook get that data lifted up to their container parent. Tests
-stay green.
+**The split this slice is named for.** React components fall into two kinds:
+
+- **Presentational** — a pure function of its props. It renders and nothing else: no
+  `fetch`, no `useState` holding server data, no `useContext` reaching for global state.
+  `TaskCard`, `KanbanColumn`, `AgentFeed`, `AgentStatus` should all be this.
+- **Container** — owns the data and behavior. It calls the hooks, holds the state, and
+  passes plain values down to presentational children. `Dashboard` and `Login` are
+  containers (they live in `features/`).
+
+**Why bother.** Three concrete payoffs: (1) presentational components are trivially testable
+— give props, assert output, exactly what J1 does; a component that fetches its own data
+would need its network mocked just to render. (2) They are reusable — the same `AgentFeed`
+can be dropped anywhere you have logs to show, because it does not assume *where* the logs
+come from. (3) They re-render only when their props change, not when some unrelated global
+state updates.
+
+**How to lift state up, concretely.** If `AgentFeed` currently calls `useAgentFeed()` inside
+itself, that is the coupling to remove. Move the hook call up to the `Dashboard` container
+and pass the results down as props:
+
+```tsx
+// BEFORE — AgentFeed fetches its own data (container + presentational tangled)
+export function AgentFeed() {
+  const { logs, connected } = useAgentFeed()   // ← coupling
+  return /* ...render logs... */
+}
+
+// AFTER — AgentFeed is pure; the container owns the data
+export function AgentFeed({ logs, connected }: { logs: AgentLog[]; connected: boolean }) {
+  return /* ...render logs... */               // props in, markup out
+}
+
+// Dashboard (container) now owns the hook and passes values down:
+function Dashboard() {
+  const { logs, connected } = useAgentFeed()
+  return <AgentFeed logs={logs} connected={connected} />
+}
+```
+
+The J1 tests stay green through this move — the visible output did not change, only *who
+supplies the data*. That is the RTL payoff in action: the refactor is safe because the tests
+watch what the user sees, not how the data arrives.
 
 ```bash
 git add .
@@ -1940,6 +2658,16 @@ Branch: `feature/slice-k-fe-api-hooks`
 level with MSW. This is where the app's trickiest logic (auth header, 401 handling,
 SignalR fallbacks) gets covered.
 
+**What MSW is, and why not just mock `api.ts`.** MSW (Mock Service Worker) intercepts
+`fetch` at the network boundary and returns responses *you* define. The alternative — mocking
+your own `api.ts` module — would replace your real fetch code with a stub, which means the
+one thing you most want to test (does the request send the JWT header? does it parse the
+response? does it clear the token on a 401?) never runs. With MSW, your *real* `login()` and
+`getTasks()` execute exactly as in production; only the server on the other end is fake. You
+get high-fidelity tests of your transport layer without a backend running. It is the frontend
+equivalent of the in-memory SQLite you used for repositories: a real boundary, faked just
+past the edge.
+
 ### K1. MSW handlers
 
 Create `src/test/handlers.ts` and `src/test/server.ts`:
@@ -1962,7 +2690,8 @@ import { handlers } from './handlers'
 export const server = setupServer(...handlers)
 ```
 
-Wire it into `src/test/setup.ts`:
+The handlers are your default fake backend; `server` is the interceptor that applies them.
+Wire it into `src/test/setup.ts` (the setup file from Slice H) so every test file gets it:
 
 ```ts
 import '@testing-library/jest-dom'
@@ -1974,9 +2703,20 @@ afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 ```
 
+**The lifecycle, and why each line matters:**
+- `server.listen({ onUnhandledRequest: 'error' })` — start intercepting before any test runs.
+  The `'error'` setting fails the test if code hits a URL you did not define a handler for,
+  so a forgotten mock surfaces loudly instead of silently returning nothing.
+- `server.resetHandlers()` after each test — undo any per-test overrides (see the 401 test
+  below), so one test's custom response never leaks into the next.
+- `server.close()` at the end — stop intercepting and clean up.
+
 ### K2. RED/GREEN — test the api layer
 
-`src/api/auth.test.ts`:
+Start with the happy path — the default `login` handler from K1 returns a token, and this
+proves your real `login()` sends the request and parses the response:
+
+**FILE — create new: `src/api/auth.test.ts`**
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -1990,9 +2730,44 @@ describe('login', () => {
 })
 ```
 
-Add a test that a 401 from a protected call clears the stored token (override the
-handler in that one test to return 401). Then test `useAgentFeed` seeds from
-`getAgentLogs` and exposes `connected`.
+**The 401 test — the important one.** This covers the security-critical behavior: when a
+protected call comes back 401 (expired/invalid token), the client clears the stored token so
+the app falls back to the login screen. The technique is `server.use(...)`, which *overrides*
+a handler for this one test only (the `resetHandlers()` in setup undoes it afterward):
+
+**FILE — create new: `src/api/client.test.ts`**
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
+import { server } from '../test/server'
+import { getTasks, setToken, getToken } from './client'
+
+describe('401 handling', () => {
+  it('clears the stored token when a protected call returns 401', async () => {
+    setToken('stale.token')
+
+    // Override just for this test: make /api/Tasks answer 401.
+    server.use(
+      http.get('*/api/Tasks', () => new HttpResponse(null, { status: 401 })),
+    )
+
+    await expect(getTasks()).rejects.toThrow()   // the call fails
+    expect(getToken()).toBeNull()                // and the token was cleared
+  })
+})
+```
+
+(Import paths depend on how you split `api/` in Slice I — `login` in `auth.ts`, the token
+helpers and `getTasks` wherever you put them. Adjust to match your split.)
+
+**The hook test.** `useAgentFeed` should seed its initial logs from `getAgentLogs` and expose
+a `connected` flag. Test it with React Testing Library's `renderHook`, letting MSW answer the
+`getAgentLogs` fetch. One honest flag: the hook also opens a SignalR connection, and asserting
+on the *live* `connected` flag means stubbing `@microsoft/signalr`'s `HubConnectionBuilder` —
+that mock's exact shape is confirmed when you write it (it is test scaffolding; wrong only
+fails the test). The seed-from-`getAgentLogs` assertion needs no SignalR and is the higher-value
+check, so cover that first.
 
 ```bash
 git add .
@@ -2031,6 +2806,19 @@ Branch: `feature/slice-l-fe-integration`
 **Goal:** a couple of tests that render a real feature end-to-end through MSW, proving
 the pieces work together, plus a final DRY sweep.
 
+**Integration test vs the unit tests so far.** Every test up to now isolated *one* layer and
+faked everything beneath it — the service test mocked the repository, the component test
+passed props directly, the api test faked the network. That pinpoints failures precisely: if
+a unit test breaks, you know exactly which piece is wrong. An **integration test** does the
+opposite on purpose: it wires several *real* layers together — the `Login` component, the
+real auth hook, the real `api/` code, all talking through MSW — and checks that the whole
+flow works. Unit tests prove each brick is sound; an integration test proves the wall stands.
+
+**Why only a couple.** This is the test pyramid: many fast, precise unit tests at the base, a
+few slower integration tests at the top. You do not write only integration tests — they are
+slower and, when one fails, it does not tell you *which* layer broke. A handful covering the
+critical flows (logging in, the board loading) is exactly the right amount.
+
 ### L1. Login flow integration test
 
 `src/features/Login.test.tsx`:
@@ -2056,10 +2844,33 @@ describe('Login flow', () => {
 })
 ```
 
-### L2. Final sweep
+**How to read it — and the two details that make it work:**
+- **`userEvent`** simulates a real person: it types character by character and fires the same
+  focus/keyboard/click events a browser would, rather than jamming a value in directly. That
+  is why it is `await`ed — real interaction is asynchronous. Use it over the older `fireEvent`
+  whenever you are modelling what a user does.
+- **`findByText` (not `getByText`)** waits. Clicking "Sign in" kicks off a real async round
+  trip — the hook calls the api, MSW answers with a token, state updates, the app re-renders
+  past the login form. `getByText` checks *right now* and would fail before that finishes;
+  `findByText` polls until the text appears (or times out). Rule of thumb: `getBy` for things
+  already on screen, `findBy` for things that appear after an async update.
 
-- Confirm no component still defines its own color map or date formatter.
+What this one test actually exercises: the `Login` component, the `AuthProvider`/auth hook,
+the real `login()` in `api/`, MSW standing in for the backend, and the re-render that shows
+the signed-in name. If any of those seams is miswired, this test goes red — which is the
+whole point of an integration test.
+
+### L2. Final sweep — the finish line
+
+This is the last slice. The sweep confirms the frontend now matches the backend: layered,
+DRY, and covered by tests at every level.
+
+- Confirm no component still defines its own color map or date formatter (all in `lib/`).
 - `npm run test` all green; `npm run build` clean; `npm run dev` smoke check.
+
+When this merges, both halves of the app have the same shape: clear layers, one job per
+piece, and a test pyramid guarding each — unit tests at the base, a few integration tests on
+top. That is the foundation the North Star (Part 5) is built on.
 
 ```bash
 git add .
@@ -2109,6 +2920,35 @@ Hand TaskFlow a specification document (exactly like this one). TaskFlow:
 
 In other words: the reactive agents (prioritize, detect staleness) grow into
 *executing* agents (ingest, plan, act).
+
+**The key point — it feeds TaskFlow's *own* board.** Ingestion does not build a separate
+pipeline or a new task store. It writes through the *same repositories* into the *same
+`Tasks` table* that backs the *same Kanban board* you already built. The executor agent is
+the *same agent layer*. You watch on the *same React board* over the *same SignalR feed*.
+The document simply becomes cards on your board, and the agents work them:
+
+```mermaid
+flowchart LR
+    DOC["Spec document<br/>(a doc like this)"]
+    ING["IngestionService<br/>parse → task drafts<br/>(a Service — Slice D)"]
+    RP["Repositories<br/>AddAsync — Slice C"]
+    BOARD[("TaskFlow board<br/>same Tasks table + Kanban")]
+    EX["Executor agent<br/>claims + does work<br/>IClaudeClient — Slice F"]
+    CLAUDE["Claude API<br/>reason step"]
+    YOU["You<br/>watching live"]
+
+    DOC -->|1. hand it in| ING
+    ING -->|2. write tasks| RP
+    RP -->|3. tasks appear| BOARD
+    BOARD -->|4. claim a To Do card| EX
+    EX -. reason .-> CLAUDE
+    EX -->|5. do work, move card| BOARD
+    BOARD -. 6. SignalR live push .-> YOU
+```
+
+Everything in that diagram already exists in the architecture (Part 1) except the two new
+boxes — `IngestionService` and the executor agent — and both are built on seams the
+refactor puts in place. Nothing new is invented at the data or transport layer.
 
 ## Why the current refactor is the prerequisite, not a detour
 
