@@ -858,7 +858,7 @@ public class TaskRepositoryTests
         var cutoff = DateTime.UtcNow.AddHours(-48);
         await sut.AddAsync(new TaskItem { Title = "fresh", UpdatedAt = DateTime.UtcNow });
         await sut.AddAsync(new TaskItem { Title = "stale", UpdatedAt = cutoff.AddHours(-1) });
-        await sut.AddAsync(new TaskItem { Title = "done-stale", Status = Models.WorkflowStatus.Done, UpdatedAt = cutoff.AddHours(-1) });
+        await sut.AddAsync(new TaskItem { Title = "done-stale", Status = WorkflowStatus.Done, UpdatedAt = cutoff.AddHours(-1) });
         await sut.SaveChangesAsync();
 
         var stale = await sut.GetStaleAsync(cutoff);
@@ -868,7 +868,8 @@ public class TaskRepositoryTests
 }
 ```
 
-(`Models.WorkflowStatus` — the task workflow enum; see the naming convention in Part 1.)
+(`WorkflowStatus` is the task workflow enum; the test has `using TaskFlow.Api.Models;`
+so no namespace prefix is needed. See the naming convention in Part 1.)
 
 ```bash
 dotnet test
@@ -1191,7 +1192,7 @@ public class TaskServiceTests
         var result = await sut.CreateAsync(new CreateTaskDto { Title = "x", AssignedToId = 1 });
 
         result.IsSuccess.Should().BeTrue();
-        result.Value!.Status.Should().Be(nameof(Models.WorkflowStatus.Todo));
+        result.Value!.Status.Should().Be(nameof(WorkflowStatus.Todo));
         _tasks.Verify(t => t.AddAsync(It.IsAny<TaskItem>(), It.IsAny<CancellationToken>()), Times.Once);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }

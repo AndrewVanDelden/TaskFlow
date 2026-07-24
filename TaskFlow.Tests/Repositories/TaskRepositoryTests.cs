@@ -32,7 +32,7 @@ public class TaskRepositoryTests
         var cutoff = DateTime.UtcNow.AddHours(-48);
         await sut.AddAsync(new TaskItem { Title = "fresh", UpdatedAt = DateTime.UtcNow });
         await sut.AddAsync(new TaskItem { Title = "stale", UpdatedAt = cutoff.AddHours(-1) });
-        await sut.AddAsync(new TaskItem { Title = "done-stale", Status = Models.WorkflowStatus.Done, UpdatedAt = cutoff.AddHours(-1) });
+        await sut.AddAsync(new TaskItem { Title = "done-stale", Status = WorkflowStatus.Done, UpdatedAt = cutoff.AddHours(-1) });
         await sut.SaveChangesAsync();
 
         var stale = await sut.GetStaleAsync(cutoff);
