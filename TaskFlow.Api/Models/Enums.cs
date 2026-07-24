@@ -1,6 +1,9 @@
 namespace TaskFlow.Api.Models;
 
-public enum TaskStatus
+// Naming convention: a domain enum must never reuse a name from the .NET base class
+// library. The old "TaskStatus" collided with System.Threading.Tasks.TaskStatus, so it
+// is named WorkflowStatus. TaskPriority has no BCL clash and keeps its name.
+public enum WorkflowStatus
 {
     Todo,
     InProgress,

@@ -52,7 +52,7 @@ public class StaleTaskAgent : ITaskFlowAgent
 
         var staleTasks = await _db.Tasks
             .Include(t => t.AssignedTo)
-            .Where(t => t.Status != Models.TaskStatus.Done && t.UpdatedAt < cutoff)
+            .Where(t => t.Status != Models.WorkflowStatus.Done && t.UpdatedAt < cutoff)
             .OrderBy(t => t.UpdatedAt)
             .ToListAsync(cancellationToken);
 
@@ -78,7 +78,7 @@ public class StaleTaskAgent : ITaskFlowAgent
 
         // Workload context so Claude can judge "overloaded"
         var workload = await _db.Tasks
-            .Where(t => t.Status != Models.TaskStatus.Done && t.AssignedToId != null)
+            .Where(t => t.Status != Models.WorkflowStatus.Done && t.AssignedToId != null)
             .GroupBy(t => t.AssignedToId!.Value)
             .Select(g => new { UserId = g.Key, OpenCount = g.Count() })
             .ToListAsync(cancellationToken);

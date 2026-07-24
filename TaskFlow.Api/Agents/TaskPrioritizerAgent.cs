@@ -48,7 +48,7 @@ public class TaskPrioritizerAgent : ITaskFlowAgent
         // ── OBSERVE ────────────────────────────────────────────────────────────
         var tasks = await _db.Tasks
             .Include(t => t.AssignedTo)
-            .Where(t => t.Status != Models.TaskStatus.Done)
+            .Where(t => t.Status != Models.WorkflowStatus.Done)
             .OrderBy(t => t.Id)
             .ToListAsync(cancellationToken);
 

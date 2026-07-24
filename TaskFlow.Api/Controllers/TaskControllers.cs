@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs;
 using TaskFlow.Api.Models;
-using TaskStatus = TaskFlow.Api.Models.TaskStatus;
 using Microsoft.AspNetCore.Authorization;
 
 namespace TaskFlow.Api.Controllers;
@@ -35,11 +34,11 @@ public class TasksController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(status))
         {
-            if (!Enum.TryParse<TaskStatus>(status, ignoreCase: true, out var parsedStatus))
+            if (!Enum.TryParse<WorkflowStatus>(status, ignoreCase: true, out var parsedStatus))
                 return BadRequest(new
                 {
                     message = $"Invalid status '{status}'.",
-                    validValues = Enum.GetNames<TaskStatus>()
+                    validValues = Enum.GetNames<WorkflowStatus>()
                 });
 
             query = query.Where(t => t.Status == parsedStatus);
@@ -102,7 +101,7 @@ public class TasksController : ControllerBase
             Priority = dto.Priority,
             DueDate = dto.DueDate,
             AssignedToId = dto.AssignedToId,
-            Status = TaskStatus.Todo,
+            Status = WorkflowStatus.Todo,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
