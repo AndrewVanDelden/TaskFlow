@@ -10,6 +10,14 @@ the house down. We add rooms while people are still living in it.
 
 ---
 
+> **STATUS: COMPLETE (2026-07-26).** Slices A–L are shipped and green: 39 backend tests
+> (34 unit + 2 prioritizer + 3 HTTP integration) and 14 frontend tests. This document is now
+> the finished record of the refactor. Ongoing work continues in a new epic document,
+> **`TaskFlow_NorthStar_Epic.md`** (Part 5, renumbered into Sprints 1–6). Do not add new work
+> here; add it there.
+
+---
+
 # Rules to follow for AI who are reading this:
 
 - TDD is How we will build everything
@@ -3768,6 +3776,10 @@ integration).
 ---
 
 # Part 5 — North Star: Document-Driven Autonomous Execution
+
+> **Moved.** This section has been carried forward into its own working document,
+> **`TaskFlow_NorthStar_Epic.md`**, where the North Star is a live epic with Sprints 1–6.
+> The content below is left as the historical record of where the refactor was aimed.
 
 This is the direction the whole project is aimed at, recorded here so the refactor
 stays pointed at it. It is NOT part of Slices A–L; it is what those slices make
