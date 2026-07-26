@@ -21,7 +21,7 @@ public class SignalRAgentNotifier : IAgentNotifier
     {
         try
         {
-            await _hub.Clients.All.SendAsync("AgentAction", new
+            await _hub.Clients.All.SendAsync(HubEvents.AgentAction, new
             {
                 id = log.Id,
                 taskId = log.TaskId,
@@ -43,7 +43,7 @@ public class SignalRAgentNotifier : IAgentNotifier
     {
         try
         {
-            await _hub.Clients.All.SendAsync("AgentCycle", new
+            await _hub.Clients.All.SendAsync(HubEvents.AgentCycle, new
             {
                 agentName,
                 phase,

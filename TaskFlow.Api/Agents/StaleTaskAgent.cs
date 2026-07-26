@@ -1,11 +1,10 @@
 using Anthropic.SDK.Common;
 using Anthropic.SDK.Messaging;
-using Microsoft.EntityFrameworkCore;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using TaskFlow.Api.Data;
 using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
 using TaskFlow.Api.Services;
 using Tool = Anthropic.SDK.Common.Tool;
 
@@ -258,7 +257,7 @@ public class StaleTaskAgent : ClaudeAgentBase
         }
 
         var previousOwner = task.AssignedToId;
-        task.AssignedToId = args.NewUserId;   // null = unassign
+        task.AssignedToId = args.NewUserId;
         task.UpdatedAt = DateTime.UtcNow;
 
         await RecordActionAsync(new AgentLog
@@ -319,55 +318,30 @@ public class StaleTaskAgent : ClaudeAgentBase
         int thresholdHours)
     {
         var sb = new StringBuilder();
-
         sb.AppendLine("You are a stale task detection agent for a software development team.");
-        sb.AppendLine($"A task is stale if it is not Done and has not been updated in {thresholdHours}+ hours.");
-        sb.AppendLine();
+        sb.AppendLine($"A task is stale if not Done and not updated in {thresholdHours}+ hours.");
         sb.AppendLine("For each stale task, choose AT MOST ONE action:");
         sb.AppendLine("  - escalate_task    : still needed and overdue -> raise priority to High");
         sb.AppendLine($"  - reassign_task    : unassigned, or the owner has {OverloadedTaskCount}+ open tasks");
         sb.AppendLine("  - flag_for_review  : ambiguous, possibly obsolete, or needs a human decision");
-        sb.AppendLine();
-        sb.AppendLine("Rules:");
-        sb.AppendLine("  - Do NOT act on a task you already acted on recently (see history below).");
-        sb.AppendLine("  - Do NOT escalate a task that is already High priority. Flag it instead.");
-        sb.AppendLine("  - Prefer flag_for_review when uncertain. Do not guess.");
-        sb.AppendLine("  - Taking no action at all is acceptable.");
-        sb.AppendLine();
+        sb.AppendLine("Rules: do NOT act on a task you already acted on recently; do NOT escalate an already-High task (flag it); prefer flag_for_review when uncertain; no action is acceptable.");
         sb.AppendLine($"Current date (UTC): {DateTime.UtcNow:yyyy-MM-dd}");
         sb.AppendLine();
-
         sb.AppendLine("=== STALE TASKS ===");
         foreach (var t in staleTasks)
         {
             var daysStale = (DateTime.UtcNow - t.UpdatedAt).TotalDays;
-            sb.AppendLine($"  ID: {t.Id}");
-            sb.AppendLine($"  Title: {t.Title}");
-            sb.AppendLine($"  Status: {t.Status} | Priority: {t.Priority}");
-            sb.AppendLine($"  Due: {(t.DueDate.HasValue ? t.DueDate.Value.ToString("yyyy-MM-dd") : "none")}");
-            sb.AppendLine($"  Assigned To: {t.AssignedTo?.Name ?? "UNASSIGNED"} " +
-                          $"(id: {t.AssignedToId?.ToString() ?? "null"})");
-            sb.AppendLine($"  Days since last update: {daysStale:F1}");
-            sb.AppendLine();
+            sb.AppendLine($"  ID {t.Id}: {t.Title} | {t.Status}/{t.Priority} | " +
+                          $"Assignee {t.AssignedTo?.Name ?? "UNASSIGNED"} (id {t.AssignedToId?.ToString() ?? "null"}) | stale {daysStale:F1}d");
         }
-
+        sb.AppendLine();
         sb.AppendLine("=== TEAM WORKLOAD ===");
         sb.AppendLine(contextJson);
         sb.AppendLine();
-
         sb.AppendLine("=== YOUR RECENT ACTIONS (last 7 days) ===");
-        if (recentActions.Count == 0)
-        {
-            sb.AppendLine("  (none)");
-        }
-        else
-        {
-            foreach (var log in recentActions)
-                sb.AppendLine($"  {log.CreatedAt:yyyy-MM-dd HH:mm} | Task {log.TaskId} | " +
-                              $"{log.Action} | {log.Details}");
-        }
+        if (recentActions.Count == 0) sb.AppendLine("  (none)");
+        else foreach (var l in recentActions) sb.AppendLine($"  {l.CreatedAt:yyyy-MM-dd HH:mm} | Task {l.TaskId} | {l.Action} | {l.Details}");
         sb.AppendLine();
-
         sb.AppendLine("Call the appropriate tool for each task that needs action, then finish.");
         return sb.ToString();
     }

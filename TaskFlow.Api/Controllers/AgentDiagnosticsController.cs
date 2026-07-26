@@ -1,46 +1,55 @@
-using Anthropic.SDK;
 using Anthropic.SDK.Messaging;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TaskFlow.Api.Configuration;
+using TaskFlow.Api.Services;
 
 namespace TaskFlow.Api.Controllers;
 
 /// <summary>
-/// Development-only endpoint to verify the Anthropic SDK is configured correctly.
-/// Remove or lock this down before production.
+/// Development-only endpoint to verify the Claude integration is configured. Returns 404
+/// outside the Development environment so it is never exposed in production.
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
 public class AgentDiagnosticsController : ControllerBase
 {
+    private readonly IClaudeClient _claude;
     private readonly IConfiguration _config;
+    private readonly IWebHostEnvironment _env;
     private readonly ILogger<AgentDiagnosticsController> _logger;
 
-    public AgentDiagnosticsController(IConfiguration config, ILogger<AgentDiagnosticsController> logger)
+    public AgentDiagnosticsController(
+        IClaudeClient claude,
+        IConfiguration config,
+        IWebHostEnvironment env,
+        ILogger<AgentDiagnosticsController> logger)
     {
+        _claude = claude;
         _config = config;
+        _env = env;
         _logger = logger;
     }
 
-    /// <summary>
-    /// Sends a minimal test message to Claude and returns the response.
-    /// Use this to confirm your API key and SDK are working.
-    /// </summary>
+    /// <summary>Sends a minimal test message to Claude and returns the response.</summary>
     [HttpGet("ping-claude")]
     public async Task<IActionResult> PingClaude(CancellationToken cancellationToken)
     {
-        var apiKey = _config["Anthropic:ApiKey"];
-        if (string.IsNullOrWhiteSpace(apiKey))
+        // Dev-only: hide entirely in production so it cannot be probed or spend tokens.
+        if (!_env.IsDevelopment())
+            return NotFound();
+
+        if (!_claude.IsConfigured)
             return StatusCode(503, new { message = "Anthropic API key is not configured. Run: dotnet user-secrets set \"Anthropic:ApiKey\" \"your-key\"" });
+
+        var model = _config["Anthropic:Model"] ?? AnthropicDefaults.Model;
 
         try
         {
-            var client = new AnthropicClient(apiKey);
-
             var request = new MessageParameters
             {
-                Model = _config["Anthropic:Model"] ?? "claude-opus-4-5",
+                Model = model,
                 MaxTokens = 64,
                 Messages = new List<Message>
                 {
@@ -55,17 +64,12 @@ public class AgentDiagnosticsController : ControllerBase
                 }
             };
 
-            var response = await client.Messages.GetClaudeMessageAsync(request, cancellationToken);
+            var response = await _claude.SendAsync(request, cancellationToken);
             var text = response.Content.OfType<TextContent>().FirstOrDefault()?.Text ?? "(no text)";
 
             _logger.LogInformation("Claude ping successful: {Response}", text);
 
-            return Ok(new
-            {
-                status = "connected",
-                model = _config["Anthropic:Model"],
-                claudeResponse = text
-            });
+            return Ok(new { status = "connected", model, claudeResponse = text });
         }
         catch (Exception ex)
         {

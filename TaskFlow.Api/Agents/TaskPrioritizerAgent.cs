@@ -1,11 +1,10 @@
 using Anthropic.SDK.Common;
 using Anthropic.SDK.Messaging;
-using Microsoft.EntityFrameworkCore;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using TaskFlow.Api.Data;
 using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
 using TaskFlow.Api.Services;
 using Tool = Anthropic.SDK.Common.Tool;
 
@@ -24,7 +23,10 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
     private const string UpdatePriorityTool = "update_task_priority";
 
     public TaskPrioritizerAgent(
-        AppDbContext db,
+        IClaudeClient claude,
+        ITaskRepository tasks,
+        IAgentLogRepository logs,
+        IAgentNotifier notifier,
         IConfiguration config,
         ILogger<TaskPrioritizerAgent> logger,
         IAgentNotifier notifier)
@@ -46,6 +48,9 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
             .OrderBy(t => t.Id)
             .ToListAsync(cancellationToken);
 
+    public override async Task RunAsync(CancellationToken cancellationToken)
+    {
+        var tasks = await _tasks.GetOpenAsync(cancellationToken);
         if (tasks.Count == 0)
         {
             Logger.LogInformation("[{Agent}] No open tasks. Skipping cycle.", Name);
@@ -153,30 +158,21 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
     {
         var sb = new StringBuilder();
         sb.AppendLine("You are a task prioritization agent for a software development team.");
-        sb.AppendLine("Analyze the following open tasks and update their priorities using the update_task_priority tool.");
-        sb.AppendLine();
-        sb.AppendLine("Prioritization rules:");
+        sb.AppendLine("Update priorities using the update_task_priority tool.");
         sb.AppendLine("- High: overdue or due within 2 days, or blocking other work");
         sb.AppendLine("- Medium: due within 1 week, or important but not urgent");
         sb.AppendLine("- Low: no due date, or due more than 1 week away");
-        sb.AppendLine("- Only call the tool for tasks whose priority should CHANGE. Leave correct priorities alone.");
-        sb.AppendLine();
+        sb.AppendLine("- Only call the tool for tasks whose priority should CHANGE.");
         sb.AppendLine($"Current date (UTC): {DateTime.UtcNow:yyyy-MM-dd}");
         sb.AppendLine();
-        sb.AppendLine("Open tasks:");
-
-        foreach (var task in tasks)
+        foreach (var t in tasks)
         {
-            sb.AppendLine($"  ID: {task.Id}");
-            sb.AppendLine($"  Title: {task.Title}");
-            sb.AppendLine($"  Current Priority: {task.Priority}");
-            sb.AppendLine($"  Status: {task.Status}");
-            sb.AppendLine($"  Due Date: {(task.DueDate.HasValue ? task.DueDate.Value.ToString("yyyy-MM-dd") : "none")}");
-            sb.AppendLine($"  Assigned To: {task.AssignedTo?.Name ?? "unassigned"}");
-            sb.AppendLine();
+            sb.AppendLine($"  ID {t.Id}: {t.Title} | Priority {t.Priority} | Status {t.Status} | " +
+                          $"Due {(t.DueDate.HasValue ? t.DueDate.Value.ToString("yyyy-MM-dd") : "none")} | " +
+                          $"Assignee {t.AssignedTo?.Name ?? "unassigned"}");
         }
-
-        sb.AppendLine("Use the update_task_priority tool for each task that needs a priority change, then finish.");
+        sb.AppendLine();
+        sb.AppendLine("Call the tool for each task that needs a change, then finish.");
         return sb.ToString();
     }
 

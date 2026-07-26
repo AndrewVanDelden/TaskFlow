@@ -7,6 +7,7 @@ using TaskFlow.Api.Agents;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.Services;
 using TaskFlow.Api.Hubs;
+using TaskFlow.Api.Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -99,6 +100,12 @@ builder.Services.AddAuthorization();
 
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<JwtService>();
+builder.Services.AddScoped<ITaskRepository, TaskRepository>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IAgentLogRepository, AgentLogRepository>();
+builder.Services.AddScoped<ITaskService, TaskService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IClaudeClient, ClaudeClient>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();

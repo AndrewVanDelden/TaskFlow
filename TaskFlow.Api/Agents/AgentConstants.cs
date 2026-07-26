@@ -1,9 +1,6 @@
 namespace TaskFlow.Api.Agents;
 
-/// <summary>
-/// Lifecycle phases an agent broadcasts over SignalR at the start and end of a cycle.
-/// The dashboard uses these to flip an agent's status card between Running and Idle.
-/// </summary>
+/// <summary>Lifecycle phases broadcast at the start/end of a cycle (dashboard status).</summary>
 public static class AgentPhases
 {
     public const string Started = "started";
