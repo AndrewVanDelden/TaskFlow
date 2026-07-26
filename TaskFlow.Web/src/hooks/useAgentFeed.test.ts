@@ -3,38 +3,9 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 
-// Stub the SignalR client so mounting the hook never opens a real connection (which would
-// fire an unhandled /hubs/agents negotiate request). This isolates the seed-from-getAgentLogs
-// behavior, which is the higher-value assertion. Shape mirrors what useAgentFeed calls.
-vi.mock('@microsoft/signalr', () => {
-  class FakeHubConnection {
-    state = 'Disconnected'
-    on() {}
-    onreconnected() {}
-    onclose() {}
-    start() {
-      return Promise.resolve()
-    }
-    stop() {
-      return Promise.resolve()
-    }
-  }
-  class HubConnectionBuilder {
-    withUrl() {
-      return this
-    }
-    withAutomaticReconnect() {
-      return this
-    }
-    build() {
-      return new FakeHubConnection()
-    }
-  }
-  return {
-    HubConnectionBuilder,
-    HubConnectionState: { Disconnected: 'Disconnected' },
-  }
-})
+// Uses the shared manual mock at __mocks__/@microsoft/signalr.ts so the hook never opens a
+// real connection. This isolates the seed-from-getAgentLogs behavior (the higher-value check).
+vi.mock('@microsoft/signalr')
 
 import { useAgentFeed } from './useAgentFeed'
 

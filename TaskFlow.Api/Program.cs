@@ -165,3 +165,7 @@ if (app.Environment.IsDevelopment())
 app.MapHub<AgentHub>("/hubs/agents");
 app.MapControllers();
 app.Run();
+
+// Exposes the top-level-statement Program class to the test project so
+// WebApplicationFactory<Program> can boot the app for HTTP integration tests.
+public partial class Program { }
