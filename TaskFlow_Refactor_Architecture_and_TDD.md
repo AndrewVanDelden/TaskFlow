@@ -2719,6 +2719,12 @@ Behavior is identical; only the wiring underneath changed.
 > base `RecordCycleSummaryAsync` helper (both agents call it). One trivial, immaterial delta:
 > `StaleTaskAgent.RunAsync` gathers context and recent actions before the `ClaudeConfigured`
 > check rather than after. Full suite green: 34 passed, 0 failed.
+>
+> **Coverage follow-up (2026-07-26).** `TaskPrioritizerAgentTests` was added so both agents have
+> parity coverage: one test scripts an `update_task_priority` tool call and asserts the task's
+> priority changes to High with a `PriorityUpdated` log; the other seeds only a Done task and
+> verifies the agent skips without calling Claude. `StubClaude` gained a `ThatUpdatesPriority`
+> helper alongside `ThatEscalates`. This brings the backend suite to 36 tests.
 
 > **Why this is the last big refactor.** After F, every dependency in the system sits behind
 > a seam: web → service → repository → EF, and agent → repository + `IClaudeClient`. That is
@@ -3100,11 +3106,11 @@ clear dependency direction (each layer uses the one below it, never the reverse)
 src/
 ├── api/         transport only — talks to the backend (fetch, JWT, endpoints)
 │                └─ api.ts splits into client.ts, auth.ts, tasks.ts, agentLogs.ts
-├── hooks/       state + side effects — useAgentFeed, useAuth, useTasks
+├── hooks/       state + side effects — useAgentFeed, AuthContext (holds useAuth), AuthProvider
 │                └─ the only place that calls api/ and holds React state
 ├── components/  presentational — TaskCard, KanbanColumn, AgentFeed, AgentStatus
 │                └─ dumb: props in, markup out; no fetching, no global state
-├── features/    containers — Dashboard, Login
+├── features/    containers — Dashboard, Login, KanbanBoard
 │                └─ compose hooks + components into a screen
 ├── lib/         pure shared helpers — formatting.ts, styles.ts, constants.ts
 │                └─ no React, no state; the leaf everything can import
@@ -3124,6 +3130,31 @@ each move, TypeScript flags *every* broken import for you: run `npm run dev` or 
 Problems panel and treat that red list as a checklist. Fix the imports, confirm
 `npm run test` still passes, then move the next layer. The tests from Slice H are your
 safety net — if a move breaks behavior, a test goes red immediately.
+
+**File-by-file move map (verified against the current tree, so every `src/` file has a home
+and nothing is orphaned).**
+
+| Current | Moves to | Role |
+|---------|----------|------|
+| `api.ts` | split into `api/client.ts` (`request` + token helpers + `ApiError`), `api/auth.ts` (`login`, `register`), `api/tasks.ts` (`getTasks`, `updateTaskStatus`), `api/agentLogs.ts` (`getAgentLogs`) | transport |
+| `useAgentFeed.ts` | `hooks/useAgentFeed.ts` | hook (SignalR + history) |
+| `AuthContext.tsx` | `hooks/AuthContext.tsx` | context + the `useAuth` hook |
+| `AuthProvider.tsx` | `hooks/AuthProvider.tsx` | auth state + effects |
+| `TaskCard.tsx` | `components/TaskCard.tsx` | presentational |
+| `KanbanColumn.tsx` | `components/KanbanColumn.tsx` | presentational |
+| `AgentFeed.tsx` | `components/AgentFeed.tsx` | presentational |
+| `AgentStatus.tsx` | `components/AgentStatus.tsx` | presentational |
+| `KanbanBoard.tsx` | `features/KanbanBoard.tsx` | container (fetches tasks, owns board state) |
+| `Dashboard.tsx` | `features/Dashboard.tsx` | container |
+| `Login.tsx` | `features/Login.tsx` | container |
+| `App.tsx`, `main.tsx`, `index.css`, `types.ts` | stay at `src/` root | app shell, entry, styles, shared types |
+
+**Do not invent `useAuth` / `useTasks` as new files here.** `useAuth` already lives *inside*
+`AuthContext.tsx` (there is no separate `useAuth.ts` to create), and there is no `useTasks` at
+all: task fetching and board state currently live inside the `KanbanBoard` container. Pulling
+a `useTasks` hook out of `KanbanBoard` is a container/presentational *split*, which is
+behavior-adjacent work and belongs in Slice J, not here. Keeping Slice I a pure move (plus the
+I2 DRY extraction) is exactly what makes it low-risk.
 
 ### I2. Extract shared helpers (the DRY pass)
 
@@ -3177,6 +3208,16 @@ keeps its own copy — this TS constant is the frontend half of that same contra
 
 Components import from these instead of defining their own copies. Update every import
 path touched by the move. `npm run test` and `npm run dev` both still work.
+
+One more verified duplication to fold in while you are here: `AgentStatus.tsx` renders its
+idle badge with the same slate classes as `neutralStyle`, so import `neutralStyle` there too
+and no component hard-codes that color. (Its green "running" badge shares the emerald of
+`actionStyles.PriorityUpdated`; leave it inline, or add a `cycleRunningStyle` to `styles.ts`
+if you want that fully DRY as well.)
+
+`BASE_URL` (the `import.meta.env.VITE_API_BASE_URL` value) was duplicated in both `api.ts` and
+`useAgentFeed.ts`. When you split `api.ts`, export `BASE_URL` from `api/client.ts` and import
+it in `hooks/useAgentFeed.ts` so there is a single copy. (Done during the Slice I execution.)
 
 ```bash
 git add .
@@ -3247,7 +3288,9 @@ describe('TaskCard', () => {
 ```
 
 (The `DndContext` wrapper is needed because `TaskCard` uses `useSortable`, which throws if
-it renders outside a drag context.)
+it renders outside a drag context. Verified: `TaskCard` and `KanbanColumn` render cleanly
+under Vitest 4 + jsdom inside that wrapper with no extra browser-API polyfills, so the run
+came back green with 9 tests across 5 files.)
 
 **How to read this test — the RTL philosophy.** Notice what it asserts on:
 `screen.getByText('Ship it')`, `getByText('High')`, `getByText('Unassigned')` — the things a
@@ -3271,6 +3314,16 @@ action label renders), and `AgentStatus` (the Running vs Idle badge) — same st
 visible output only.
 
 ### J2. Refactor to pure components
+
+> **In this codebase the split already landed in Slice I, so J2 is a verification step, not a
+> rewrite.** When the flat `src/` was reorganized, the four leaf components (`TaskCard`,
+> `KanbanColumn`, `AgentFeed`, `AgentStatus`) were already pure (props in, markup out) and
+> `Dashboard` already owned the `useAgentFeed` hook and passed its values down. That is why
+> the J1 tests passed green on the first run rather than starting red: they are
+> characterization tests over components that were already presentational. Read the
+> BEFORE/AFTER below as the illustration of the principle, not a change you still need to
+> make (our `AgentFeed` already looks like the AFTER). To "do" J2 here, confirm each leaf
+> takes only props and holds no `fetch`, no server-data `useState`, and no global `useContext`.
 
 **The split this slice is named for.** React components fall into two kinds:
 
@@ -3376,6 +3429,7 @@ export const handlers = [
   http.post('*/api/Auth/login', async () =>
     HttpResponse.json({ token: 'fake.jwt.token', name: 'Ada', email: 'ada@x.dev', expiresAt: '' })),
   http.get('*/api/Tasks', () => HttpResponse.json([])),
+  http.get('*/api/AgentLogs', () => HttpResponse.json([])),   // useAgentFeed seeds from this
 ]
 ```
 
@@ -3395,7 +3449,10 @@ import { server } from './server'
 import { beforeAll, afterEach, afterAll } from 'vitest'
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
-afterEach(() => server.resetHandlers())
+afterEach(() => {
+  server.resetHandlers()
+  localStorage.clear()   // tests write tokens; do not let them leak across tests
+})
 afterAll(() => server.close())
 ```
 
@@ -3437,7 +3494,8 @@ a handler for this one test only (the `resetHandlers()` in setup undoes it after
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
-import { getTasks, setToken, getToken } from './client'
+import { setToken, getToken } from './client'
+import { getTasks } from './tasks'   // getTasks lives in tasks.ts after the Slice I split
 
 describe('401 handling', () => {
   it('clears the stored token when a protected call returns 401', async () => {
@@ -3464,6 +3522,17 @@ on the *live* `connected` flag means stubbing `@microsoft/signalr`'s `HubConnect
 that mock's exact shape is confirmed when you write it (it is test scaffolding; wrong only
 fails the test). The seed-from-`getAgentLogs` assertion needs no SignalR and is the higher-value
 check, so cover that first.
+
+Concretely, the seed test lives in `src/hooks/useAgentFeed.test.ts`. Because mounting the hook
+starts SignalR (which would fire an unhandled `/hubs/agents` negotiate under
+`onUnhandledRequest: 'error'`), stub the client with `vi.mock('@microsoft/signalr', ...)`
+returning a fake `HubConnectionBuilder` whose `build()` yields a connection with no-op
+`on`/`onreconnected`/`onclose`, a resolving `start`/`stop`, and `state = 'Disconnected'`, plus
+`HubConnectionState: { Disconnected: 'Disconnected' }`. Then a `server.use(...)` override feeds
+one `/api/AgentLogs` row and `waitFor` asserts `result.current.logs` has length 1. No real
+connection opens, so the fetch seed is tested in isolation. This SignalR fake lives once in a
+shared manual mock at `__mocks__/@microsoft/signalr.ts`, so the test opts in with a bare
+`vi.mock('@microsoft/signalr')` rather than an inline factory.
 
 ```bash
 git add .
@@ -3522,23 +3591,52 @@ critical flows (logging in, the board loading) is exactly the right amount.
 ```tsx
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect } from 'vitest'
-import { AuthProvider } from '../hooks/AuthProvider'
-import { Login } from './Login'
+import { describe, it, expect, vi } from 'vitest'
+import App from '../App'
+
+// After sign-in, App swaps Login for the Dashboard, which opens a SignalR connection.
+// Stub the client so no real /hubs/agents negotiate fires under onUnhandledRequest: 'error'.
+vi.mock('@microsoft/signalr', () => {
+  class FakeHubConnection {
+    state = 'Disconnected'
+    on() {}
+    onreconnected() {}
+    onclose() {}
+    start() { return Promise.resolve() }
+    stop() { return Promise.resolve() }
+  }
+  class HubConnectionBuilder {
+    withUrl() { return this }
+    withAutomaticReconnect() { return this }
+    build() { return new FakeHubConnection() }
+  }
+  return { HubConnectionBuilder, HubConnectionState: { Disconnected: 'Disconnected' } }
+})
 
 describe('Login flow', () => {
   it('signs in and stores the session', async () => {
-    render(<AuthProvider><Login /></AuthProvider>)
+    render(<App />)
 
     await userEvent.type(screen.getByPlaceholderText('Email'), 'ada@x.dev')
     await userEvent.type(screen.getByPlaceholderText('Password'), 'password1')
     await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
 
-    // MSW returns a token; the app should move past the login form.
+    // MSW returns a token named "Ada"; App replaces Login with the Dashboard, whose header
+    // shows the signed-in user. findByText waits for that async re-render.
     expect(await screen.findByText('Ada')).toBeInTheDocument()
+    expect(localStorage.getItem('taskflow_token')).toBe('fake.jwt.token')
   })
 })
 ```
+
+> **Why render `App`, not `<AuthProvider><Login /></AuthProvider>`.** The signed-in name only
+> appears in the `Dashboard` header, and the swap from `Login` to `Dashboard` lives in `App`'s
+> `Shell` (`isAuthenticated ? <Dashboard/> : <Login/>`). Rendering `Login` alone would update
+> the auth context but never change the screen, so `findByText('Ada')` would time out. Rendering
+> the real `App` exercises the actual shell swap, which is what makes this a true end-to-end
+> test. The `@microsoft/signalr` stub lives once in a shared manual mock at
+> `__mocks__/@microsoft/signalr.ts`; both this login test and the K hook test opt into it with a
+> bare `vi.mock('@microsoft/signalr')`.
 
 **How to read it — and the two details that make it work:**
 - **`userEvent`** simulates a real person: it types character by character and fires the same
@@ -3555,6 +3653,35 @@ What this one test actually exercises: the `Login` component, the `AuthProvider`
 the real `login()` in `api/`, MSW standing in for the backend, and the re-render that shows
 the signed-in name. If any of those seams is miswired, this test goes red — which is the
 whole point of an integration test.
+
+**The second flow named in the goal: the board loading.** `src/features/KanbanBoard.test.tsx`
+covers the other critical path end-to-end, with no SignalR involved (the board does not use it):
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
+import { server } from '../test/server'
+import { KanbanBoard } from './KanbanBoard'
+
+describe('KanbanBoard integration', () => {
+  it('loads tasks from the API and renders them on the board', async () => {
+    server.use(
+      http.get('*/api/Tasks', () => HttpResponse.json([
+        { id: 1, title: 'Wire the dashboard', description: null, status: 'Todo',
+          priority: 'High', dueDate: null, createdAt: '', updatedAt: '',
+          assignedToId: null, assignedToName: null },
+      ])),
+    )
+    // KanbanBoard provides its own DndContext, so no wrapper is needed.
+    render(<KanbanBoard refreshKey={0} />)
+    expect(await screen.findByText('Wire the dashboard')).toBeInTheDocument()
+  })
+})
+```
+
+This exercises `KanbanBoard` -> `getTasks` (`api/tasks`) -> MSW -> `KanbanColumn` -> `TaskCard`,
+proving the read path from network to rendered card holds together.
 
 ### L2. Final sweep — the finish line
 
@@ -3595,6 +3722,48 @@ DRY sweep. Completes the frontend revamp.
 ```
 
 PR into `develop`, merge, delete. Frontend revamp complete.
+
+---
+
+## Backend HTTP Integration Tests (added after the frontend revamp)
+
+Branch: `feature/backend-integration-tests`
+
+**Goal:** the 34 unit tests cover services, repositories, controllers-with-mocked-services, and
+agents, but none of them boots the real HTTP pipeline. So a whole class of wiring bugs would
+pass every test and only fail at runtime: an endpoint missing `[Authorize]`, a service added to
+an interface but never registered in `Program.cs`, a route typo, a JSON/serialization mismatch,
+or a JWT config where the signer and validator disagree. A few `WebApplicationFactory` tests
+that boot the app and talk to it over HttpClient close that gap and lock the auth pipeline.
+
+**Setup, and the one real gotcha.**
+
+1. Package: add `Microsoft.AspNetCore.Mvc.Testing` to `TaskFlow.Tests.csproj` (pin to your
+   installed ASP.NET Core runtime, here `10.0.8`). It brings the `Microsoft.AspNetCore.App`
+   framework reference, so a `Microsoft.NET.Sdk` test project can host the web app.
+2. Make `Program` referenceable: top-level statements compile to an internal `Program`, so add
+   `public partial class Program { }` at the end of `Program.cs`. Now `WebApplicationFactory<Program>`
+   can boot it.
+3. **Config timing (the gotcha).** `Program.cs` reads `Jwt:*` and the connection string *inline*
+   during builder setup, before `Build()`. A factory's `ConfigureAppConfiguration` runs too late
+   to affect those reads, and `Jwt:Key` lives in user-secrets (not loaded outside Development).
+   The reliable fix is environment variables, which `CreateBuilder` reads early: set them in the
+   factory constructor (before the host builds) to point the app at a throwaway SQLite file and
+   supply self-contained JWT settings, under environment `Testing` so the developer's real
+   user-secrets DB is never touched. `Program.cs` already runs `EnsureCreated` on startup, so the
+   temp DB's schema is built automatically. No DI surgery needed.
+
+**Files:** `TaskFlow.Tests/Integration/TestWebAppFactory.cs` (the factory described above) and
+`TaskFlow.Tests/Integration/AuthFlowTests.cs` with three tests:
+
+- `Protected_endpoint_without_a_token_returns_401` — GET `/api/Tasks` unauthenticated is 401.
+- `Register_then_login_then_call_protected_endpoint_succeeds` — the full flow, and it proves the
+  token the app issues validates against the app's own JWT middleware (signer/validator agree).
+- `Register_with_a_short_password_returns_400` — `[ApiController]` model validation rejects the
+  8-char-minimum violation before the action runs.
+
+Verify with `dotnet test`. This brings the backend suite to 39 (34 unit + 2 prioritizer + 3
+integration).
 
 ---
 
