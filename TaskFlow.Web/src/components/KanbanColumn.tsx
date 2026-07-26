@@ -1,6 +1,6 @@
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import type { TaskItem, TaskStatus } from './types'
+import type { TaskItem, TaskStatus } from '../types'
 import { TaskCard } from './TaskCard'
 
 interface Props {

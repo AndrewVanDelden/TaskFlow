@@ -1,15 +1,6 @@
-import type { AgentLog } from './types'
-
-const actionStyles: Record<string, string> = {
-  Escalated: 'bg-red-500/15 text-red-300 border-red-500/30',
-  Reassigned: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
-  FlaggedForReview: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-  PriorityUpdated: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  PrioritiesUpdated: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  NoChangesNeeded: 'bg-slate-500/15 text-slate-400 border-slate-500/30',
-  NoActionNeeded: 'bg-slate-500/15 text-slate-400 border-slate-500/30',
-  CycleActions: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
-}
+import type { AgentLog } from '../types'
+import { actionStyles } from '../lib/styles'
+import { formatTime } from '../lib/formatting'
 
 export function AgentFeed({
   logs,
@@ -59,7 +50,7 @@ export function AgentFeed({
                 </span>
               )}
               <span className="text-[11px] text-slate-600 ml-auto">
-                {new Date(log.createdAt).toLocaleTimeString()}
+                {formatTime(log.createdAt)}
               </span>
             </div>
             {log.details && (

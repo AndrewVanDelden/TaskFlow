@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { login, register } from './api'
-import { useAuth } from './AuthContext'
+import { login, register } from '../api/auth'
+import { useAuth } from '../hooks/AuthContext'
 
 export function Login() {
   const { signIn } = useAuth()
