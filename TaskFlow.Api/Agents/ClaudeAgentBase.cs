@@ -1,10 +1,9 @@
-using Anthropic.SDK;
 using Anthropic.SDK.Common;
 using Anthropic.SDK.Messaging;
 using System.Text.Json;
 using TaskFlow.Api.Configuration;
-using TaskFlow.Api.Data;
 using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
 using TaskFlow.Api.Services;
 using Tool = Anthropic.SDK.Common.Tool;
 
@@ -13,15 +12,18 @@ namespace TaskFlow.Api.Agents;
 /// <summary>
 /// Base class for agents that reason with Claude using tool calling.
 ///
-/// It owns the mechanics that every Claude agent shares — creating the client,
-/// driving the observe/reason/act conversation loop, recording actions, and
-/// broadcasting lifecycle events — so that each concrete agent only has to
-/// supply its own policy: which tools it exposes, what prompt it builds, and
-/// how it handles each tool call.
+/// It owns the mechanics that every Claude agent shares — driving the
+/// observe/reason/act conversation loop, recording actions, and broadcasting
+/// lifecycle events — so that each concrete agent only has to supply its own
+/// policy: which tools it exposes, what prompt it builds, and how it handles
+/// each tool call.
 ///
-/// This split follows the Single Responsibility and Open/Closed principles:
-/// the conversation plumbing lives in one place and is extended, not copied,
-/// by each new agent.
+/// Collaborators are injected as abstractions (<see cref="IClaudeClient"/>,
+/// <see cref="IAgentLogRepository"/>, <see cref="IAgentNotifier"/>) rather than a
+/// concrete <c>DbContext</c> or SDK client, so agents are unit-testable with a
+/// stubbed Claude and in-memory repositories. This follows Single Responsibility
+/// (the conversation plumbing lives in one place) and Dependency Inversion (the
+/// base depends on interfaces, not implementations).
 /// </summary>
 public abstract class ClaudeAgentBase : ITaskFlowAgent
 {
@@ -30,8 +32,15 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
 
     private readonly IAgentNotifier _notifier;
 
-    /// <summary>Database context for the current cycle's scope.</summary>
-    protected AppDbContext Db { get; }
+    /// <summary>Claude client used to drive the tool-use conversation.</summary>
+    protected IClaudeClient Claude { get; }
+
+    /// <summary>
+    /// Agent-log data access. Also the persistence seam for per-task changes: it
+    /// shares the request-scoped <c>DbContext</c> with the task/user repositories,
+    /// so saving a log here flushes any pending entity edits made in the same cycle.
+    /// </summary>
+    protected IAgentLogRepository Logs { get; }
 
     /// <summary>Application configuration (intervals, thresholds, Anthropic settings).</summary>
     protected IConfiguration Config { get; }
@@ -40,15 +49,17 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
     protected ILogger Logger { get; }
 
     protected ClaudeAgentBase(
-        AppDbContext db,
+        IClaudeClient claude,
+        IAgentLogRepository logs,
+        IAgentNotifier notifier,
         IConfiguration config,
-        ILogger logger,
-        IAgentNotifier notifier)
+        ILogger logger)
     {
-        Db = db;
+        Claude = claude;
+        Logs = logs;
+        _notifier = notifier;
         Config = config;
         Logger = logger;
-        _notifier = notifier;
     }
 
     /// <inheritdoc />
@@ -68,46 +79,25 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
         ToolUseContent toolUse,
         CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Builds a Claude client from configuration. Returns <c>false</c> (and logs a
-    /// warning) when no API key is configured, so a cycle can skip cleanly rather
-    /// than throw.
-    /// </summary>
-    protected bool TryCreateClaudeClient(
-        out AnthropicClient client,
-        out string model,
-        out int maxTokens)
-    {
-        model = Config["Anthropic:Model"] ?? AnthropicDefaults.Model;
-        maxTokens = Config.GetValue("Anthropic:MaxTokens", AnthropicDefaults.MaxTokens);
-
-        var apiKey = Config["Anthropic:ApiKey"];
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            Logger.LogWarning("[{Agent}] Anthropic API key not configured. Skipping cycle.", Name);
-            client = null!;
-            return false;
-        }
-
-        client = new AnthropicClient(apiKey);
-        return true;
-    }
+    /// <summary>True when Claude has an API key configured; lets a cycle skip quietly otherwise.</summary>
+    protected bool ClaudeConfigured => Claude.IsConfigured;
 
     /// <summary>
     /// Runs the full tool-use conversation: send the prompt, let Claude call tools,
     /// execute each via <paramref name="dispatch"/>, feed results back, and repeat
-    /// until Claude ends its turn or the iteration cap is hit.
+    /// until Claude ends its turn or the iteration cap is hit. Model and token
+    /// limit come from configuration (falling back to <see cref="AnthropicDefaults"/>).
     /// </summary>
     /// <returns>The number of tool calls that completed successfully.</returns>
     protected async Task<int> RunToolConversationAsync(
-        AnthropicClient client,
-        string model,
-        int maxTokens,
         string prompt,
         IReadOnlyList<Tool> tools,
         ToolDispatcher dispatch,
         CancellationToken cancellationToken)
     {
+        var model = Config["Anthropic:Model"] ?? AnthropicDefaults.Model;
+        var maxTokens = Config.GetValue("Anthropic:MaxTokens", AnthropicDefaults.MaxTokens);
+
         var messages = new List<Message> { new(RoleType.User, prompt) };
         var successfulActions = 0;
         var iterations = 0;
@@ -119,7 +109,7 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
         {
             iterations++;
 
-            var response = await client.Messages.GetClaudeMessageAsync(
+            var response = await Claude.SendAsync(
                 new MessageParameters
                 {
                     Model = model,
@@ -203,15 +193,25 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
     }
 
     /// <summary>
-    /// Persists an <see cref="AgentLog"/> and broadcasts it to connected dashboards.
-    /// Every per-task action records itself this way, so persistence and notification
-    /// stay bound together in one place.
+    /// Persists a per-task action log and broadcasts it to connected dashboards.
+    /// Saving here also flushes any task/user entity edits made earlier in the same
+    /// cycle, since all repositories share one <c>DbContext</c>.
     /// </summary>
     protected async Task RecordActionAsync(AgentLog log, CancellationToken cancellationToken)
     {
-        Db.AgentLogs.Add(log);
-        await Db.SaveChangesAsync(cancellationToken);
+        await Logs.AddAsync(log, cancellationToken);
+        await Logs.SaveChangesAsync(cancellationToken);
         await _notifier.AgentActionAsync(log, cancellationToken);
+    }
+
+    /// <summary>
+    /// Persists a cycle-summary log without broadcasting a per-action event
+    /// (the cycle start/complete events cover the dashboard's cycle status).
+    /// </summary>
+    protected async Task RecordCycleSummaryAsync(AgentLog log, CancellationToken cancellationToken)
+    {
+        await Logs.AddAsync(log, cancellationToken);
+        await Logs.SaveChangesAsync(cancellationToken);
     }
 
     /// <summary>Broadcasts that this agent has started a cycle.</summary>

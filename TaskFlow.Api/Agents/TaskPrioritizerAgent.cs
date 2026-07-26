@@ -16,11 +16,14 @@ namespace TaskFlow.Api.Agents;
 /// tool, applies each decision, and logs a summary.
 ///
 /// The Claude conversation mechanics live in <see cref="ClaudeAgentBase"/>; this
-/// class only supplies the prompt, the tool, and the per-tool handler.
+/// class only supplies the prompt, the tool, and the per-tool handler, reading and
+/// writing through <see cref="ITaskRepository"/> rather than a DbContext.
 /// </summary>
 public class TaskPrioritizerAgent : ClaudeAgentBase
 {
     private const string UpdatePriorityTool = "update_task_priority";
+
+    private readonly ITaskRepository _tasks;
 
     public TaskPrioritizerAgent(
         IClaudeClient claude,
@@ -28,10 +31,10 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
         IAgentLogRepository logs,
         IAgentNotifier notifier,
         IConfiguration config,
-        ILogger<TaskPrioritizerAgent> logger,
-        IAgentNotifier notifier)
-        : base(db, config, logger, notifier)
+        ILogger<TaskPrioritizerAgent> logger)
+        : base(claude, logs, notifier, config, logger)
     {
+        _tasks = tasks;
     }
 
     public override string Name => "TaskPrioritizer";
@@ -42,15 +45,8 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
     public override async Task RunAsync(CancellationToken cancellationToken)
     {
         // ── OBSERVE ──────────────────────────────────────────────────────────────
-        var tasks = await Db.Tasks
-            .Include(t => t.AssignedTo)
-            .Where(t => t.Status != Models.TaskStatus.Done)
-            .OrderBy(t => t.Id)
-            .ToListAsync(cancellationToken);
-
-    public override async Task RunAsync(CancellationToken cancellationToken)
-    {
         var tasks = await _tasks.GetOpenAsync(cancellationToken);
+
         if (tasks.Count == 0)
         {
             Logger.LogInformation("[{Agent}] No open tasks. Skipping cycle.", Name);
@@ -61,11 +57,13 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
         await NotifyCycleStartedAsync(cancellationToken);
 
         // ── REASON + ACT ─────────────────────────────────────────────────────────
-        if (!TryCreateClaudeClient(out var client, out var model, out var maxTokens))
+        if (!ClaudeConfigured)
+        {
+            Logger.LogWarning("[{Agent}] Anthropic API key not configured. Skipping cycle.", Name);
             return;
+        }
 
         var updatesApplied = await RunToolConversationAsync(
-            client, model, maxTokens,
             prompt: BuildPrompt(tasks),
             tools: BuildTools(),
             dispatch: ExecuteToolAsync,
@@ -75,17 +73,16 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
         Logger.LogInformation(
             "[{Agent}] Cycle complete. {Updates} priority update(s) applied.", Name, updatesApplied);
 
-        Db.AgentLogs.Add(new AgentLog
+        await RecordCycleSummaryAsync(new AgentLog
         {
             AgentName = Name,
             Action = updatesApplied > 0 ? AgentActions.PrioritiesUpdated : AgentActions.NoChangesNeeded,
             Details = $"Analyzed {tasks.Count} task(s). Applied {updatesApplied} priority update(s).",
             Success = true,
             CreatedAt = DateTime.UtcNow
-        });
+        }, cancellationToken);
 
         await NotifyCycleCompletedAsync(cancellationToken);
-        await Db.SaveChangesAsync(cancellationToken);
     }
 
     // ── TOOL DEFINITION ──────────────────────────────────────────────────────────
@@ -126,7 +123,7 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
         if (!Enum.TryParse<TaskPriority>(args.Priority, ignoreCase: true, out var priority))
             return ToolResult(toolUse, $"Invalid priority value: {args.Priority}");
 
-        var task = await Db.Tasks.FindAsync([args.TaskId], cancellationToken);
+        var task = await _tasks.GetByIdAsync(args.TaskId, ct: cancellationToken);
         if (task is null)
             return ToolResult(toolUse, $"Task {args.TaskId} not found.");
 
@@ -134,7 +131,8 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
         task.Priority = priority;
         task.UpdatedAt = DateTime.UtcNow;
 
-        // RecordActionAsync also persists the task change, since it calls SaveChangesAsync.
+        // RecordActionAsync also persists the task change, since the repositories
+        // share one DbContext and it calls SaveChangesAsync.
         await RecordActionAsync(new AgentLog
         {
             AgentName = Name,
