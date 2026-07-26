@@ -3,6 +3,7 @@ using TaskFlow.Api.DTOs;
 
 namespace TaskFlow.Api.Services;
 
+/// <summary>Business operations for tasks. Returns Result&lt;T&gt; so it stays HTTP-agnostic.</summary>
 public interface ITaskService
 {
     Task<Result<TaskResponseDto>> CreateAsync(CreateTaskDto dto, CancellationToken ct = default);

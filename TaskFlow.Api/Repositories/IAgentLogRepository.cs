@@ -2,6 +2,7 @@ using TaskFlow.Api.Models;
 
 namespace TaskFlow.Api.Repositories;
 
+/// <summary>Data access for agent activity logs. The only code that queries logs via EF Core.</summary>
 public interface IAgentLogRepository
 {
     Task<List<AgentLog>> GetRecentAsync(string? agentName, int limit, CancellationToken ct = default);
