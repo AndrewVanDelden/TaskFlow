@@ -2,6 +2,7 @@ using TaskFlow.Api.Models;
 
 namespace TaskFlow.Api.Repositories;
 
+/// <summary>Data access for users. The only code that queries users via EF Core.</summary>
 public interface IUserRepository
 {
     Task<bool> ExistsAsync(int id, CancellationToken ct = default);

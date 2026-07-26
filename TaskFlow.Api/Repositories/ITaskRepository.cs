@@ -2,6 +2,7 @@ using TaskFlow.Api.Models;
 
 namespace TaskFlow.Api.Repositories;
 
+/// <summary>Data access for tasks. The only code that queries tasks via EF Core.</summary>
 public interface ITaskRepository
 {
     Task<TaskItem?> GetByIdAsync(int id, bool includeAssignee = false, CancellationToken ct = default);

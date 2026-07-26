@@ -2817,24 +2817,35 @@ git push -u origin feature/slice-g-cleanup
 
 ```markdown
 ## What does this PR do?
-Final backend cleanup: shared HubEvents constants for SignalR event names, diagnostics
-model default unified onto AnthropicDefaults, XML-doc summaries filled in, and the
-vulnerable SQLite package bumped (NU1903 cleared). Closes out the backend refactor.
+Final backend cleanup, closing out the backend refactor:
+- Shared `HubEvents` constants for the SignalR event names; `SignalRAgentNotifier` uses them.
+- Diagnostics model default unified onto `AnthropicDefaults.Model` (was a stray "claude-opus-4-5").
+- `AgentDiagnosticsController` hardened: returns 404 outside Development (cannot be probed or
+  spend tokens in production) and now routes through `IClaudeClient` — removing the last
+  direct `new AnthropicClient` outside the wrapper.
+- XML-doc summaries added to the public service/repository interfaces.
+- SQLite package bump (NU1903) was already applied in Slice A.
 
 ## Type of change
 - [x] Chore / docs
 - [x] Security
+- [x] Refactor
 
 ## How to test it
 1. `dotnet build` -> zero warnings (NU1903 gone)
-2. `dotnet test` -> all tests green
+2. `dotnet test` -> 34 tests green (includes the new diagnostics-gate tests: Production -> 404,
+   Development + no key -> 503)
 
 ## Checklist
 - [x] No magic strings left for actions/phases/events
+- [x] Only ClaudeClient constructs the Anthropic SDK client
+- [x] Dev-only endpoint hidden in production, covered by a test
 - [x] Full solution builds and all tests pass
 ```
 
-PR into `develop`, merge, delete. Backend refactor complete.
+PR into `develop`, merge, delete. **Backend refactor complete** — every layer behind an
+interface, dev-only surface locked down, full test suite green. This is the `develop -> main`
+release point.
 
 ---
 
@@ -3106,6 +3117,24 @@ Create `src/lib/formatting.ts`:
 export const formatDate = (iso: string) => new Date(iso).toLocaleDateString()
 export const formatTime = (iso: string) => new Date(iso).toLocaleTimeString()
 ```
+
+Create `src/lib/hubEvents.ts` — the SignalR event names, currently hard-coded as string
+literals inside `useAgentFeed.ts` (`connection.on('AgentAction', ...)` /
+`connection.on('AgentCycle', ...)`):
+
+```ts
+// Mirror of the backend's TaskFlow.Api/Hubs/HubEvents.cs. These strings are a cross-language
+// contract with the C# hub — a typo on either side silently stops the live feed.
+export const HubEvents = {
+  AgentAction: 'AgentAction',
+  AgentCycle: 'AgentCycle',
+} as const
+```
+
+Then change `useAgentFeed.ts` to use `HubEvents.AgentAction` / `HubEvents.AgentCycle`
+instead of the raw strings. (Backend note from Slice G: the C# side already centralized
+these in `HubEvents.cs`; there is no shared type across the language boundary, so each side
+keeps its own copy — this TS constant is the frontend half of that same contract.)
 
 Components import from these instead of defining their own copies. Update every import
 path touched by the move. `npm run test` and `npm run dev` both still work.
