@@ -14,6 +14,31 @@ the house down. We add rooms while people are still living in it.
 
 ---
 
+# Epic Roadmap and the Extensibility Bet
+
+This is **Epic 2**. The sequence:
+
+- **Epic 1 — Architecture & TDD refactor.** Complete. The layered, tested foundation.
+- **Epic 2 — Generic document-driven execution (this doc).** Build the ingestion and executor
+  framework *generically*, so a new idea is a plug-in, not a rewrite.
+- **Epic 3 — Resume & cover-letter builder (planned, not started).** The first concrete
+  application: a job posting is the "document," and the executor writes a tailored resume and
+  cover letter. It will be added as a new ingestion parser plus a new executor agent type on top
+  of Epic 2's generic core, with no change to the board, repositories, or transport.
+
+**The extensibility bet (the whole point of Epic 2):** every future idea reduces to two
+pluggable pieces on top of the shared platform:
+
+1. an **ingestion parser** that turns some input into task drafts, and
+2. an **executor agent type** (a `ClaudeAgentBase` subclass) that does the work.
+
+The Kanban board, repositories, the `IClaudeClient` seam, the live SignalR feed, and the
+guardrails are shared and generic. Build Epic 2 so those never need to change when a new
+application is added. If a new idea forces a change to that shared core, that is a design smell
+to fix, not a change to accept.
+
+---
+
 # Rules to follow for AI who are reading this
 
 - **TDD is how we build everything.** Red (failing test) → green (simplest code) → refactor.
@@ -47,6 +72,16 @@ the house down. We add rooms while people are still living in it.
 - **Never hand over anything you claim works but have not tested.** Test it, or state plainly it
   is untested and why.
 - **Hold the whole map.** Read the whole document before advising so guidance fits overall scope.
+- **Do not invent scope, and never slip unspecified work into a "next step."** If something is
+  missing and should be added, say so explicitly and record it in the doc as a labeled decision
+  before acting. (Violated: dropped "thread a source name into provenance" as if it were task
+  `T1.3`, which it was not.)
+- **Refer to a task by exactly what the doc says it is.** Do not silently relabel or re-scope a
+  numbered task in passing. (Violated: called `T1.3` "thread a source name" when `T1.3` was
+  "stamp kind + provenance," already satisfied.)
+- **Own the decisions that are yours; do not punt "your call" on an architect/developer choice.**
+  Decide, record it in the doc, and commit. Reserve "your call" for genuine product decisions.
+  (Violated: flagged the provenance gap, then deferred where it goes back to the user.)
 
 **Naming conventions (carried forward):** domain types never reuse a .NET BCL name (the old
 `TaskStatus` collided with `System.Threading.Tasks.TaskStatus`, hence `WorkflowStatus`); result
@@ -122,6 +157,95 @@ not to reach around it.
 
 ---
 
+# Architecture — the 10,000ft View (the design to build toward)
+
+Epic 2 adds exactly two new capabilities to the existing layered app: turning input into task
+drafts (**ingestion**) and working tasks off the board (**execution**). Both are built as
+generic, pluggable seams so Epic 3 and anything after is a plug-in, not a rewrite.
+
+## The one new idea: tasks have a *kind*, and executors self-select by kind
+
+Today every task is generic. To let different agents do different work on the same board,
+`TaskItem` gains a **`TaskKind`** discriminator (`Generic` now, `ResumeTailoring` later).
+Ingestion stamps a kind on every draft; each executor declares the one kind it works. The
+`AgentRunner` already discovers every agent, so adding an executor for a new kind is just
+registering a new agent. That single discriminator is what makes the platform extensible:
+
+> **A new application = a new parser that emits a new kind + a new executor that claims that
+> kind.** The board, repositories, transport, and guardrails never change.
+
+```mermaid
+flowchart TB
+    subgraph Ingestion [Ingestion - pluggable per idea]
+        IN["Raw input<br/>(spec doc; later a job posting)"]
+        PARSER["IIngestionParser<br/>(one per input type)"]
+        DRAFTS["TaskDraft[]<br/>(title, kind, provenance)"]
+    end
+    subgraph Core [Shared core - never changes per idea]
+        PREVIEW["Preview + approve<br/>(human checkpoint)"]
+        REPO["ITaskRepository.AddAsync"]
+        BOARD[("Tasks table + Kanban<br/>TaskKind discriminator")]
+    end
+    subgraph Execution [Execution - pluggable per idea]
+        CLAIM["TryClaimNextAsync(kind)"]
+        EXEC["Executor agent : ClaudeAgentBase<br/>(one per kind)"]
+        CLAUDE["IClaudeClient"]
+    end
+    GATE["Approval gate<br/>Review to Done = human only"]
+    FEED["SignalR feed to React board"]
+
+    IN --> PARSER --> DRAFTS --> PREVIEW --> REPO --> BOARD
+    BOARD --> CLAIM --> EXEC
+    EXEC -. reason .-> CLAUDE
+    EXEC -->|move to Review| BOARD
+    BOARD --> GATE
+    BOARD -. live .-> FEED
+```
+
+## New building blocks (all generic)
+
+- **`TaskDraft`** — a proposed task (title, description, priority, `TaskKind`, provenance).
+  Ingestion output; not yet persisted.
+- **`IIngestionParser`** — returns `Result<IReadOnlyList<TaskDraft>>` from raw input. Pluggable,
+  one parser per input type. Service-layer pattern: deterministic, or `IClaudeClient`-backed and
+  tested with `StubClaude`.
+- **Provenance** — every agent-created task records where it came from. `Section` (the source
+  heading) is captured on the draft at ingestion (Sprint 1). The **source-document id** is stamped
+  when a draft is persisted as a board task (Sprint 3), completing provenance = source id +
+  section. The nullable provenance fields on `TaskItem` and their migration land in Sprint 3, not
+  earlier.
+- **Atomic claiming** — `ITaskRepository.TryClaimNextAsync(kind, agentName)` moves the next
+  unclaimed `Todo` task of a kind to `InProgress` with an owner stamp, guarded so two agents never
+  grab the same card. Concurrency stays in the repository (its single responsibility).
+- **Executor agents** — each a `ClaudeAgentBase` subclass for one `TaskKind`: claim, work via
+  Claude tools, move to `Review` (never straight to `Done`). Epic 2's generic executor does a
+  minimal real step (ask Claude to draft a plan/result for the task and record it) so the whole
+  pipeline runs end-to-end before any domain work exists.
+- **Guardrails** — the approval gate (`Review → Done` is a human action, never the agent), a
+  spend cap around Claude calls, rollback (a failed step returns the task to `Todo` and logs,
+  never leaves it stuck `InProgress`), and the existing per-cycle tool-loop cap.
+
+## Dependency direction (unchanged from Epic 1)
+
+React board → api → hooks; controllers → services → repositories → EF; executors → repositories
++ `IClaudeClient`; live updates → SignalR. Every arrow already exists. Ingestion is a new
+service; executors are new agents. Nothing new at the data or transport layer.
+
+## Decisions this design makes (confirm before Sprint 1)
+
+1. **`TaskKind` discriminator on `TaskItem`** is the extensibility mechanism (enum + migration).
+2. **Claiming = an atomic `Todo → InProgress` transition** via a guarded repository method, not an
+   app-level lock.
+3. **Executors always stop at `Review`;** only a human moves `Review → Done`. The approval gate is
+   in from the start and hardened in Sprint 6.
+4. **Epic 2's generic executor does a trivial real step** so the pipeline is demonstrable
+   end-to-end; Epic 3 registers the first domain executor.
+5. **Left open (product calls, decided when we reach them):** parsing granularity and
+   rules-vs-Claude (Sprint 1); whether a `Blocked`/`Failed` column is worth adding for rollback
+   visibility (Sprint 6).
+
+---
+
 # The TDD Loop and Git Workflow (per sprint)
 
 The loop is identical to the refactor:
@@ -171,8 +295,183 @@ parsing rule (see open questions) is the unit under test, so it must be determin
 Claude-assisted parse is chosen, put it behind the `IClaudeClient` seam so the test uses
 `StubClaude`.
 
-**Design points to settle here:** granularity of parsing (one task per heading vs per checklist
-item vs Claude's judgment), and whether parsing is rules-based, Claude-assisted, or both.
+**Decided (2026-07-26):** the first parser is **rules-based and deterministic** — one draft per
+markdown heading and per top-level checklist item. Zero Claude in Sprint 1, so
+`SpecDocumentParser` is fully unit-testable with plain string input. A `ClaudeIngestionParser`
+can be added later behind the same `IIngestionParser` interface (DIP) without touching anything
+downstream.
+
+### RED — the failing test (T1.2)
+
+**FILE — create new: `TaskFlow.Tests/Ingestion/SpecDocumentParserTests.cs`**
+
+```csharp
+using FluentAssertions;
+using TaskFlow.Api.Ingestion;
+using TaskFlow.Api.Models;
+using Xunit;
+
+namespace TaskFlow.Tests.Ingestion;
+
+public class SpecDocumentParserTests
+{
+    // Two headings + three checklist items = five drafts.
+    private const string Doc =
+        "# Set up auth\n" +
+        "Add JWT login and registration.\n" +
+        "\n" +
+        "- [ ] Create the login endpoint\n" +
+        "- [ ] Protect the task routes\n" +
+        "\n" +
+        "# Build the board\n" +
+        "- [ ] Render the columns\n";
+
+    [Fact]
+    public void Parses_one_draft_per_heading_and_per_checklist_item()
+    {
+        var result = new SpecDocumentParser().Parse(Doc);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Should().HaveCount(5);
+    }
+
+    [Fact]
+    public void Heading_becomes_a_draft_titled_and_sectioned_by_the_heading()
+    {
+        var drafts = new SpecDocumentParser().Parse(Doc).Value!;
+
+        drafts.Should().Contain(d => d.Title == "Set up auth" && d.Section == "Set up auth");
+    }
+
+    [Fact]
+    public void Checklist_item_becomes_a_draft_under_its_parent_heading()
+    {
+        var drafts = new SpecDocumentParser().Parse(Doc).Value!;
+
+        drafts.Should().Contain(d =>
+            d.Title == "Create the login endpoint" && d.Section == "Set up auth");
+    }
+
+    [Fact]
+    public void Every_draft_is_kind_Generic()
+    {
+        var drafts = new SpecDocumentParser().Parse(Doc).Value!;
+
+        drafts.Should().OnlyContain(d => d.Kind == TaskKind.Generic);
+    }
+}
+```
+
+**Expect RED.** `TaskDraft`, `IIngestionParser`, `SpecDocumentParser`, and `TaskKind` do not exist
+yet, so `dotnet test` will not compile. That is the red. The test encodes the contract: a parser
+whose `Parse(string)` returns `Result<IReadOnlyList<TaskDraft>>`, where each `TaskDraft` has a
+`Title`, a `Section` (its source heading, i.e. provenance), and a `Kind`.
+
+### GREEN — the implementation
+
+Four new files in `TaskFlow.Api`. Nothing more than the tests demand: descriptions are left
+null (no test asks for them yet).
+
+**FILE — `TaskFlow.Api/Models/TaskKind.cs`**
+
+```csharp
+namespace TaskFlow.Api.Models;
+
+/// <summary>
+/// Discriminator that lets different executor agents self-select which tasks they work.
+/// New applications (epics) add their own kinds; the shared core never changes.
+/// </summary>
+public enum TaskKind
+{
+    Generic
+}
+```
+
+**FILE — `TaskFlow.Api/Ingestion/TaskDraft.cs`**
+
+```csharp
+using TaskFlow.Api.Models;
+
+namespace TaskFlow.Api.Ingestion;
+
+/// <summary>
+/// A proposed task produced by ingestion, before it is persisted to the board.
+/// <c>Section</c> is the source heading it came from (provenance).
+/// </summary>
+public sealed record TaskDraft(string Title, string? Description, TaskKind Kind, string Section);
+```
+
+**FILE — `TaskFlow.Api/Ingestion/IIngestionParser.cs`**
+
+```csharp
+using TaskFlow.Api.Common;
+
+namespace TaskFlow.Api.Ingestion;
+
+public interface IIngestionParser
+{
+    Result<IReadOnlyList<TaskDraft>> Parse(string documentText);
+}
+```
+
+**FILE — `TaskFlow.Api/Ingestion/SpecDocumentParser.cs`**
+
+```csharp
+using System.Text.RegularExpressions;
+using TaskFlow.Api.Common;
+using TaskFlow.Api.Models;
+
+namespace TaskFlow.Api.Ingestion;
+
+/// <summary>
+/// Rules-based, deterministic parser: one draft per markdown heading and per top-level
+/// checklist item. A pure function of the input text - no Claude, no I/O. Each checklist
+/// item is filed under the most recent heading (its provenance).
+/// </summary>
+public sealed class SpecDocumentParser : IIngestionParser
+{
+    private static readonly Regex Heading =
+        new(@"^\s*#+\s+(?<text>.+?)\s*$", RegexOptions.Compiled);
+
+    private static readonly Regex ChecklistItem =
+        new(@"^\s*[-*]\s*\[[ xX]\]\s+(?<text>.+?)\s*$", RegexOptions.Compiled);
+
+    public Result<IReadOnlyList<TaskDraft>> Parse(string documentText)
+    {
+        var drafts = new List<TaskDraft>();
+        var currentHeading = string.Empty;
+
+        foreach (var rawLine in documentText.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+
+            var heading = Heading.Match(line);
+            if (heading.Success)
+            {
+                currentHeading = heading.Groups["text"].Value;
+                drafts.Add(new TaskDraft(currentHeading, null, TaskKind.Generic, currentHeading));
+                continue;
+            }
+
+            var item = ChecklistItem.Match(line);
+            if (item.Success)
+            {
+                drafts.Add(new TaskDraft(item.Groups["text"].Value, null, TaskKind.Generic, currentHeading));
+            }
+        }
+
+        return Result<IReadOnlyList<TaskDraft>>.Ok(drafts);
+    }
+}
+```
+
+### Sprint 1 status
+
+`T1.1`, `T1.2`, and `T1.3` are all satisfied by the single red-green cycle above: `TaskDraft` +
+`IIngestionParser` (T1.1), the deterministic `SpecDocumentParser` (T1.2), and stamping
+`TaskKind.Generic` + `Section` provenance on every draft (T1.3, asserted by the tests). Sprint 1
+is complete once `dotnet test` is green. Scope line: provenance here is the `Section` only; the
+source-document id is deliberately deferred to Sprint 3 (see that sprint), not added now.
 
 ---
 
@@ -204,8 +503,10 @@ write path using real in-memory SQLite.
 **Leans on:** the repositories and the existing `Tasks` table. This is the point where the
 document truly becomes cards on the same board.
 
-**Design point:** provenance shape (document id + section anchor) so a task can be traced back,
-and so the executor in Sprint 4 has context to work from.
+**Decided:** provenance = **source-document id + section**. The `Section` is already on each
+`TaskDraft` from Sprint 1; Sprint 3 adds the source-document id (and the section) as nullable
+fields on `TaskItem` when the draft is persisted, and gives the executor in Sprint 4 context to
+work from. This is the single home for the "which document" half of provenance, not added earlier.
 
 ---
 
@@ -258,16 +559,81 @@ principle from the stale-task agent, scaled up to an agent that changes real sta
 
 ---
 
+# Product Owner — Sprint Backlog (assigned, test-first)
+
+Every task is **RED first**: the developer writes the failing test, we confirm red, then the
+simplest green, then refactor with tests staying green. Owners: **BE** = backend developer,
+**FE** = frontend developer. The principle note names the SOLID/DRY idea each task is meant to
+exercise. Nothing merges without its tests.
+
+**Sprint 1 — Ingestion service (BE)**
+
+- `T1.1` — `TaskDraft` model + `IIngestionParser` interface. RED: a contract test pinning the
+  shape. *ISP: a small, focused interface.*
+- `T1.2` — `SpecDocumentParser : IIngestionParser` turning generic spec-doc text into drafts,
+  deterministic. RED: feed sample text, assert draft count and fields. *SRP: it only parses. DIP:
+  returns `Result<T>`, no HTTP or Claude.*
+- `T1.3` — stamp `TaskKind.Generic` and provenance on each draft. RED: assert kind + provenance on
+  the output.
+
+**Sprint 2 — Endpoint + preview UI (BE + FE)**
+
+- `T2.1` (BE) — thin `IngestionController` endpoint calling the service, `.ToActionResult()`. RED:
+  controller test with a mocked service. *SRP: thin controller. DIP: depends on the interface.*
+- `T2.2` (FE) — `api/ingestion.ts` + a hook. RED: MSW test of the call.
+- `T2.3` (FE) — upload/paste + preview component in `features/`. RED: RTL test rendering drafts.
+  *DRY: reuse `lib/` helpers, no new formatters.*
+
+**Sprint 3 — Drafts become board tasks (BE)**
+
+- `T3.1` — add `TaskKind` and provenance fields (**source-document id + section**) to the
+  `TaskItem` entity + EF migration. The `TaskKind` enum already exists from Sprint 1; this wires
+  it and provenance onto the entity. RED: repository test round-tripping kind and provenance.
+- `T3.2` — persist approved drafts via `ITaskRepository.AddAsync` as `Todo`. RED: in-memory SQLite
+  test asserting tasks land with the right kind and provenance. *DRY: reuse the repository, no new
+  write path.*
+
+**Sprint 4 — Executor agent (BE)**
+
+- `T4.1` — `ITaskRepository.TryClaimNextAsync(kind, agentName)` atomic claim. RED: a two-claim
+  test proving no double-claim. *SRP: concurrency lives in the repository.*
+- `T4.2` — `GenericExecutorAgent : ClaudeAgentBase` for `TaskKind.Generic`: claim, Claude work
+  step, record result, move to `Review`. RED: `StubClaude` + in-memory SQLite, assert the card
+  reached Review with a result log. *OCP/LSP: a new agent extends the base with no base change.
+  DIP: `IClaudeClient`.*
+- `T4.3` — register the agent in DI so `AgentRunner` discovers it. RED: covered by the executor
+  test exercising the runner path.
+
+**Sprint 5 — Live transitions (BE + FE)**
+
+- `T5.1` (BE) — broadcast task transitions over `IAgentNotifier` / a new `HubEvents.TaskMoved`.
+  RED: notifier test.
+- `T5.2` (FE) — render card movement live on the board. RED: hook/RTL test against the new event.
+  *DRY: extend `useAgentFeed` and the `HubEvents` constants, do not duplicate.*
+
+**Sprint 6 — Guardrails (BE + FE)**
+
+- `T6.1` (BE) — approval endpoint for `Review → Done` (human only). RED: a test proving the agent
+  path can never reach `Done`, only the endpoint can.
+- `T6.2` (BE) — spend-cap policy around Claude calls. RED: test that the executor skips when the
+  cap is hit.
+- `T6.3` (BE) — rollback: a failed work step returns the task to `Todo` and logs. RED: force a
+  failure, assert the task is back in `Todo`, not stuck `InProgress`.
+- `T6.4` (FE) — approval control in the UI. RED: RTL test.
+
+---
+
 # Open Questions to Resolve Before Sprint 1
 
 Recorded now so they are not forgotten; answered when we reach the relevant sprint, not before:
 
-- How granular should document parsing be: one task per heading, per checklist item, or Claude's
-  judgment?
+- **RESOLVED (Sprint 1):** granularity is one draft per markdown heading and per top-level
+  checklist item, rules-based.
 - Do executor agents write code/files, or only orchestrate and report? (Scope and safety.)
 - What is the human-in-the-loop checkpoint: approve each task, approve the batch, or fully
   autonomous with a kill switch?
-- Is parsing rules-based, Claude-assisted, or a hybrid? (Determines how Sprint 1 is tested.)
+- **RESOLVED:** parsing is rules-based and deterministic first; a `ClaudeIngestionParser` is added
+  later behind the same interface.
 
 ---
 
