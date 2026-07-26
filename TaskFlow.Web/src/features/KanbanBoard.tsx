@@ -6,9 +6,9 @@ import {
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core'
-import type { TaskItem, TaskStatus } from './types'
-import { getTasks, updateTaskStatus } from './api'
-import { KanbanColumn } from './KanbanColumn'
+import type { TaskItem, TaskStatus } from '../types'
+import { getTasks, updateTaskStatus } from '../api/tasks'
+import { KanbanColumn } from '../components/KanbanColumn'
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: 'Todo', label: 'To Do' },

@@ -1,12 +1,8 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { TaskItem } from './types'
-
-const priorityStyles: Record<string, string> = {
-  High: 'bg-red-500/15 text-red-300 border-red-500/30',
-  Medium: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-  Low: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
-}
+import type { TaskItem } from '../types'
+import { priorityStyles } from '../lib/styles'
+import { formatDate } from '../lib/formatting'
 
 export function TaskCard({ task }: { task: TaskItem }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -47,9 +43,7 @@ export function TaskCard({ task }: { task: TaskItem }) {
 
       <div className="flex items-center justify-between text-[11px] text-slate-500">
         <span>{task.assignedToName ?? 'Unassigned'}</span>
-        {task.dueDate && (
-          <span>{new Date(task.dueDate).toLocaleDateString()}</span>
-        )}
+        {task.dueDate && <span>{formatDate(task.dueDate)}</span>}
       </div>
     </div>
   )

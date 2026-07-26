@@ -40,6 +40,23 @@ public sealed class StubClaude : IClaudeClient
         },
         EndTurn());
 
+    /// <summary>Scripts one update_task_priority tool call, then an end_turn.</summary>
+    public static StubClaude ThatUpdatesPriority(int taskId, string priority, string reasoning) => new(
+        new MessageResponse
+        {
+            StopReason = "tool_use",
+            Content = new List<ContentBase>
+            {
+                new ToolUseContent
+                {
+                    Id = "tool_1",
+                    Name = "update_task_priority",
+                    Input = JsonSerializer.SerializeToNode(new { task_id = taskId, priority, reasoning })!
+                }
+            }
+        },
+        EndTurn());
+
     private static MessageResponse EndTurn() => new()
     {
         StopReason = "end_turn",

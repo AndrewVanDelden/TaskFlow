@@ -1,5 +1,7 @@
-import type { AgentLog } from './types'
-import type { CycleEvent } from './useAgentFeed'
+import type { AgentLog } from '../types'
+import type { CycleEvent } from '../hooks/useAgentFeed'
+import { neutralStyle } from '../lib/styles'
+import { formatTime } from '../lib/formatting'
 
 const AGENTS = [
   { name: 'TaskPrioritizer', label: 'Task Prioritizer', blurb: 'Re-ranks priorities' },
@@ -32,7 +34,7 @@ export function AgentStatus({
                 className={`flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full border ${
                   running
                     ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                    : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
+                    : neutralStyle
                 }`}
               >
                 <span
@@ -54,9 +56,7 @@ export function AgentStatus({
               <div>
                 <div className="text-slate-600">Last activity</div>
                 <div className="text-slate-300 font-medium">
-                  {lastLog
-                    ? new Date(lastLog.createdAt).toLocaleTimeString()
-                    : 'None yet'}
+                  {lastLog ? formatTime(lastLog.createdAt) : 'None yet'}
                 </div>
               </div>
             </div>
