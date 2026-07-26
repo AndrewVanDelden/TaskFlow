@@ -2166,9 +2166,9 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
 {
     private const int MaxToolLoopIterations = 10;
 
-    private readonly IClaudeClient _claude;
     private readonly IAgentNotifier _notifier;
 
+    protected IClaudeClient Claude { get; }
     protected IAgentLogRepository Logs { get; }
     protected IConfiguration Config { get; }
     protected ILogger Logger { get; }
@@ -2180,7 +2180,7 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
         IConfiguration config,
         ILogger logger)
     {
-        _claude = claude;
+        Claude = claude;
         Logs = logs;
         _notifier = notifier;
         Config = config;
@@ -2192,7 +2192,7 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
     public abstract Task RunAsync(CancellationToken cancellationToken);
 
     /// <summary>True when Claude has an API key; agents skip their cycle when false.</summary>
-    protected bool ClaudeConfigured => _claude.IsConfigured;
+    protected bool ClaudeConfigured => Claude.IsConfigured;
 
     protected delegate Task<ContentBase> ToolDispatcher(ToolUseContent toolUse, CancellationToken cancellationToken);
 
@@ -2219,7 +2219,7 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
         {
             iterations++;
 
-            var response = await _claude.SendAsync(new MessageParameters
+            var response = await Claude.SendAsync(new MessageParameters
             {
                 Model = model,
                 MaxTokens = maxTokens,
@@ -2276,6 +2276,14 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
         await Logs.AddAsync(log, cancellationToken);
         await Logs.SaveChangesAsync(cancellationToken);
         await _notifier.AgentActionAsync(log, cancellationToken);
+    }
+
+    /// <summary>Persists a cycle-summary log without broadcasting a per-action event
+    /// (the cycle start/complete events already cover the dashboard's cycle status).</summary>
+    protected async Task RecordCycleSummaryAsync(AgentLog log, CancellationToken cancellationToken)
+    {
+        await Logs.AddAsync(log, cancellationToken);
+        await Logs.SaveChangesAsync(cancellationToken);
     }
 
     protected Task NotifyCycleStartedAsync(CancellationToken ct) => _notifier.AgentCycleAsync(Name, AgentPhases.Started, ct);
@@ -2343,7 +2351,7 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
 
         Logger.LogInformation("[{Agent}] Cycle complete. {Updates} update(s) applied.", Name, updatesApplied);
 
-        await Logs.AddAsync(new AgentLog
+        await RecordCycleSummaryAsync(new AgentLog
         {
             AgentName = Name,
             Action = updatesApplied > 0 ? AgentActions.PrioritiesUpdated : AgentActions.NoChangesNeeded,
@@ -2351,7 +2359,6 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
             Success = true,
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
-        await Logs.SaveChangesAsync(cancellationToken);
 
         await NotifyCycleCompletedAsync(cancellationToken);
     }
@@ -2508,7 +2515,7 @@ public class StaleTaskAgent : ClaudeAgentBase
 
         Logger.LogInformation("[{Agent}] Cycle complete. {Count} action(s) taken.", Name, actionsApplied);
 
-        await Logs.AddAsync(new AgentLog
+        await RecordCycleSummaryAsync(new AgentLog
         {
             AgentName = Name,
             Action = actionsApplied > 0 ? AgentActions.CycleActions : AgentActions.NoActionNeeded,
@@ -2517,7 +2524,6 @@ public class StaleTaskAgent : ClaudeAgentBase
             Success = true,
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
-        await Logs.SaveChangesAsync(cancellationToken);
 
         await NotifyCycleCompletedAsync(cancellationToken);
     }
@@ -2703,6 +2709,16 @@ public class StaleTaskAgent : ClaudeAgentBase
 Run `dotnet build` — the agents now compile against the seams. Then `dotnet test`, then run
 the app and confirm both agents still fire on their intervals and broadcast to the dashboard.
 Behavior is identical; only the wiring underneath changed.
+
+> **Migration note (landed 2026-07-26).** This slice shipped via a fix-up PR after a bad
+> `develop` pull had corrupted the agents with a half-applied version of this same refactor
+> (a stray double `RunAsync`, a `base(db, …)` call against the removed `AppDbContext` ctor,
+> and dead `Models.TaskStatus` references from before the `WorkflowStatus` rename). The
+> recovery was to *finish* the migration the tests already specified rather than revert them.
+> The shipped code matches the blocks above, with the cycle-summary save factored into the
+> base `RecordCycleSummaryAsync` helper (both agents call it). One trivial, immaterial delta:
+> `StaleTaskAgent.RunAsync` gathers context and recent actions before the `ClaudeConfigured`
+> check rather than after. Full suite green: 34 passed, 0 failed.
 
 > **Why this is the last big refactor.** After F, every dependency in the system sits behind
 > a seam: web → service → repository → EF, and agent → repository + `IClaudeClient`. That is
@@ -2936,6 +2952,13 @@ npm install -D vitest @testing-library/react @testing-library/jest-dom @testing-
 - `user-event` — simulate real typing/clicking.
 - `msw` — intercept fetch in tests.
 
+> **Confirm versions at install (this repo runs Vite 8 / React 19).** `npm install -D` pulls
+> the latest of each, which should be correct, but verify the peer deps actually resolve
+> rather than assuming: Vitest must support your Vite 8, React Testing Library must be v16+
+> for React 19, and MSW installs as v2 (its handler API in Slice K differs from v1 — the
+> Slice K examples assume v2). If `npm install` reports a peer-dependency conflict, resolve it
+> deliberately then, not by reflexively forcing `--legacy-peer-deps`.
+
 ### H2. Configure Vitest
 
 Vitest reuses your Vite config, so the test setup lives right in `vite.config.ts`. One
@@ -2983,10 +3006,26 @@ the MSW server start/stop here:
 import '@testing-library/jest-dom'
 ```
 
-Add a script to `package.json`:
+**Wire the test types into TypeScript (do not skip this).** `tsconfig.app.json` includes
+`src`, and the build script runs `tsc -b`, so it type-checks the test files too. Without the
+right types the build breaks on `.toBeInTheDocument()` (jest-dom) and on the bare
+`describe`/`it`/`expect` that `globals: true` enables. Add both to the existing `types` array
+in `tsconfig.app.json` (it currently reads `"types": ["vite/client"]`):
+
+```jsonc
+// tsconfig.app.json → compilerOptions
+"types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"],
+```
+
+Add a `test` entry to the **existing** `scripts` block in `package.json` — merge it in, do
+not add a second `scripts` key:
 
 ```json
 "scripts": {
+  "dev": "vite",
+  "build": "tsc -b && vite build",
+  "lint": "eslint .",
+  "preview": "vite preview",
   "test": "vitest"
 }
 ```
