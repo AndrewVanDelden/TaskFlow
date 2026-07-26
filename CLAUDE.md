@@ -70,9 +70,12 @@
 - **On a rename, update internal names too.** Renaming a folder is not enough. Also fix
   `index.html` `<title>` and `package.json` `"name"` (npm names must be lowercase). The web
   source recovery point after the reset is commit `6ca203d`.
-- **Source of truth is `TaskFlow_Refactor_Architecture_and_TDD.md`.** On any new chat, read
-  its "RESUME HERE" block first. Do not re-derive context from chat history. Record every bug
-  fix back into that doc so the chat stays disposable and can be compressed anytime.
+- **Source of truth is the active working document.** `TaskFlow_Refactor_Architecture_and_TDD.md`
+  is COMPLETE (Slices A–L shipped, 39 backend + 14 frontend tests green) and is now the historical
+  record. Ongoing work lives in **`TaskFlow_NorthStar_Epic.md`** (the North Star epic, Sprints 1–6).
+  On any new chat, read the active epic doc first; do not re-derive context from chat history and
+  do not use a "RESUME HERE" block. Record every bug fix and decision back into the active doc so
+  the chat stays disposable.
 - **Do not edit the user's source files unless asked.** The user is learning; tell them what
   to change and where, and let them apply it. Always keep the guide doc updated yourself.
   Edit source directly only on explicit request, and do not overstep a "where does this go?"
