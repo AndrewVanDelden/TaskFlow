@@ -17,7 +17,8 @@ namespace TaskFlow.Api.Agents;
 /// actions on the same task across cycles.
 ///
 /// The Claude conversation mechanics live in <see cref="ClaudeAgentBase"/>; this
-/// class only supplies the tools, the prompt, and the per-tool handlers.
+/// class only supplies the tools, the prompt, and the per-tool handlers, reading
+/// and writing through repositories rather than a DbContext.
 /// </summary>
 public class StaleTaskAgent : ClaudeAgentBase
 {
@@ -28,13 +29,24 @@ public class StaleTaskAgent : ClaudeAgentBase
     /// <summary>A user with at least this many open tasks is considered overloaded.</summary>
     private const int OverloadedTaskCount = 5;
 
+    /// <summary>How far back the agent looks at its own actions when building memory.</summary>
+    private static readonly TimeSpan MemoryWindow = TimeSpan.FromDays(7);
+
+    private readonly ITaskRepository _tasks;
+    private readonly IUserRepository _users;
+
     public StaleTaskAgent(
-        AppDbContext db,
+        IClaudeClient claude,
+        ITaskRepository tasks,
+        IUserRepository users,
+        IAgentLogRepository logs,
+        IAgentNotifier notifier,
         IConfiguration config,
-        ILogger<StaleTaskAgent> logger,
-        IAgentNotifier notifier)
-        : base(db, config, logger, notifier)
+        ILogger<StaleTaskAgent> logger)
+        : base(claude, logs, notifier, config, logger)
     {
+        _tasks = tasks;
+        _users = users;
     }
 
     public override string Name => "StaleTaskDetector";
@@ -48,11 +60,7 @@ public class StaleTaskAgent : ClaudeAgentBase
         var thresholdHours = Config.GetValue("Agents:StaleTaskThresholdHours", 48);
         var cutoff = DateTime.UtcNow.AddHours(-thresholdHours);
 
-        var staleTasks = await Db.Tasks
-            .Include(t => t.AssignedTo)
-            .Where(t => t.Status != Models.TaskStatus.Done && t.UpdatedAt < cutoff)
-            .OrderBy(t => t.UpdatedAt)
-            .ToListAsync(cancellationToken);
+        var staleTasks = await _tasks.GetStaleAsync(cutoff, cancellationToken);
 
         if (staleTasks.Count == 0)
         {
@@ -67,14 +75,17 @@ public class StaleTaskAgent : ClaudeAgentBase
         await NotifyCycleStartedAsync(cancellationToken);
 
         var contextJson = await BuildContextJsonAsync(cancellationToken);
-        var recentActions = await GetRecentActionsAsync(cancellationToken);
+        var recentActions = await Logs.GetTaskScopedSinceAsync(
+            Name, DateTime.UtcNow - MemoryWindow, limit: 50, cancellationToken);
 
         // ── REASON + ACT ─────────────────────────────────────────────────────────
-        if (!TryCreateClaudeClient(out var client, out var model, out var maxTokens))
+        if (!ClaudeConfigured)
+        {
+            Logger.LogWarning("[{Agent}] Anthropic API key not configured. Skipping cycle.", Name);
             return;
+        }
 
         var actionsApplied = await RunToolConversationAsync(
-            client, model, maxTokens,
             prompt: BuildPrompt(staleTasks, recentActions, contextJson, thresholdHours),
             tools: BuildTools(),
             dispatch: ExecuteToolAsync,
@@ -84,7 +95,7 @@ public class StaleTaskAgent : ClaudeAgentBase
         Logger.LogInformation(
             "[{Agent}] Cycle complete. {Count} action(s) taken.", Name, actionsApplied);
 
-        Db.AgentLogs.Add(new AgentLog
+        await RecordCycleSummaryAsync(new AgentLog
         {
             AgentName = Name,
             Action = actionsApplied > 0 ? AgentActions.CycleActions : AgentActions.NoActionNeeded,
@@ -92,27 +103,12 @@ public class StaleTaskAgent : ClaudeAgentBase
             Details = $"Reviewed {staleTasks.Count} stale task(s). Took {actionsApplied} action(s).",
             Success = true,
             CreatedAt = DateTime.UtcNow
-        });
+        }, cancellationToken);
 
         await NotifyCycleCompletedAsync(cancellationToken);
-        await Db.SaveChangesAsync(cancellationToken);
     }
 
     // ── CONTEXT GATHERING ────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// The agent's own recent actions (last 7 days, task-scoped) form its memory,
-    /// so it does not repeat an action it already took on the same task.
-    /// </summary>
-    private Task<List<AgentLog>> GetRecentActionsAsync(CancellationToken cancellationToken)
-    {
-        var memoryCutoff = DateTime.UtcNow.AddDays(-7);
-        return Db.AgentLogs
-            .Where(l => l.AgentName == Name && l.CreatedAt > memoryCutoff && l.TaskId != null)
-            .OrderByDescending(l => l.CreatedAt)
-            .Take(50)
-            .ToListAsync(cancellationToken);
-    }
 
     /// <summary>
     /// Serializes team roster and per-user open-task counts so Claude can judge
@@ -120,15 +116,11 @@ public class StaleTaskAgent : ClaudeAgentBase
     /// </summary>
     private async Task<string> BuildContextJsonAsync(CancellationToken cancellationToken)
     {
-        var workload = await Db.Tasks
-            .Where(t => t.Status != Models.TaskStatus.Done && t.AssignedToId != null)
-            .GroupBy(t => t.AssignedToId!.Value)
-            .Select(g => new { UserId = g.Key, OpenCount = g.Count() })
-            .ToListAsync(cancellationToken);
+        var counts = await _tasks.GetOpenCountsByUserAsync(cancellationToken);
+        var workload = counts.Select(kv => new { UserId = kv.Key, OpenCount = kv.Value }).ToList();
 
-        var users = await Db.Users
-            .Select(u => new { u.Id, u.Name })
-            .ToListAsync(cancellationToken);
+        var allUsers = await _users.GetAllAsync(cancellationToken);
+        var users = allUsers.Select(u => new { u.Id, u.Name }).ToList();
 
         return JsonSerializer.Serialize(new { users, workload });
     }
@@ -214,7 +206,7 @@ public class StaleTaskAgent : ClaudeAgentBase
         var args = toolUse.Input.Deserialize<EscalateArgs>()
             ?? throw new InvalidOperationException("Failed to deserialize escalate_task arguments.");
 
-        var task = await Db.Tasks.FindAsync([args.TaskId], cancellationToken);
+        var task = await _tasks.GetByIdAsync(args.TaskId, ct: cancellationToken);
         if (task is null)
             return ToolResult(toolUse, $"Task {args.TaskId} not found.");
 
@@ -245,13 +237,13 @@ public class StaleTaskAgent : ClaudeAgentBase
         var args = toolUse.Input.Deserialize<ReassignArgs>()
             ?? throw new InvalidOperationException("Failed to deserialize reassign_task arguments.");
 
-        var task = await Db.Tasks.FindAsync([args.TaskId], cancellationToken);
+        var task = await _tasks.GetByIdAsync(args.TaskId, ct: cancellationToken);
         if (task is null)
             return ToolResult(toolUse, $"Task {args.TaskId} not found.");
 
         if (args.NewUserId.HasValue)
         {
-            var exists = await Db.Users.AnyAsync(u => u.Id == args.NewUserId.Value, cancellationToken);
+            var exists = await _users.ExistsAsync(args.NewUserId.Value, cancellationToken);
             if (!exists)
                 return ToolResult(toolUse, $"User {args.NewUserId} does not exist.");
         }
@@ -289,7 +281,7 @@ public class StaleTaskAgent : ClaudeAgentBase
         var args = toolUse.Input.Deserialize<FlagArgs>()
             ?? throw new InvalidOperationException("Failed to deserialize flag_for_review arguments.");
 
-        var task = await Db.Tasks.FindAsync([args.TaskId], cancellationToken);
+        var task = await _tasks.GetByIdAsync(args.TaskId, ct: cancellationToken);
         if (task is null)
             return ToolResult(toolUse, $"Task {args.TaskId} not found.");
 
