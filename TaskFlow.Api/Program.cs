@@ -105,6 +105,7 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IAgentLogRepository, AgentLogRepository>();
 builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IClaudeClient, ClaudeClient>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();

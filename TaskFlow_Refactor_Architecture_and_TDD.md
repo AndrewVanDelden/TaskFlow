@@ -1891,7 +1891,11 @@ enormously for the North Star — an executor agent doing real work must be test
 without hitting the live API.
 
 **FILE — create new: `TaskFlow.Api/Services/ClaudeClient.cs`** (the real implementation,
-a thin pass-through to the SDK — the same call the agents make today):
+a thin pass-through to the SDK — the same call the agents make today).
+
+> **Use the final version in F3, not this one.** F3 gives the complete `IClaudeClient` +
+> `ClaudeClient` with an `IsConfigured` flag (so an agent skips cleanly when no API key is
+> set). The sketch below is here for context only; when you get to F3, paste those files.
 
 ```csharp
 using Anthropic.SDK;
@@ -1981,6 +1985,7 @@ public class StaleTaskAgentTests
         await db.Context.SaveChangesAsync();
 
         var tasks = new TaskRepository(db.Context);
+        var users = new UserRepository(db.Context);
         var logs  = new AgentLogRepository(db.Context);
 
         // Script Claude: escalate this task, then stop. (Helper covered below.)
@@ -1992,11 +1997,15 @@ public class StaleTaskAgentTests
             ["Agents:StaleTaskThresholdHours"] = "48"
         }).Build();
 
+        // Constructor order matches StaleTaskAgent: claude, tasks, users, logs, notifier, config, logger.
         var sut = new StaleTaskAgent(
-            tasks, logs, config,
-            NullLogger<StaleTaskAgent>.Instance,
+            claude,
+            tasks,
+            users,
+            logs,
             Mock.Of<IAgentNotifier>(),
-            claude);
+            config,
+            NullLogger<StaleTaskAgent>.Instance);
 
         // Act
         await sut.RunAsync(CancellationToken.None);
@@ -2011,13 +2020,15 @@ public class StaleTaskAgentTests
 }
 ```
 
-> **One honest flag.** `StubClaude.ThatEscalates(...)` is a small test helper that builds a
-> canned `MessageResponse` containing one `escalate_task` tool-use block (then an
-> `end_turn`). Constructing that response object is the one piece whose exact shape depends
-> on the `Anthropic.SDK` types, so we finalize it when we run this — it is a test fixture,
-> not app code, and getting it wrong only fails the test, never ships. The assertions above
-> are the real contract and do not change. This is the same "representative code, confirmed
-> at execution" rule the doc uses for anything SDK-version-specific.
+> **One honest flag.** `StubClaude.ThatEscalates(...)` is a small hand-written
+> `IClaudeClient` (its `IsConfigured` returns `true`, and its `SendAsync` returns a canned
+> `MessageResponse` with one `escalate_task` tool-use block, then an `end_turn` on the second
+> call). Constructing that `MessageResponse` is the one piece whose exact shape depends on the
+> `Anthropic.SDK` types, so finalize it when you run this — it is a test fixture, not app code,
+> and getting it wrong only fails the test, never ships. The assertions above are the real
+> contract and do not change. Same "representative code, confirmed at execution" rule the doc
+> uses for anything SDK-version-specific. If you get stuck building the stub, ask and I'll
+> match it to your installed SDK version.
 
 ```bash
 dotnet test
@@ -2026,55 +2037,672 @@ dotnet test
 **Expect RED** — the refactored `StaleTaskAgent` (repository + `IClaudeClient` constructor)
 does not exist yet, so this will not compile. You make it green in F3.
 
-### F3. GREEN — refactor the agents
+### F3. GREEN — the full agent refactor (paste-ready)
 
-The tool-use loop keeps the same shape it had in Chunk 1; only *what it calls* changes,
-from concrete types to the seams. Three concrete edits make F2 pass:
+This section is self-contained: every file you need is here in full, so you never have to
+reconstruct anything. Because the old "Chunk 1" base class was reset away, you are
+**creating** these files, not editing them. Order: constants, the Claude seam, the base
+class, then the two agents.
 
-**1. `ClaudeAgentBase` constructor takes the seams, not concrete types.** It now receives
-`IClaudeClient`, `IAgentLogRepository`, `IAgentNotifier`, `ILogger`, and `IConfiguration` —
-no `AppDbContext`, no `AnthropicClient`:
+**Important on saving.** `TaskRepository` and `AgentLogRepository` share the same scoped
+`AppDbContext` within one agent cycle (the `AgentRunner` creates one scope per run). So when
+`RecordActionAsync` calls `Logs.SaveChangesAsync`, it also persists any task changes made in
+the same handler. That is why the tool handlers below modify a task and then only call
+`RecordActionAsync` — one save covers both.
 
-```csharp
-protected ClaudeAgentBase(
-    IClaudeClient claude,
-    IAgentLogRepository logs,
-    IAgentNotifier notifier,
-    ILogger logger,
-    IConfiguration config) { /* assign to protected fields */ }
-```
-
-**2. The loop's Claude call and the record helper go through the seams.** Where the old
-loop called `client.Messages.GetClaudeMessageAsync(parameters, ct)`, it now calls
-`await _claude.SendAsync(parameters, ct)`. Where `RecordActionAsync` wrote through
-`_db.AgentLogs`, it now writes through the repository:
+**FILE — create new: `TaskFlow.Api/Agents/AgentConstants.cs`**
 
 ```csharp
-protected async Task RecordActionAsync(AgentLog log, CancellationToken ct)
+namespace TaskFlow.Api.Agents;
+
+/// <summary>Lifecycle phases broadcast at the start/end of a cycle (dashboard status).</summary>
+public static class AgentPhases
 {
-    await _logs.AddAsync(log, ct);
-    await _logs.SaveChangesAsync(ct);
-    await _notifier.AgentActionAsync(log, ct);
+    public const string Started = "started";
+    public const string Completed = "completed";
+}
+
+/// <summary>
+/// Canonical AgentLog.Action values. These strings are part of the API contract — the
+/// React dashboard keys its color map on them, so do not change without updating the frontend.
+/// </summary>
+public static class AgentActions
+{
+    public const string PriorityUpdated = "PriorityUpdated";
+    public const string PrioritiesUpdated = "PrioritiesUpdated";
+    public const string NoChangesNeeded = "NoChangesNeeded";
+    public const string Escalated = "Escalated";
+    public const string Reassigned = "Reassigned";
+    public const string FlaggedForReview = "FlaggedForReview";
+    public const string CycleActions = "CycleActions";
+    public const string NoActionNeeded = "NoActionNeeded";
 }
 ```
 
-Everything else in the loop — build tools, send, check `StopReason == "tool_use"`, dispatch
-each tool, feed results back, stop on `end_turn` — is the Chunk 1 body unchanged.
+**FILE — create new: `TaskFlow.Api/Configuration/AnthropicDefaults.cs`**
 
-**3. Each concrete agent gets an `ITaskRepository` for its observe step.** The queries that
-used `_db.Tasks` move to repository methods added in Slice C:
+```csharp
+namespace TaskFlow.Api.Configuration;
 
-- `StaleTaskAgent`: `_tasks.GetStaleAsync(cutoff)`, `_tasks.GetOpenCountsByUserAsync()` for
-  workload, and `_logs.GetTaskScopedSinceAsync(Name, since, 50)` for its memory.
-- `TaskPrioritizerAgent`: `_tasks.GetOpenAsync()`.
+/// <summary>Defaults used when the Anthropic appsettings keys are not set.</summary>
+public static class AnthropicDefaults
+{
+    public const string Model = "claude-sonnet-4-6";
+    public const int MaxTokens = 1024;
+}
+```
 
-Its per-tool handlers (escalate / reassign / flag / update-priority) keep their logic but
-load and save through `_tasks` instead of `_db`. No handler touches `AppDbContext` or
-`AnthropicClient` after this.
+**FILE — create/replace: `TaskFlow.Api/Services/IClaudeClient.cs`** (this supersedes the F1
+sketch — note the `IsConfigured` flag, which lets an agent skip cleanly when no API key is set
+instead of throwing):
 
-Run `dotnet test` (F2 goes green), then run the app and confirm both agents still fire on
-their intervals and broadcast to the dashboard — the behavior is identical; only the wiring
-underneath changed.
+```csharp
+using Anthropic.SDK.Messaging;
+
+namespace TaskFlow.Api.Services;
+
+public interface IClaudeClient
+{
+    /// <summary>True when an API key is configured; false lets agents skip a cycle quietly.</summary>
+    bool IsConfigured { get; }
+
+    Task<MessageResponse> SendAsync(MessageParameters parameters, CancellationToken ct = default);
+}
+```
+
+**FILE — create/replace: `TaskFlow.Api/Services/ClaudeClient.cs`**
+
+```csharp
+using Anthropic.SDK;
+using Anthropic.SDK.Messaging;
+
+namespace TaskFlow.Api.Services;
+
+/// <summary>Production IClaudeClient: forwards to the Anthropic SDK. Tolerates a missing key.</summary>
+public class ClaudeClient : IClaudeClient
+{
+    private readonly AnthropicClient? _client;
+
+    public ClaudeClient(IConfiguration config)
+    {
+        var apiKey = config["Anthropic:ApiKey"];
+        _client = string.IsNullOrWhiteSpace(apiKey) ? null : new AnthropicClient(apiKey);
+    }
+
+    public bool IsConfigured => _client is not null;
+
+    public Task<MessageResponse> SendAsync(MessageParameters parameters, CancellationToken ct = default) =>
+        _client!.Messages.GetClaudeMessageAsync(parameters, ct);
+}
+```
+
+**FILE — edit existing: `TaskFlow.Api/Program.cs`** — register the client next to the others:
+
+```csharp
+builder.Services.AddScoped<IClaudeClient, ClaudeClient>();
+```
+
+**FILE — create new: `TaskFlow.Api/Agents/ClaudeAgentBase.cs`** (the shared machinery — the
+tool-use loop, record/notify, helpers; each concrete agent supplies only its policy):
+
+```csharp
+using Anthropic.SDK.Messaging;
+using System.Text.Json;
+using TaskFlow.Api.Configuration;
+using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
+using TaskFlow.Api.Services;
+using Tool = Anthropic.SDK.Common.Tool;
+using Function = Anthropic.SDK.Common.Function;
+
+namespace TaskFlow.Api.Agents;
+
+/// <summary>
+/// Base for agents that reason with Claude via tool calling. Owns the observe/reason/act
+/// loop, action recording, and lifecycle broadcasts. Concrete agents supply their tools,
+/// prompt, and per-tool handlers. Every dependency is a seam, so agents are unit-testable.
+/// </summary>
+public abstract class ClaudeAgentBase : ITaskFlowAgent
+{
+    private const int MaxToolLoopIterations = 10;
+
+    private readonly IClaudeClient _claude;
+    private readonly IAgentNotifier _notifier;
+
+    protected IAgentLogRepository Logs { get; }
+    protected IConfiguration Config { get; }
+    protected ILogger Logger { get; }
+
+    protected ClaudeAgentBase(
+        IClaudeClient claude,
+        IAgentLogRepository logs,
+        IAgentNotifier notifier,
+        IConfiguration config,
+        ILogger logger)
+    {
+        _claude = claude;
+        Logs = logs;
+        _notifier = notifier;
+        Config = config;
+        Logger = logger;
+    }
+
+    public abstract string Name { get; }
+    public abstract TimeSpan Interval { get; }
+    public abstract Task RunAsync(CancellationToken cancellationToken);
+
+    /// <summary>True when Claude has an API key; agents skip their cycle when false.</summary>
+    protected bool ClaudeConfigured => _claude.IsConfigured;
+
+    protected delegate Task<ContentBase> ToolDispatcher(ToolUseContent toolUse, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs the full tool-use conversation: send the prompt, let Claude call tools, execute
+    /// each via <paramref name="dispatch"/>, feed results back, repeat until Claude ends its
+    /// turn or the iteration cap is hit. Returns the count of successful tool calls.
+    /// </summary>
+    protected async Task<int> RunToolConversationAsync(
+        string prompt,
+        IReadOnlyList<Tool> tools,
+        ToolDispatcher dispatch,
+        CancellationToken cancellationToken)
+    {
+        var model = Config["Anthropic:Model"] ?? AnthropicDefaults.Model;
+        var maxTokens = Config.GetValue("Anthropic:MaxTokens", AnthropicDefaults.MaxTokens);
+
+        var messages = new List<Message> { new(RoleType.User, prompt) };
+        var successfulActions = 0;
+        var iterations = 0;
+        var continueLoop = true;
+
+        while (continueLoop && iterations < MaxToolLoopIterations && !cancellationToken.IsCancellationRequested)
+        {
+            iterations++;
+
+            var response = await _claude.SendAsync(new MessageParameters
+            {
+                Model = model,
+                MaxTokens = maxTokens,
+                Tools = tools.ToList(),
+                Messages = messages
+            }, cancellationToken);
+
+            messages.Add(new Message { Role = RoleType.Assistant, Content = response.Content });
+
+            if (response.StopReason == "tool_use")
+            {
+                var toolResults = new List<ContentBase>();
+                foreach (var toolUse in response.Content.OfType<ToolUseContent>())
+                {
+                    var result = await dispatch(toolUse, cancellationToken);
+                    toolResults.Add(result);
+                    if (WasSuccessful(result)) successfulActions++;
+                }
+                messages.Add(new Message { Role = RoleType.User, Content = toolResults });
+            }
+            else
+            {
+                continueLoop = false;
+                var finalText = response.Content.OfType<TextContent>().FirstOrDefault()?.Text;
+                if (!string.IsNullOrWhiteSpace(finalText))
+                    Logger.LogInformation("[{Agent}] Claude summary: {Text}", Name, finalText);
+            }
+        }
+
+        if (continueLoop && iterations >= MaxToolLoopIterations)
+            Logger.LogWarning("[{Agent}] Hit max tool-loop iterations ({Max}). Ending cycle early.", Name, MaxToolLoopIterations);
+
+        return successfulActions;
+    }
+
+    protected static Tool DefineTool(string name, string description, object schema) =>
+        new Function(name, description, JsonSerializer.Serialize(schema));
+
+    protected static ToolResultContent ToolResult(ToolUseContent toolUse, string text) =>
+        new() { ToolUseId = toolUse.Id, Content = new List<ContentBase> { new TextContent { Text = text } } };
+
+    protected static bool WasSuccessful(ContentBase result)
+    {
+        var text = (result as ToolResultContent)?.Content?.OfType<TextContent>().FirstOrDefault()?.Text ?? string.Empty;
+        return !text.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
+            && !text.Contains("not found", StringComparison.OrdinalIgnoreCase)
+            && !text.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Persists an action log and broadcasts it. The shared DbContext save also
+    /// persists any task change made in the same handler.</summary>
+    protected async Task RecordActionAsync(AgentLog log, CancellationToken cancellationToken)
+    {
+        await Logs.AddAsync(log, cancellationToken);
+        await Logs.SaveChangesAsync(cancellationToken);
+        await _notifier.AgentActionAsync(log, cancellationToken);
+    }
+
+    protected Task NotifyCycleStartedAsync(CancellationToken ct) => _notifier.AgentCycleAsync(Name, AgentPhases.Started, ct);
+    protected Task NotifyCycleCompletedAsync(CancellationToken ct) => _notifier.AgentCycleAsync(Name, AgentPhases.Completed, ct);
+}
+```
+
+**FILE — replace: `TaskFlow.Api/Agents/TaskPrioritizerAgent.cs`**
+
+```csharp
+using Anthropic.SDK.Messaging;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
+using TaskFlow.Api.Services;
+using Tool = Anthropic.SDK.Common.Tool;
+
+namespace TaskFlow.Api.Agents;
+
+public class TaskPrioritizerAgent : ClaudeAgentBase
+{
+    private const string UpdatePriorityTool = "update_task_priority";
+
+    private readonly ITaskRepository _tasks;
+
+    public TaskPrioritizerAgent(
+        IClaudeClient claude,
+        ITaskRepository tasks,
+        IAgentLogRepository logs,
+        IAgentNotifier notifier,
+        IConfiguration config,
+        ILogger<TaskPrioritizerAgent> logger)
+        : base(claude, logs, notifier, config, logger)
+    {
+        _tasks = tasks;
+    }
+
+    public override string Name => "TaskPrioritizer";
+
+    public override TimeSpan Interval =>
+        TimeSpan.FromMinutes(Config.GetValue("Agents:PrioritizerIntervalMinutes", 30));
+
+    public override async Task RunAsync(CancellationToken cancellationToken)
+    {
+        var tasks = await _tasks.GetOpenAsync(cancellationToken);
+        if (tasks.Count == 0)
+        {
+            Logger.LogInformation("[{Agent}] No open tasks. Skipping cycle.", Name);
+            return;
+        }
+
+        Logger.LogInformation("[{Agent}] Analyzing {Count} open task(s)...", Name, tasks.Count);
+        await NotifyCycleStartedAsync(cancellationToken);
+
+        if (!ClaudeConfigured)
+        {
+            Logger.LogWarning("[{Agent}] Claude not configured. Skipping cycle.", Name);
+            return;
+        }
+
+        var updatesApplied = await RunToolConversationAsync(
+            BuildPrompt(tasks), BuildTools(), ExecuteToolAsync, cancellationToken);
+
+        Logger.LogInformation("[{Agent}] Cycle complete. {Updates} update(s) applied.", Name, updatesApplied);
+
+        await Logs.AddAsync(new AgentLog
+        {
+            AgentName = Name,
+            Action = updatesApplied > 0 ? AgentActions.PrioritiesUpdated : AgentActions.NoChangesNeeded,
+            Details = $"Analyzed {tasks.Count} task(s). Applied {updatesApplied} priority update(s).",
+            Success = true,
+            CreatedAt = DateTime.UtcNow
+        }, cancellationToken);
+        await Logs.SaveChangesAsync(cancellationToken);
+
+        await NotifyCycleCompletedAsync(cancellationToken);
+    }
+
+    private static List<Tool> BuildTools() =>
+    [
+        DefineTool(
+            UpdatePriorityTool,
+            "Updates the priority of a task. Call once per task that needs a priority change.",
+            new
+            {
+                type = "object",
+                properties = new Dictionary<string, object>
+                {
+                    ["task_id"] = new { type = "integer", description = "The numeric ID of the task." },
+                    ["priority"] = new { type = "string", @enum = new[] { "Low", "Medium", "High" }, description = "The new priority." },
+                    ["reasoning"] = new { type = "string", description = "One sentence explaining the choice." }
+                },
+                required = new[] { "task_id", "priority", "reasoning" }
+            })
+    ];
+
+    private async Task<ContentBase> ExecuteToolAsync(ToolUseContent toolUse, CancellationToken cancellationToken)
+    {
+        if (toolUse.Name != UpdatePriorityTool)
+            return ToolResult(toolUse, $"Error: unknown tool {toolUse.Name}");
+
+        var args = toolUse.Input.Deserialize<UpdatePriorityArgs>()
+            ?? throw new InvalidOperationException("Failed to deserialize update_task_priority arguments.");
+
+        if (!Enum.TryParse<TaskPriority>(args.Priority, ignoreCase: true, out var priority))
+            return ToolResult(toolUse, $"Invalid priority value: {args.Priority}");
+
+        var task = await _tasks.GetByIdAsync(args.TaskId, ct: cancellationToken);
+        if (task is null)
+            return ToolResult(toolUse, $"Task {args.TaskId} not found.");
+
+        var previous = task.Priority;
+        task.Priority = priority;
+        task.UpdatedAt = DateTime.UtcNow;
+
+        await RecordActionAsync(new AgentLog
+        {
+            AgentName = Name,
+            Action = AgentActions.PriorityUpdated,
+            TaskId = task.Id,
+            Details = $"Priority {previous} -> {priority}. {args.Reasoning}",
+            Success = true,
+            CreatedAt = DateTime.UtcNow
+        }, cancellationToken);
+
+        return ToolResult(toolUse, $"Updated Task {task.Id} ('{task.Title}') priority: {previous} -> {priority}.");
+    }
+
+    private static string BuildPrompt(List<TaskItem> tasks)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("You are a task prioritization agent for a software development team.");
+        sb.AppendLine("Update priorities using the update_task_priority tool.");
+        sb.AppendLine("- High: overdue or due within 2 days, or blocking other work");
+        sb.AppendLine("- Medium: due within 1 week, or important but not urgent");
+        sb.AppendLine("- Low: no due date, or due more than 1 week away");
+        sb.AppendLine("- Only call the tool for tasks whose priority should CHANGE.");
+        sb.AppendLine($"Current date (UTC): {DateTime.UtcNow:yyyy-MM-dd}");
+        sb.AppendLine();
+        foreach (var t in tasks)
+        {
+            sb.AppendLine($"  ID {t.Id}: {t.Title} | Priority {t.Priority} | Status {t.Status} | " +
+                          $"Due {(t.DueDate.HasValue ? t.DueDate.Value.ToString("yyyy-MM-dd") : "none")} | " +
+                          $"Assignee {t.AssignedTo?.Name ?? "unassigned"}");
+        }
+        sb.AppendLine();
+        sb.AppendLine("Call the tool for each task that needs a change, then finish.");
+        return sb.ToString();
+    }
+
+    private sealed record UpdatePriorityArgs(
+        [property: JsonPropertyName("task_id")] int TaskId,
+        [property: JsonPropertyName("priority")] string Priority,
+        [property: JsonPropertyName("reasoning")] string Reasoning);
+}
+```
+
+**FILE — replace: `TaskFlow.Api/Agents/StaleTaskAgent.cs`**
+
+```csharp
+using Anthropic.SDK.Messaging;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using TaskFlow.Api.Models;
+using TaskFlow.Api.Repositories;
+using TaskFlow.Api.Services;
+using Tool = Anthropic.SDK.Common.Tool;
+
+namespace TaskFlow.Api.Agents;
+
+public class StaleTaskAgent : ClaudeAgentBase
+{
+    private const string EscalateTool = "escalate_task";
+    private const string ReassignTool = "reassign_task";
+    private const string FlagTool = "flag_for_review";
+    private const int OverloadedTaskCount = 5;
+
+    private readonly ITaskRepository _tasks;
+    private readonly IUserRepository _users;
+
+    public StaleTaskAgent(
+        IClaudeClient claude,
+        ITaskRepository tasks,
+        IUserRepository users,
+        IAgentLogRepository logs,
+        IAgentNotifier notifier,
+        IConfiguration config,
+        ILogger<StaleTaskAgent> logger)
+        : base(claude, logs, notifier, config, logger)
+    {
+        _tasks = tasks;
+        _users = users;
+    }
+
+    public override string Name => "StaleTaskDetector";
+
+    public override TimeSpan Interval =>
+        TimeSpan.FromMinutes(Config.GetValue("Agents:StaleTaskIntervalMinutes", 60));
+
+    public override async Task RunAsync(CancellationToken cancellationToken)
+    {
+        var thresholdHours = Config.GetValue("Agents:StaleTaskThresholdHours", 48);
+        var cutoff = DateTime.UtcNow.AddHours(-thresholdHours);
+
+        var staleTasks = await _tasks.GetStaleAsync(cutoff, cancellationToken);
+        if (staleTasks.Count == 0)
+        {
+            Logger.LogInformation("[{Agent}] No stale tasks found. Skipping cycle.", Name);
+            return;
+        }
+
+        Logger.LogInformation("[{Agent}] Found {Count} stale task(s).", Name, staleTasks.Count);
+        await NotifyCycleStartedAsync(cancellationToken);
+
+        if (!ClaudeConfigured)
+        {
+            Logger.LogWarning("[{Agent}] Claude not configured. Skipping cycle.", Name);
+            return;
+        }
+
+        var recentActions = await Logs.GetTaskScopedSinceAsync(Name, DateTime.UtcNow.AddDays(-7), 50, cancellationToken);
+        var contextJson = await BuildContextJsonAsync(cancellationToken);
+
+        var actionsApplied = await RunToolConversationAsync(
+            BuildPrompt(staleTasks, recentActions, contextJson, thresholdHours),
+            BuildTools(), ExecuteToolAsync, cancellationToken);
+
+        Logger.LogInformation("[{Agent}] Cycle complete. {Count} action(s) taken.", Name, actionsApplied);
+
+        await Logs.AddAsync(new AgentLog
+        {
+            AgentName = Name,
+            Action = actionsApplied > 0 ? AgentActions.CycleActions : AgentActions.NoActionNeeded,
+            TaskId = null,
+            Details = $"Reviewed {staleTasks.Count} stale task(s). Took {actionsApplied} action(s).",
+            Success = true,
+            CreatedAt = DateTime.UtcNow
+        }, cancellationToken);
+        await Logs.SaveChangesAsync(cancellationToken);
+
+        await NotifyCycleCompletedAsync(cancellationToken);
+    }
+
+    private async Task<string> BuildContextJsonAsync(CancellationToken ct)
+    {
+        var workload = await _tasks.GetOpenCountsByUserAsync(ct);
+        var users = (await _users.GetAllAsync(ct)).Select(u => new { u.Id, u.Name });
+        return JsonSerializer.Serialize(new { users, workload });
+    }
+
+    private static List<Tool> BuildTools() =>
+    [
+        DefineTool(EscalateTool,
+            "Escalate a stale but important task by setting its priority to High. " +
+            "Do NOT use if already High — flag it instead.",
+            new
+            {
+                type = "object",
+                properties = new Dictionary<string, object>
+                {
+                    ["task_id"] = new { type = "integer", description = "The ID of the task." },
+                    ["reason"] = new { type = "string", description = "One sentence explaining why." }
+                },
+                required = new[] { "task_id", "reason" }
+            }),
+        DefineTool(ReassignTool,
+            "Reassign a task to another user, or unassign it. Use when unassigned, or when the " +
+            $"owner has {OverloadedTaskCount}+ open tasks.",
+            new
+            {
+                type = "object",
+                properties = new Dictionary<string, object>
+                {
+                    ["task_id"] = new { type = "integer", description = "The ID of the task." },
+                    ["new_user_id"] = new { type = "integer", description = "Target user ID. Omit to unassign." },
+                    ["reason"] = new { type = "string", description = "One sentence explaining the reassignment." }
+                },
+                required = new[] { "task_id", "reason" }
+            }),
+        DefineTool(FlagTool,
+            "Flag a task for human review without modifying it. Prefer this when uncertain.",
+            new
+            {
+                type = "object",
+                properties = new Dictionary<string, object>
+                {
+                    ["task_id"] = new { type = "integer", description = "The ID of the task." },
+                    ["concern"] = new { type = "string", description = "What a human should look at." }
+                },
+                required = new[] { "task_id", "concern" }
+            })
+    ];
+
+    private async Task<ContentBase> ExecuteToolAsync(ToolUseContent toolUse, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return toolUse.Name switch
+            {
+                EscalateTool => await EscalateAsync(toolUse, cancellationToken),
+                ReassignTool => await ReassignAsync(toolUse, cancellationToken),
+                FlagTool     => await FlagAsync(toolUse, cancellationToken),
+                _            => ToolResult(toolUse, $"Error: unknown tool {toolUse.Name}")
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "[{Agent}] Tool execution failed for {Tool}", Name, toolUse.Name);
+            return ToolResult(toolUse, $"Error: {ex.Message}");
+        }
+    }
+
+    private async Task<ContentBase> EscalateAsync(ToolUseContent toolUse, CancellationToken ct)
+    {
+        var args = toolUse.Input.Deserialize<EscalateArgs>()
+            ?? throw new InvalidOperationException("Failed to deserialize escalate_task arguments.");
+
+        var task = await _tasks.GetByIdAsync(args.TaskId, ct: ct);
+        if (task is null) return ToolResult(toolUse, $"Task {args.TaskId} not found.");
+
+        var previous = task.Priority;
+        task.Priority = TaskPriority.High;
+        task.UpdatedAt = DateTime.UtcNow;
+
+        await RecordActionAsync(new AgentLog
+        {
+            AgentName = Name, Action = AgentActions.Escalated, TaskId = task.Id,
+            Details = $"Priority {previous} -> High. {args.Reason}", Success = true, CreatedAt = DateTime.UtcNow
+        }, ct);
+
+        return ToolResult(toolUse, $"Escalated Task {task.Id} ('{task.Title}') from {previous} to High.");
+    }
+
+    private async Task<ContentBase> ReassignAsync(ToolUseContent toolUse, CancellationToken ct)
+    {
+        var args = toolUse.Input.Deserialize<ReassignArgs>()
+            ?? throw new InvalidOperationException("Failed to deserialize reassign_task arguments.");
+
+        var task = await _tasks.GetByIdAsync(args.TaskId, ct: ct);
+        if (task is null) return ToolResult(toolUse, $"Task {args.TaskId} not found.");
+
+        if (args.NewUserId.HasValue && !await _users.ExistsAsync(args.NewUserId.Value, ct))
+            return ToolResult(toolUse, $"User {args.NewUserId} does not exist.");
+
+        var previousOwner = task.AssignedToId;
+        task.AssignedToId = args.NewUserId;
+        task.UpdatedAt = DateTime.UtcNow;
+
+        await RecordActionAsync(new AgentLog
+        {
+            AgentName = Name, Action = AgentActions.Reassigned, TaskId = task.Id,
+            Details = $"Owner {previousOwner?.ToString() ?? "none"} -> {args.NewUserId?.ToString() ?? "unassigned"}. {args.Reason}",
+            Success = true, CreatedAt = DateTime.UtcNow
+        }, ct);
+
+        return ToolResult(toolUse, $"Reassigned Task {task.Id} ('{task.Title}') to {(args.NewUserId?.ToString() ?? "unassigned")}.");
+    }
+
+    private async Task<ContentBase> FlagAsync(ToolUseContent toolUse, CancellationToken ct)
+    {
+        var args = toolUse.Input.Deserialize<FlagArgs>()
+            ?? throw new InvalidOperationException("Failed to deserialize flag_for_review arguments.");
+
+        var task = await _tasks.GetByIdAsync(args.TaskId, ct: ct);
+        if (task is null) return ToolResult(toolUse, $"Task {args.TaskId} not found.");
+
+        await RecordActionAsync(new AgentLog
+        {
+            AgentName = Name, Action = AgentActions.FlaggedForReview, TaskId = task.Id,
+            Details = args.Concern, Success = true, CreatedAt = DateTime.UtcNow
+        }, ct);
+
+        return ToolResult(toolUse, $"Flagged Task {task.Id} ('{task.Title}') for human review.");
+    }
+
+    private static string BuildPrompt(List<TaskItem> staleTasks, List<AgentLog> recentActions, string contextJson, int thresholdHours)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("You are a stale task detection agent for a software development team.");
+        sb.AppendLine($"A task is stale if not Done and not updated in {thresholdHours}+ hours.");
+        sb.AppendLine("For each stale task, choose AT MOST ONE action:");
+        sb.AppendLine("  - escalate_task    : still needed and overdue -> raise priority to High");
+        sb.AppendLine($"  - reassign_task    : unassigned, or the owner has {OverloadedTaskCount}+ open tasks");
+        sb.AppendLine("  - flag_for_review  : ambiguous, possibly obsolete, or needs a human decision");
+        sb.AppendLine("Rules: do NOT act on a task you already acted on recently; do NOT escalate an already-High task (flag it); prefer flag_for_review when uncertain; no action is acceptable.");
+        sb.AppendLine($"Current date (UTC): {DateTime.UtcNow:yyyy-MM-dd}");
+        sb.AppendLine();
+        sb.AppendLine("=== STALE TASKS ===");
+        foreach (var t in staleTasks)
+        {
+            var daysStale = (DateTime.UtcNow - t.UpdatedAt).TotalDays;
+            sb.AppendLine($"  ID {t.Id}: {t.Title} | {t.Status}/{t.Priority} | " +
+                          $"Assignee {t.AssignedTo?.Name ?? "UNASSIGNED"} (id {t.AssignedToId?.ToString() ?? "null"}) | stale {daysStale:F1}d");
+        }
+        sb.AppendLine();
+        sb.AppendLine("=== TEAM WORKLOAD ===");
+        sb.AppendLine(contextJson);
+        sb.AppendLine();
+        sb.AppendLine("=== YOUR RECENT ACTIONS (last 7 days) ===");
+        if (recentActions.Count == 0) sb.AppendLine("  (none)");
+        else foreach (var l in recentActions) sb.AppendLine($"  {l.CreatedAt:yyyy-MM-dd HH:mm} | Task {l.TaskId} | {l.Action} | {l.Details}");
+        sb.AppendLine();
+        sb.AppendLine("Call the appropriate tool for each task that needs action, then finish.");
+        return sb.ToString();
+    }
+
+    private sealed record EscalateArgs(
+        [property: JsonPropertyName("task_id")] int TaskId,
+        [property: JsonPropertyName("reason")] string Reason);
+
+    private sealed record ReassignArgs(
+        [property: JsonPropertyName("task_id")] int TaskId,
+        [property: JsonPropertyName("new_user_id")] int? NewUserId,
+        [property: JsonPropertyName("reason")] string Reason);
+
+    private sealed record FlagArgs(
+        [property: JsonPropertyName("task_id")] int TaskId,
+        [property: JsonPropertyName("concern")] string Concern);
+}
+```
+
+Run `dotnet build` — the agents now compile against the seams. Then `dotnet test`, then run
+the app and confirm both agents still fire on their intervals and broadcast to the dashboard.
+Behavior is identical; only the wiring underneath changed.
 
 > **Why this is the last big refactor.** After F, every dependency in the system sits behind
 > a seam: web → service → repository → EF, and agent → repository + `IClaudeClient`. That is
