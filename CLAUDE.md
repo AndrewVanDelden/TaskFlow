@@ -47,6 +47,14 @@
 - **Do not attempt `git` or `dotnet` from the AI sandbox.** It cannot write `.git` and has
   no `dotnet`; a failed attempt left a stale `.git/index.lock` the user had to remove by
   hand. Hand every git/build/test command to the user (see Tooling boundary above).
+- **Do not invent scope, and never slip unspecified work into a "next step."** If something is
+  missing and should be added, say so explicitly and record it in the active doc as a labeled
+  decision before acting. (Violated: dropped "thread a source name into provenance" as if it were
+  a task that existed.)
+- **Refer to a task by exactly what the doc says it is;** do not silently relabel or re-scope a
+  numbered task in passing.
+- **Own architect/developer decisions; do not punt "your call" on a choice that is yours to make.**
+  Decide, record it in the doc, and commit. Reserve "your call" for genuine product decisions.
 
 **Findings from the long setup/refactor session (apply these too):**
 
