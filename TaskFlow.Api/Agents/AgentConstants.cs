@@ -8,17 +8,21 @@ public static class AgentPhases
 }
 
 /// <summary>
-/// Canonical AgentLog.Action values. These strings are part of the API contract — the
-/// React dashboard keys its color map on them, so do not change without updating the frontend.
+/// Canonical <see cref="TaskFlow.Api.Models.AgentLog.Action"/> values.
+/// These strings are part of the API contract: the React dashboard keys its
+/// color map on them, so they must not change without updating the frontend.
 /// </summary>
 public static class AgentActions
 {
-    public const string PriorityUpdated = "PriorityUpdated";
-    public const string PrioritiesUpdated = "PrioritiesUpdated";
-    public const string NoChangesNeeded = "NoChangesNeeded";
+    // Prioritizer
+    public const string PriorityUpdated = "PriorityUpdated";     // one task re-prioritized
+    public const string PrioritiesUpdated = "PrioritiesUpdated"; // cycle summary: at least one change
+    public const string NoChangesNeeded = "NoChangesNeeded";     // cycle summary: nothing changed
+
+    // Stale task detector
     public const string Escalated = "Escalated";
     public const string Reassigned = "Reassigned";
     public const string FlaggedForReview = "FlaggedForReview";
-    public const string CycleActions = "CycleActions";
-    public const string NoActionNeeded = "NoActionNeeded";
+    public const string CycleActions = "CycleActions";           // cycle summary: at least one action
+    public const string NoActionNeeded = "NoActionNeeded";       // cycle summary: nothing to do
 }
