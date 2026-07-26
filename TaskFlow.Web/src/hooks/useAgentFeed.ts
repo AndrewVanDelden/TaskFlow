@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { HubConnectionBuilder, HubConnectionState, type HubConnection } from '@microsoft/signalr'
-import type { AgentLog } from './types'
-import { getToken, getAgentLogs } from './api'
-
-const BASE_URL = import.meta.env.VITE_API_BASE_URL as string
+import type { AgentLog } from '../types'
+import { getToken, BASE_URL } from '../api/client'
+import { getAgentLogs } from '../api/agentLogs'
+import { HubEvents } from '../lib/hubEvents'
 
 export interface CycleEvent {
   agentName: string
@@ -28,11 +28,11 @@ export function useAgentFeed(maxItems = 50) {
       .withAutomaticReconnect()
       .build()
 
-    connection.on('AgentAction', (log: AgentLog) => {
+    connection.on(HubEvents.AgentAction, (log: AgentLog) => {
       setLogs((prev) => [log, ...prev].slice(0, maxItems))
     })
 
-    connection.on('AgentCycle', (evt: CycleEvent) => {
+    connection.on(HubEvents.AgentCycle, (evt: CycleEvent) => {
       setCycles((prev) => ({ ...prev, [evt.agentName]: evt }))
     })
 

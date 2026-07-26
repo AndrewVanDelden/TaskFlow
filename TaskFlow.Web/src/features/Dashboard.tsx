@@ -1,8 +1,8 @@
-import { useAuth } from './AuthContext'
-import { useAgentFeed } from './useAgentFeed'
+import { useAuth } from '../hooks/AuthContext'
+import { useAgentFeed } from '../hooks/useAgentFeed'
 import { KanbanBoard } from './KanbanBoard'
-import { AgentFeed } from './AgentFeed'
-import { AgentStatus } from './AgentStatus'
+import { AgentFeed } from '../components/AgentFeed'
+import { AgentStatus } from '../components/AgentStatus'
 
 export function Dashboard() {
   const { userName, signOut } = useAuth()

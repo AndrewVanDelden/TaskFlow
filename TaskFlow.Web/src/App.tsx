@@ -1,7 +1,7 @@
-import { AuthProvider } from './AuthProvider'
-import { useAuth } from './AuthContext'
-import { Login } from './Login'
-import { Dashboard } from './Dashboard'
+import { AuthProvider } from './hooks/AuthProvider'
+import { useAuth } from './hooks/AuthContext'
+import { Login } from './features/Login'
+import { Dashboard } from './features/Dashboard'
 
 function Shell() {
   const { isAuthenticated } = useAuth()
