@@ -12,4 +12,16 @@ describe('IngestDocument', () => {
 
     expect(await screen.findByText('Draft from server')).toBeInTheDocument()
   })
+
+  it('approves the previewed drafts and reports how many were added', async () => {
+    render(<IngestDocument />)
+
+    await userEvent.type(screen.getByPlaceholderText('Paste a document'), '# doc')
+    await userEvent.click(screen.getByRole('button', { name: /parse/i }))
+    await screen.findByText('Draft from server')
+
+    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+
+    expect(await screen.findByText(/added 1 task to the board/i)).toBeInTheDocument()
+  })
 })

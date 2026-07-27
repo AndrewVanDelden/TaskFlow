@@ -9,3 +9,11 @@ export function parseDocument(content: string): Promise<TaskDraft[]> {
     body: JSON.stringify({ content }),
   })
 }
+
+// Commit approved drafts to the board. Returns the number of tasks created.
+export function commitDrafts(sourceName: string, drafts: TaskDraft[]): Promise<number> {
+  return request<number>('/api/Ingestion/commit', {
+    method: 'POST',
+    body: JSON.stringify({ sourceName, drafts }),
+  })
+}

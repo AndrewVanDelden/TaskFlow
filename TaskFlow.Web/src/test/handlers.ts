@@ -11,4 +11,5 @@ export const handlers = [
     HttpResponse.json([
       { title: 'Draft from server', description: null, kind: 'Generic', section: 'Doc' },
     ])),
+  http.post('*/api/Ingestion/commit', () => HttpResponse.json(1)),
 ]

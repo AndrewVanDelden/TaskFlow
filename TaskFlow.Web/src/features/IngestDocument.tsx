@@ -2,14 +2,18 @@ import { useState, type ChangeEvent } from 'react'
 import { useIngestion } from '../hooks/useIngestion'
 
 // Source-agnostic input: paste into the textarea or pick a file (read to text here). Both feed
-// the same content to the parser. A link adapter (server-side fetch) is a later addition.
+// the same content to the parser. Approve commits the previewed drafts to the board.
 export function IngestDocument() {
   const [text, setText] = useState('')
-  const { drafts, loading, error, submit } = useIngestion()
+  const [sourceName, setSourceName] = useState('')
+  const { drafts, loading, error, committedCount, submit, approve } = useIngestion()
 
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) setText(await file.text())
+    if (file) {
+      setText(await file.text())
+      setSourceName(file.name)
+    }
   }
 
   return (
@@ -40,15 +44,32 @@ export function IngestDocument() {
         </div>
       )}
 
-      <ul className="mt-4 space-y-2">
-        {drafts.map((d, i) => (
-          <li key={i} className="border border-slate-800 rounded-lg p-3 bg-slate-900/60">
-            <div className="text-sm font-medium">{d.title}</div>
-            <div className="text-[11px] text-slate-500">{d.section}</div>
-            {d.description && <p className="text-xs text-slate-400 mt-1">{d.description}</p>}
-          </li>
-        ))}
-      </ul>
+      {drafts.length > 0 && (
+        <>
+          <ul className="mt-4 space-y-2">
+            {drafts.map((d, i) => (
+              <li key={i} className="border border-slate-800 rounded-lg p-3 bg-slate-900/60">
+                <div className="text-sm font-medium">{d.title}</div>
+                <div className="text-[11px] text-slate-500">{d.section}</div>
+                {d.description && <p className="text-xs text-slate-400 mt-1">{d.description}</p>}
+              </li>
+            ))}
+          </ul>
+          <button
+            onClick={() => approve(sourceName)}
+            disabled={loading}
+            className="mt-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded"
+          >
+            {loading ? 'Adding...' : 'Approve and add to board'}
+          </button>
+        </>
+      )}
+
+      {committedCount !== null && (
+        <p className="mt-3 text-sm text-emerald-400">
+          Added {committedCount} task{committedCount === 1 ? '' : 's'} to the board.
+        </p>
+      )}
     </div>
   )
 }

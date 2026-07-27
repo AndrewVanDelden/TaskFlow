@@ -581,35 +581,101 @@ endpoint, and a paste/file preview screen.
 **Goal:** approved drafts are written as real tasks in the To Do column, each carrying provenance
 (which document and section it came from).
 
-**Produces:** persistence of drafts through `ITaskRepository.AddAsync`, a provenance field on the
-task model (migration + `WorkflowStatus.Todo` default), and repository/service tests over the
-write path using real in-memory SQLite.
+**Produces:** persistence of drafts through `ITaskRepository.AddAsync`, `Kind` + provenance fields
+on `TaskItem`, and repository/service tests over the write path using real in-memory SQLite. The
+schema-management approach is decided in the analysis below.
 
 **Leans on:** the repositories and the existing `Tasks` table. This is the point where the
 document truly becomes cards on the same board.
 
-**Decided:** provenance = **source-document id + section**. The `Section` is already on each
-`TaskDraft` from Sprint 1; Sprint 3 adds the source-document id (and the section) as nullable
-fields on `TaskItem` when the draft is persisted, and gives the executor in Sprint 4 context to
-work from. This is the single home for the "which document" half of provenance, not added earlier.
+### Analysis and plan (2026-07-26, before writing code)
+
+**Issue found — the project uses `EnsureCreated()`, not migrations, yet a `Migrations/` folder
+exists.** `Program.cs` startup calls `db.Database.EnsureCreated()`, which builds the schema
+straight from the current model and neither runs nor records migrations. The three migrations in
+`Migrations/` are dead at runtime, so adding a new migration would not take effect. Two
+consequences: new model fields appear only on a *fresh* database (EnsureCreated never alters an
+existing table), so the dev `taskflow.db` must be deleted once to pick them up (tests always get a
+fresh DB and see them automatically); and the migrations and the model are now out of sync.
+
+**Decision (DECIDED 2026-07-26) — adopt migrations.** `T3.0` is this ordered checklist. Every step
+is mandatory; run them in order.
+1. **(Claude, done)** `Program.cs` startup: `db.Database.EnsureCreated()` -> `db.Database.Migrate()`.
+2. **(Claude, done in T3.1)** add the `TaskItem` fields (`Kind`, `SourceName`, `SourceSection`).
+3. **(You)** generate the migration:
+   `dotnet ef migrations add AddTaskKindAndProvenance --project TaskFlow.Api`.
+   Claude cannot run EF tooling, and a hand-written migration must not be guessed.
+4. **(You)** delete the old dev database, a one-time reset. It was built by `EnsureCreated` and has
+   no migration history, so `Migrate()` would try to re-create existing tables and fail. From the
+   solution root: `Remove-Item TaskFlow.Api\taskflow.db` (and `taskflow.db-wal` / `taskflow.db-shm`
+   if present). Migrations are the only schema workflow after this.
+5. **(You)** `dotnet test` — unit tests plus the integration test, which now boots through `Migrate()`.
+6. **(You)** `dotnet run --project TaskFlow.Api` once to confirm the app starts and migrates a fresh
+   dev DB.
+
+**Test implications:** the in-memory unit/repo/agent tests (`SqliteInMemoryContext`) keep using
+`EnsureCreated`, which builds the current model on a separate throwaway DB, so they pick up new
+fields automatically and need no migration. Only the app runtime and the `WebApplicationFactory`
+integration test go through `Migrate()`. The two stay in sync as long as a migration is generated
+whenever the model changes.
+
+**Bug found during T3.0 verification (fixed 2026-07-27).** `dotnet run` applied all migrations,
+then the agents immediately failed with `SQLite Error 1: 'no such table: Tasks'` — a table the
+migration had just created. Root cause: there was no `ConnectionStrings:DefaultConnection`
+configured anywhere (no `appsettings.json`; the Development file has only logging; user secrets
+held only the Anthropic key), so `UseSqlite(null)` fell back to a private per-connection SQLite
+database. The schema built during `Migrate()` was destroyed when that connection closed, and the
+agents' new connections saw an empty DB. Nothing caught it earlier because the unit tests keep one
+in-memory connection open (`SqliteInMemoryContext`) and the integration test injects a temp-file
+connection string through the factory; the dev app was the only context with no connection string.
+Fix: `dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Data Source=taskflow.db" --project TaskFlow.Api`.
+Confirmed: the app runs clean and the agents execute end-to-end against Claude.
+
+**Future hardening (noted only, not built — avoids scope creep):** fail fast at startup if
+`ConnectionStrings:DefaultConnection` is missing, so a silent fallback to a throwaway DB cannot
+recur. Captured here; not part of Sprint 3.
+
+**Decision (owned) — provenance is two nullable strings, not a foreign key.** There is no
+`Document` entity (a document is transient ingested text), so "which document" is a `SourceName`
+string and "which section" is a `SourceSection` string, both nullable on `TaskItem` (ingested
+tasks carry them; hand-created tasks do not).
+
+**Decision (owned) — the source name re-enters here.** Sprint 2 deferred it; the commit step
+carries it. The client sends the approved drafts plus a `sourceName` to a new endpoint.
+
+**Code plan (written test-first when we start Sprint 3):**
+- `TaskItem`: add `Kind` (`TaskKind`, default `Generic`, `HasConversion<string>()` like `Status`)
+  plus nullable `SourceName` and `SourceSection`. Seed tasks default to `Generic`.
+- Persist path: a `CommitDraftsDto { SourceName, Drafts[] }`, a service method mapping each
+  `TaskDraft` to a `TaskItem` (`Todo`, `Kind`, `SourceName`, `SourceSection = draft.Section`) and
+  writing it via `ITaskRepository.AddAsync`, and a thin `POST /api/Ingestion/commit`. RED:
+  in-memory SQLite asserts tasks land as `Todo` with kind + provenance.
+- Frontend (small): the Sprint 2 preview gains an "Approve" action that calls the commit endpoint.
 
 **PR body (target — we work to make it true):**
 
 ```markdown
 ## Sprint 3 — Drafts become board tasks (with provenance)
 
-Approved drafts are persisted as real To Do tasks carrying provenance.
+Approved drafts are persisted as real To Do tasks carrying provenance, and the app adopts EF
+migrations for schema changes.
 
 ### What
-- `TaskKind` and provenance fields (source-document id + section) on `TaskItem` + EF migration.
-- Persist approved drafts via `ITaskRepository.AddAsync` as `WorkflowStatus.Todo`.
+- Adopt migrations: `Program.cs` startup `EnsureCreated()` -> `Migrate()`, plus a generated
+  `AddTaskKindAndProvenance` migration.
+- `TaskItem` gains `Kind` (default `Generic`, stored as a string) and nullable `SourceName` +
+  `SourceSection`. Provenance is two strings; there is no `Document` entity to key off.
+- `CommitDraftsDto { SourceName, Drafts[] }` + a service mapping drafts to `TaskItem`
+  (`Todo`, kind, provenance) via `ITaskRepository.AddAsync` + thin `POST /api/Ingestion/commit`.
+- Frontend: the ingestion preview gains an Approve action that commits the drafts.
 
 ### Tests
-- Repository round-trips kind + provenance; write path covered with in-memory SQLite.
-- `dotnet test` green.
+- Repository round-trips kind + provenance (in-memory SQLite); commit service lands tasks as
+  `Todo`; controller with a mocked service; MSW + RTL for the Approve action.
+- `dotnet test` and `npm run test` green; the integration test exercises `Migrate()`.
 
 ### Type of change
-- [x] Feature (backend) + tests + migration
+- [x] Feature (backend + frontend) + tests + migration
 ```
 
 ---
@@ -754,14 +820,19 @@ exercise. Nothing merges without its tests.
 - `T2.4` (FE) — `TaskDraft` type, `api/ingestion.ts`, `useIngestion` hook, paste/file preview
   container in `features/`. RED: MSW test of the call + RTL test rendering drafts.
 
-**Sprint 3 — Drafts become board tasks (BE)**
+**Sprint 3 — Drafts become board tasks (BE + small FE)**
 
-- `T3.1` — add `TaskKind` and provenance fields (**source-document id + section**) to the
-  `TaskItem` entity + EF migration. The `TaskKind` enum already exists from Sprint 1; this wires
-  it and provenance onto the entity. RED: repository test round-tripping kind and provenance.
-- `T3.2` — persist approved drafts via `ITaskRepository.AddAsync` as `Todo`. RED: in-memory SQLite
-  test asserting tasks land with the right kind and provenance. *DRY: reuse the repository, no new
-  write path.*
+- `T3.0` — adopt migrations: `Program.cs` startup `EnsureCreated()` → `Migrate()`; generate the new
+  migration with `dotnet ef` after `T3.1`; delete the dev `taskflow.db` once. The `Migrate()` path
+  is exercised by the existing `WebApplicationFactory` integration test.
+- `T3.1` — add `Kind` (default `Generic`, `HasConversion<string>()`) plus nullable `SourceName`
+  and `SourceSection` to `TaskItem`. Schema applies per the Sprint 3 analysis decision (migrations
+  via `dotnet ef`, or a fresh `EnsureCreated`). RED: repository round-trips kind + provenance.
+- `T3.2` — `CommitDraftsDto { SourceName, Drafts[] }` + a service mapping drafts to `TaskItem`
+  (`Todo`, kind, provenance) via `ITaskRepository.AddAsync` + thin `POST /api/Ingestion/commit`.
+  RED: in-memory SQLite asserts the tasks land; controller test with a mocked service. *DIP; SRP.*
+- `T3.3` (FE) — the preview gains an Approve action that POSTs the drafts to the commit endpoint.
+  RED: MSW + RTL.
 
 **Sprint 4 — Executor agent (BE)**
 
