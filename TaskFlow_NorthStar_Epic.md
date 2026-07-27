@@ -282,6 +282,7 @@ The old refactor mapped this destination as future slices M–R. Renumbered fres
 | **4** | Executor agent: claims a To Do task, plans sub-steps, works it | `IClaudeClient` + `ClaudeAgentBase` |
 | **5** | Board transitions driven by the executor, streamed live | Repositories + SignalR |
 | **6** | Guardrails: human approval gates, cost caps, rollback on failure | All of the above |
+| **7** | UX & Integration: reachable ingestion, single-origin dev, polished login | Frontend layers + router |
 
 Each sprint is specified in full, small and test-first, when we reach it. The stubs below fix
 the destination and the seams; they are not yet the RED/GREEN code.
@@ -631,9 +632,18 @@ connection string through the factory; the dev app was the only context with no 
 Fix: `dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Data Source=taskflow.db" --project TaskFlow.Api`.
 Confirmed: the app runs clean and the agents execute end-to-end against Claude.
 
-**Future hardening (noted only, not built — avoids scope creep):** fail fast at startup if
-`ConnectionStrings:DefaultConnection` is missing, so a silent fallback to a throwaway DB cannot
-recur. Captured here; not part of Sprint 3.
+**Second dev-config bug (fixed 2026-07-27) — missing JWT settings.** The first real authenticated
+request (the ingestion call) crashed at `Program.cs` with `ArgumentNullException` from
+`Encoding.UTF8.GetBytes(jwtKey)`: `Jwt:Key` (and `Jwt:Issuer`/`Jwt:Audience`) were not in dev config
+either. The JWT handler only initializes on the first `[Authorize]` request, so it stayed hidden
+until the app was actually used. Same class as the connection string — config the test factory
+injects via env vars but dev never had. Fix: `dotnet user-secrets set "Jwt:Key" <32+ byte random>`,
+plus `Jwt:Issuer` = `TaskFlowApi` and `Jwt:Audience` = `TaskFlowClient`, then a fresh login (the old
+token was signed with a different key). Confirmed working.
+
+**Future hardening (noted only, not built — avoids scope creep):** fail fast at startup if required
+config (`ConnectionStrings:DefaultConnection`, `Jwt:Key`) is missing, so neither a silent DB
+fallback nor a lazy crash on first use can recur. Captured here; not part of Sprint 3.
 
 **Decision (owned) — provenance is two nullable strings, not a foreign key.** There is no
 `Document` entity (a document is transient ingested text), so "which document" is a `SourceName`
@@ -789,6 +799,131 @@ Makes autonomous execution safe before it touches anything destructive.
 
 ---
 
+## Sprint 7 — UX & Integration (make it one usable app)
+
+**Context — why this sprint exists.** Running the app end to end surfaced three frustrations, none
+of which touch the autonomous-execution pipeline (Sprints 4-6), so they are collected here as an
+independent sprint: (1) the ingestion feature built in Sprints 2-3 is not reachable from the UI at
+all — `IngestDocument` is a tested component linked nowhere; (2) the frontend (`:5173`) and API
+(`:5002`) feel like two separate applications in dev — two commands to start, a CORS policy, and an
+env var pointing one at the other; (3) the login screen is a bare form that reads as dated. This
+sprint is independent of Sprints 4-6 and can be slotted whenever, but doing it now is recommended
+because it makes everything built so far actually usable.
+
+**Goal.** One coherent app: log in on a polished screen, move between the Board and the Ingest page
+from a shared nav bar, all served as a single origin in dev, started with one command.
+
+**Current state (grounded now, so the build is clean when we start):**
+- There is no client-side router. `App.tsx` wraps `AuthProvider` around a `Shell` that renders
+  `Login` when unauthenticated and `Dashboard` when authenticated. `Dashboard` is the only screen,
+  and it owns the header (TaskFlow title, user name, Sign out).
+- `IngestDocument` lives in `features/` and is imported nowhere.
+- `client.ts` builds URLs from `BASE_URL = import.meta.env.VITE_API_BASE_URL`; in dev that points at
+  `http://localhost:5002`. The API enables a CORS policy for `http://localhost:5173`. `useAgentFeed`
+  connects SignalR to `${BASE_URL}/hubs/agents`.
+- `Login.tsx` is one Tailwind form (email, password, a register toggle, an error box, a submit
+  button named "Sign in"/"Create account"). The Sprint L integration test (`Login.test.tsx`) drives
+  it via `getByPlaceholderText('Email')`, `('Password')`, and `getByRole('button', { name: /sign in/i })`,
+  then asserts the signed-in name renders. **Those handles must survive any polish.**
+
+### T7.1 — Navigation: make the Ingest page reachable
+
+**Decision (owned): introduce `react-router-dom`.** The app is about to grow past one screen
+(Board and Ingest now; executor/approval views in Sprints 5-6), so a router earns its place: real
+URLs (`/board`, `/ingest`), a single nav bar, and route-level auth, instead of a hand-rolled view
+toggle we would later rip out. The lighter alternative (a `useState` view switch in the shell) is
+noted and rejected only because more routes are imminent; if that changes, the toggle is the fallback.
+
+Steps:
+1. `npm install react-router-dom` in `TaskFlow.Web`.
+2. `main.tsx`: wrap `<App />` in `<BrowserRouter>`.
+3. Rewrite `App.tsx` from the `Shell` swap to routes, keeping `AuthProvider` at the top. Add a
+   `ProtectedRoute` that reads `useAuth` and redirects to `/login` when not authenticated. Routes:
+   `/login` -> `Login` (redirect to `/board` if already authenticated), `/board` -> `Dashboard`
+   (protected), `/ingest` -> `IngestDocument` (protected), `/` -> redirect to `/board`.
+4. New `components/NavBar.tsx` (presentational): TaskFlow title, `NavLink`s to Board and Ingest
+   (active styling), the signed-in user name, and Sign out. Move the header/sign-out that currently
+   lives in `Dashboard` into `NavBar` so every authenticated screen shares one header.
+5. `Login` calls `signIn`, then `useNavigate` to `/board`, rather than relying on the removed
+   `Shell` swap.
+
+TDD (RED first): rendering the app at `/ingest` while authenticated shows the "Ingest a document"
+heading; while unauthenticated it redirects to the login form; clicking the Ingest nav link from the
+board navigates to the Ingest page. RTL, the existing login MSW handler, and the shared
+`__mocks__/@microsoft/signalr.ts` stub (Dashboard opens SignalR).
+
+Files: `package.json` (+dep), `main.tsx`, `App.tsx`, new `components/NavBar.tsx`, `features/Login.tsx`,
+`features/Dashboard.tsx` (header moves out), plus tests.
+
+### T7.2 — Dev experience: one origin, one command
+
+**Part A — Vite proxy (single origin, no CORS in dev).** Configure `vite.config.ts` `server.proxy`
+to forward `/api` and `/hubs` to `http://localhost:5002`, with `ws: true` on `/hubs` for the SignalR
+websocket. The frontend then talks to its own origin and Vite relays to the API.
+- `client.ts`: default `BASE_URL` to `''` when `VITE_API_BASE_URL` is unset, so requests become
+  same-origin `/api/...` that the proxy handles; `useAgentFeed`'s hub URL becomes `/hubs/agents`.
+  Production can still set a real base URL via the env var.
+- Test impact: none. MSW handlers match `*/api/...` regardless of origin; `BASE_URL = ''` makes the
+  path `/api/...`, still matched.
+
+**Part B — one startup command.** Add `concurrently` as a dev dependency and a script in
+`TaskFlow.Web/package.json`: `"dev:all": "concurrently \"dotnet run --project ../TaskFlow.Api\" \"vite\""`.
+`npm run dev:all` then launches both processes together.
+
+TDD: config and tooling, not unit-testable. Acceptance check: run `npm run dev:all`, open
+`http://localhost:5173`, confirm the board and agent feed load through the proxy with no CORS error
+and SignalR connects.
+
+Files: `vite.config.ts`, `src/api/client.ts`, `package.json`.
+
+### T7.3 — Polish the login screen
+
+**Constraint (do not break the guard test):** keep the `Email`/`Password` placeholders and the
+"Sign in"/"Create account" button names, because `Login.test.tsx` and the login flow rely on them.
+Polish is presentational only.
+
+Steps: give the form a centered card with the TaskFlow brand and a subtitle, tidy input styling and
+focus states, a clearer primary button (keeping the existing loading text), a friendlier error
+banner, and a cleaner register/sign-in toggle. Optionally a show/hide password control (if added,
+it is new behavior, so cover it with a small RTL test).
+
+TDD: the existing `Login` flow integration test guards the behavior. Add one RTL test for the
+register/sign-in toggle if it is not already covered (clicking the toggle swaps the button label and
+reveals the Name field).
+
+Files: `features/Login.tsx` (and its test if the toggle test is added).
+
+### Sequencing
+
+Independent of Sprints 4-6. Order within the sprint: T7.1 (navigation) first, since it unlocks
+reaching the Ingest page; then T7.2 (dev experience); then T7.3 (login polish). Each is its own
+red/green where testable.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 7 — UX & Integration
+
+Makes TaskFlow feel like one app: reachable ingestion, single-origin dev, a polished login.
+
+### What
+- Routing with `react-router-dom`: `/board`, `/ingest`, `/login`, a shared `NavBar`, and
+  route-level auth. The ingestion page is now reachable.
+- Vite dev proxy for `/api` and `/hubs` (single origin, no CORS in dev); `BASE_URL` defaults to `''`.
+- `npm run dev:all` (concurrently) launches API + web together.
+- Polished login screen (placeholders and button names preserved for the guard tests).
+
+### Tests
+- RTL: nav to the Ingest page, unauthenticated redirect to login, register/sign-in toggle.
+- Existing login-flow integration test still green.
+- `npm run test` and `dotnet test` green.
+
+### Type of change
+- [x] Feature (frontend) + tooling + tests
+```
+
+---
+
 # Product Owner — Sprint Backlog (assigned, test-first)
 
 Every task is **RED first**: the developer writes the failing test, we confirm red, then the
@@ -861,6 +996,16 @@ exercise. Nothing merges without its tests.
 - `T6.3` (BE) — rollback: a failed work step returns the task to `Todo` and logs. RED: force a
   failure, assert the task is back in `Todo`, not stuck `InProgress`.
 - `T6.4` (FE) — approval control in the UI. RED: RTL test.
+
+**Sprint 7 — UX & Integration (FE)**
+
+- `T7.1` — routing with `react-router-dom`: `/board`, `/ingest`, `/login`, a shared `NavBar`, and a
+  route-level auth guard; `Login` navigates after `signIn`. RED: RTL nav-to-Ingest and
+  unauthenticated-redirect tests. *SRP: NavBar presentational; the auth guard has one job.*
+- `T7.2` — dev experience: Vite proxy for `/api` and `/hubs`, `BASE_URL` defaults to `''`, and a
+  `dev:all` `concurrently` script. Verified by running (config, not unit-tested).
+- `T7.3` — polish the login screen, preserving the `Email`/`Password` placeholders and button names
+  the tests rely on. RED: a register/sign-in toggle RTL test if not already covered.
 
 ---
 
