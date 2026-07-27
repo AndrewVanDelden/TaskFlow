@@ -206,9 +206,16 @@ flowchart TB
 
 - **`TaskDraft`** — a proposed task (title, description, priority, `TaskKind`, provenance).
   Ingestion output; not yet persisted.
-- **`IIngestionParser`** — returns `Result<IReadOnlyList<TaskDraft>>` from raw input. Pluggable,
-  one parser per input type. Service-layer pattern: deterministic, or `IClaudeClient`-backed and
-  tested with `StubClaude`.
+- **`IIngestionParser`** — returns `Result<IReadOnlyList<TaskDraft>>` from raw content. Two
+  implementations sit behind the seam: the free deterministic `SpecDocumentParser` (rules) and the
+  paid `ClaudeIngestionParser` (agent, `IClaudeClient`, `StubClaude`-tested). A
+  `TieredIngestionParser` composes them **free-first**: run the rules parser, and escalate to
+  Claude only when it returns zero drafts (unstructured content rules cannot handle). Free when it
+  reaches the outcome, agent when it must, still works with no Claude key.
+- **Source-agnostic input** — file, paste, and link are acquisition adapters that all reduce to
+  content plus a source name; the parser never knows where the content came from. Paste and
+  file-to-text first; the link adapter fetches server-side (with the usual fetch caveats) as a
+  follow-up.
 - **Provenance** — every agent-created task records where it came from. `Section` (the source
   heading) is captured on the draft at ingestion (Sprint 1). The **source-document id** is stamped
   when a draft is persisted as a board task (Sprint 3), completing provenance = source id +
@@ -473,21 +480,99 @@ public sealed class SpecDocumentParser : IIngestionParser
 is complete once `dotnet test` is green. Scope line: provenance here is the `Section` only; the
 source-document id is deliberately deferred to Sprint 3 (see that sprint), not added now.
 
+**PR body (shipped):**
+
+```markdown
+## Sprint 1 — Document ingestion service
+
+Adds the first pluggable ingestion seam: a rules-based, deterministic parser that turns a
+markdown spec document into task drafts.
+
+### What
+- `TaskKind` enum (executor self-selection discriminator; `Generic` for now).
+- `TaskDraft` record (title, description, kind, section-as-provenance).
+- `IIngestionParser` seam.
+- `SpecDocumentParser`: one draft per heading and per top-level checklist item, pure function.
+
+### Tests
+4 new `SpecDocumentParserTests`; full backend suite 43 passing.
+
+### Type of change
+- [x] Feature (backend) + tests
+```
+
 ---
 
-## Sprint 2 — Ingestion Endpoint + Upload/Preview UI
+## Sprint 2 — Agent-capable Ingestion + Source-agnostic Endpoint + Preview
 
-**Goal:** hand a document to the app over HTTP and preview the drafts before they hit the board.
+**Goal:** hand content to the app from any source (file, paste, link), parse it into drafts
+free-first (rules, escalating to a Claude agent only when needed), and preview the drafts before
+they hit the board.
 
-**Produces:** a thin controller endpoint (calls the Sprint 1 service, `.ToActionResult()`), and a
-frontend upload-and-preview screen in `features/` that calls a new `api/` function and renders
-the drafts. Controller test with a mocked service; frontend api/hook tests against MSW; a preview
-component test in the RTL style.
+**Decided (this sprint's shape):**
+- Parsing is a **tiered** `IIngestionParser`: free `SpecDocumentParser` first, escalate to
+  `ClaudeIngestionParser` only when the rules parser returns zero drafts. Works with no Claude key.
+- The endpoint is **source-agnostic**: it accepts content plus a source name. File, paste, and
+  link are acquisition adapters that produce that content (paste and file-to-text now; the link
+  adapter, which fetches server-side, is a follow-up with the usual fetch caveats).
+- Preview is the human checkpoint before anything is written, setting up the approval surface
+  Sprint 6 hardens.
 
-**Leans on:** the thin-controller pattern and the `api/ hooks/ components/ features/` split.
+**Parts (each its own red-green):**
+- `T2.1` (BE) `ClaudeIngestionParser : IIngestionParser` — agent parsing via `IClaudeClient`,
+  `StubClaude`-tested.
+- `T2.2` (BE) `TieredIngestionParser : IIngestionParser` — free-first with escalation; registered
+  as the app's `IIngestionParser`. Tests: structured input never calls Claude; unstructured does.
+- `T2.3` (BE) source-agnostic endpoint: `IngestDocumentDto { content, sourceName }`,
+  `POST /api/Ingestion`, returns drafts via `.ToActionResult()`. Controller test with a mocked parser.
+- `T2.4` (FE) `TaskDraft` type, `api/ingestion.ts`, a `useIngestion` hook, and a paste/file preview
+  container in `features/`. MSW + RTL tests.
 
-**Design point:** preview is the natural human checkpoint before anything is written, so this
-sprint sets up the approval surface that Sprint 6 hardens.
+**Leans on:** the `IClaudeClient` + `StubClaude` seam, the thin-controller pattern, and the
+`api/ hooks/ components/ features/` split.
+
+**Implementation notes / issues found (backend, 2026-07-26):**
+- **Issue (fixed): `IIngestionParser` was synchronous.** A Claude-backed parser must await
+  `IClaudeClient.SendAsync`, and blocking on it risks deadlocks, so the seam is now
+  `Task<Result<IReadOnlyList<TaskDraft>>> ParseAsync(...)`. `SpecDocumentParser` and its Sprint 1
+  tests were updated to match; the parsing logic is unchanged.
+- **Decision: the endpoint takes `Content` only.** A source name/id is provenance and lands in
+  Sprint 3, so adding it to `IngestDocumentDto` now would be a dead field. How the content was
+  obtained (file, paste, link) stays the caller's concern, which keeps the endpoint source-agnostic.
+- **Decision: `IngestionController` is `[Authorize]`,** matching the task routes; the preview lives
+  in the authed area.
+- **Backend files:** `ClaudeIngestionParser`, `TieredIngestionParser` (free-first), `IngestDocumentDto`,
+  `IngestionController`, DI wiring in `Program.cs`, and `StubClaude.ThatReturnsText`. Tests cover each
+  parser and the controller. The live-Claude path (prompt + JSON shape) is validated against a real
+  key at runtime, not in tests.
+- **Frontend (T2.4, done):** `TaskDraft` type, `api/ingestion.ts`, the `useIngestion` hook, and the
+  paste/file `IngestDocument` preview in `features/`, plus an `/api/Ingestion` MSW handler. Tests:
+  api (MSW), hook (`renderHook`), component (RTL). Not yet wired into the app nav (it is standalone
+  and tested); hooking the preview into the dashboard is a small follow-up.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 2 — Agent-capable ingestion + source-agnostic endpoint + preview
+
+Adds agent parsing behind the ingestion seam, a tiered free-first parser, a source-agnostic
+endpoint, and a paste/file preview screen.
+
+### What
+- `ClaudeIngestionParser : IIngestionParser` — agent parsing via `IClaudeClient`.
+- `TieredIngestionParser : IIngestionParser` — free rules first, escalate to Claude only on zero
+  drafts, graceful with no key; registered as the app's `IIngestionParser`.
+- `IngestDocumentDto` (content + source name) + `IngestionController` (`POST /api/Ingestion`).
+- Frontend: `TaskDraft` type, `api/ingestion.ts`, `useIngestion` hook, paste/file preview.
+
+### Tests
+- `ClaudeIngestionParser` via `StubClaude`; `TieredIngestionParser` (structured input skips Claude,
+  unstructured escalates); controller with a mocked parser; MSW api/hook + RTL preview.
+- `dotnet test` and `npm run test` green.
+
+### Type of change
+- [x] Feature (backend + frontend) + tests
+```
 
 ---
 
@@ -508,6 +593,25 @@ document truly becomes cards on the same board.
 fields on `TaskItem` when the draft is persisted, and gives the executor in Sprint 4 context to
 work from. This is the single home for the "which document" half of provenance, not added earlier.
 
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 3 — Drafts become board tasks (with provenance)
+
+Approved drafts are persisted as real To Do tasks carrying provenance.
+
+### What
+- `TaskKind` and provenance fields (source-document id + section) on `TaskItem` + EF migration.
+- Persist approved drafts via `ITaskRepository.AddAsync` as `WorkflowStatus.Todo`.
+
+### Tests
+- Repository round-trips kind + provenance; write path covered with in-memory SQLite.
+- `dotnet test` green.
+
+### Type of change
+- [x] Feature (backend) + tests + migration
+```
+
 ---
 
 ## Sprint 4 — Executor Agent
@@ -526,6 +630,26 @@ jump: the same agent layer, now doing work instead of only re-prioritizing.
 have a per-task iteration cap on the tool loop; this sprint keeps the leash short and defers the
 spend ceiling and destructive-action gate to Sprint 6.
 
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 4 — Executor agent
+
+An agent claims a To Do task, works it via Claude, and moves it to Review.
+
+### What
+- `ITaskRepository.TryClaimNextAsync(kind, agentName)` atomic claim (no double-claim).
+- `GenericExecutorAgent : ClaudeAgentBase` for `TaskKind.Generic`, registered as `ITaskFlowAgent`.
+
+### Tests
+- Two-claim test proves no double-claim; agent test (`StubClaude` + in-memory SQLite) asserts the
+  card reaches Review with a result log.
+- `dotnet test` green.
+
+### Type of change
+- [x] Feature (backend) + tests
+```
+
 ---
 
 ## Sprint 5 — Live Board Transitions
@@ -543,6 +667,25 @@ the transitions ride the feed that already exists.
 **Design point:** what counts as Review vs Done for an autonomous executor, and whether Review
 always requires a human (ties into Sprint 6).
 
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 5 — Live board transitions
+
+Task transitions stream to the dashboard as the executor works.
+
+### What
+- Broadcast transitions over `IAgentNotifier` / a new `HubEvents.TaskMoved`.
+- Frontend renders card movement live on the board.
+
+### Tests
+- Notifier test; frontend hook/RTL test against the new event.
+- `dotnet test` and `npm run test` green.
+
+### Type of change
+- [x] Feature (backend + frontend) + tests
+```
+
 ---
 
 ## Sprint 6 — Guardrails
@@ -556,6 +699,27 @@ rollback path when an executor step fails, all covered by tests.
 
 **Leans on:** everything above. This is the "give the agent an escape hatch and a leash"
 principle from the stale-task agent, scaled up to an agent that changes real state.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 6 — Guardrails
+
+Makes autonomous execution safe before it touches anything destructive.
+
+### What
+- Approval endpoint for `Review → Done` (human only); the agent path can never reach Done.
+- Spend cap around Claude calls.
+- Rollback: a failed executor step returns the task to Todo and logs.
+- Frontend approval control.
+
+### Tests
+- Agent-cannot-reach-Done test; spend-cap skip test; rollback test; RTL approval control.
+- `dotnet test` and `npm run test` green.
+
+### Type of change
+- [x] Feature (backend + frontend) + tests
+```
 
 ---
 
@@ -576,13 +740,19 @@ exercise. Nothing merges without its tests.
 - `T1.3` — stamp `TaskKind.Generic` and provenance on each draft. RED: assert kind + provenance on
   the output.
 
-**Sprint 2 — Endpoint + preview UI (BE + FE)**
+**Sprint 2 — Agent-capable ingestion + source-agnostic endpoint + preview (BE + FE)**
 
-- `T2.1` (BE) — thin `IngestionController` endpoint calling the service, `.ToActionResult()`. RED:
-  controller test with a mocked service. *SRP: thin controller. DIP: depends on the interface.*
-- `T2.2` (FE) — `api/ingestion.ts` + a hook. RED: MSW test of the call.
-- `T2.3` (FE) — upload/paste + preview component in `features/`. RED: RTL test rendering drafts.
-  *DRY: reuse `lib/` helpers, no new formatters.*
+- `T2.1` (BE) — `ClaudeIngestionParser : IIngestionParser`, agent parsing via `IClaudeClient`. RED:
+  `StubClaude` canned response, assert drafts. *DIP: depends on `IClaudeClient`. OCP: new parser
+  behind the seam, no change to the seam.*
+- `T2.2` (BE) — `TieredIngestionParser : IIngestionParser`, free rules first, escalate to Claude on
+  zero drafts, graceful with no key. RED: structured input does not call Claude; unstructured does.
+  *Composite behind the seam; SRP per parser.*
+- `T2.3` (BE) — `IngestDocumentDto` (content + source name) + `IngestionController`
+  `POST /api/Ingestion`, `.ToActionResult()`; register the tiered parser in DI. RED: controller
+  test with a mocked `IIngestionParser`. *SRP thin controller; DIP.*
+- `T2.4` (FE) — `TaskDraft` type, `api/ingestion.ts`, `useIngestion` hook, paste/file preview
+  container in `features/`. RED: MSW test of the call + RTL test rendering drafts.
 
 **Sprint 3 — Drafts become board tasks (BE)**
 

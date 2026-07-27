@@ -6,8 +6,9 @@ namespace TaskFlow.Api.Ingestion;
 
 /// <summary>
 /// Rules-based, deterministic parser: one draft per markdown heading and per top-level
-/// checklist item. A pure function of the input text - no Claude, no I/O - so it is fully
-/// unit-testable. Each checklist item is filed under the most recent heading (its provenance).
+/// checklist item. A pure function of the input text - no Claude, no I/O - so it is free and
+/// fully unit-testable. Each checklist item is filed under the most recent heading (its
+/// provenance). Async only to satisfy the seam; the work itself is synchronous.
 /// </summary>
 public sealed class SpecDocumentParser : IIngestionParser
 {
@@ -17,7 +18,7 @@ public sealed class SpecDocumentParser : IIngestionParser
     private static readonly Regex ChecklistItem =
         new(@"^\s*[-*]\s*\[[ xX]\]\s+(?<text>.+?)\s*$", RegexOptions.Compiled);
 
-    public Result<IReadOnlyList<TaskDraft>> Parse(string documentText)
+    public Task<Result<IReadOnlyList<TaskDraft>>> ParseAsync(string documentText, CancellationToken cancellationToken = default)
     {
         var drafts = new List<TaskDraft>();
         var currentHeading = string.Empty;
@@ -41,6 +42,6 @@ public sealed class SpecDocumentParser : IIngestionParser
             }
         }
 
-        return Result<IReadOnlyList<TaskDraft>>.Ok(drafts);
+        return Task.FromResult(Result<IReadOnlyList<TaskDraft>>.Ok(drafts));
     }
 }

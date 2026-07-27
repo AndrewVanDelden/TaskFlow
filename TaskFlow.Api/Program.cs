@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using TaskFlow.Api.Agents;
 using TaskFlow.Api.Data;
+using TaskFlow.Api.Ingestion;
 using TaskFlow.Api.Services;
 using TaskFlow.Api.Hubs;
 using TaskFlow.Api.Repositories;
@@ -106,6 +107,12 @@ builder.Services.AddScoped<IAgentLogRepository, AgentLogRepository>();
 builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IClaudeClient, ClaudeClient>();
+// ── Ingestion (free-first: rules, escalate to Claude) ──────────────────────────
+builder.Services.AddScoped<SpecDocumentParser>();
+builder.Services.AddScoped<ClaudeIngestionParser>();
+builder.Services.AddScoped<IIngestionParser>(sp => new TieredIngestionParser(
+    free: sp.GetRequiredService<SpecDocumentParser>(),
+    paid: sp.GetRequiredService<ClaudeIngestionParser>()));
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();

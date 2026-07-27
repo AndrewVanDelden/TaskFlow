@@ -57,6 +57,14 @@ public sealed class StubClaude : IClaudeClient
         },
         EndTurn());
 
+    /// <summary>Scripts a single plain-text reply (used by the ingestion parser).</summary>
+    public static StubClaude ThatReturnsText(string text) => new(
+        new MessageResponse
+        {
+            StopReason = "end_turn",
+            Content = new List<ContentBase> { new TextContent { Text = text } }
+        });
+
     private static MessageResponse EndTurn() => new()
     {
         StopReason = "end_turn",
