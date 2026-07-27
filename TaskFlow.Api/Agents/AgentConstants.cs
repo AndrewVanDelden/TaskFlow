@@ -25,4 +25,10 @@ public static class AgentActions
     public const string FlaggedForReview = "FlaggedForReview";
     public const string CycleActions = "CycleActions";           // cycle summary: at least one action
     public const string NoActionNeeded = "NoActionNeeded";       // cycle summary: nothing to do
+
+    // Generic executor
+    public const string Claimed = "Claimed";                     // task claimed (Todo -> InProgress)
+    public const string ProgressRecorded = "ProgressRecorded";   // a progress note during execution
+    public const string ReviewRequested = "ReviewRequested";     // work done -> moved to Review
+    public const string AutoFinalized = "AutoFinalized";         // cycle ended without review -> moved to Review
 }
