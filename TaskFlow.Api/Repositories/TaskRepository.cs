@@ -44,6 +44,48 @@ public class TaskRepository : ITaskRepository
             .Select(g => new { UserId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.UserId, x => x.Count, ct);
 
+    public async Task<TaskItem?> TryClaimNextAsync(TaskKind kind, string agentName, CancellationToken ct = default)
+    {
+        // Candidate Todo tasks of this kind, oldest first.
+        var candidateIds = await _db.Tasks
+            .Where(t => t.Kind == kind && t.Status == WorkflowStatus.Todo)
+            .OrderBy(t => t.Id)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+
+        foreach (var id in candidateIds)
+        {
+            // Guarded UPDATE: the WHERE Status == Todo makes the Todo -> InProgress claim atomic, so
+            // the rows-affected count is the winner check. A loser (0 rows) tries the next candidate.
+            var won = await _db.Tasks
+                .Where(t => t.Id == id && t.Status == WorkflowStatus.Todo)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(t => t.Status, WorkflowStatus.InProgress)
+                    .SetProperty(t => t.ClaimedBy, agentName)
+                    .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+
+            if (won == 1)
+                // AsNoTracking: ExecuteUpdate bypasses the change tracker, so a tracked read would be
+                // stale. A fresh no-tracking read reflects the claim (InProgress, ClaimedBy set).
+                return await _db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id, ct);
+        }
+
+        return null;
+    }
+
+    public async Task<bool> MarkForReviewAsync(int taskId, CancellationToken ct = default)
+    {
+        // Guarded UPDATE (InProgress -> Review). ExecuteUpdate is atomic and does not touch the
+        // change tracker, which is what we want after a no-tracking claim: no stale-entity save.
+        var moved = await _db.Tasks
+            .Where(t => t.Id == taskId && t.Status == WorkflowStatus.InProgress)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, WorkflowStatus.Review)
+                .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+
+        return moved == 1;
+    }
+
     public async Task AddAsync(TaskItem task, CancellationToken ct = default) =>
         await _db.Tasks.AddAsync(task, ct);
 

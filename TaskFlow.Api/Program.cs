@@ -123,6 +123,7 @@ builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();
 // The AgentRunner discovers these automatically via GetServices<ITaskFlowAgent>()
 builder.Services.AddScoped<ITaskFlowAgent, TaskPrioritizerAgent>();
 builder.Services.AddScoped<ITaskFlowAgent, StaleTaskAgent>();
+builder.Services.AddScoped<ITaskFlowAgent, GenericExecutorAgent>();
 
 // Register the AgentRunner as a hosted background service
 // This starts automatically when the app starts

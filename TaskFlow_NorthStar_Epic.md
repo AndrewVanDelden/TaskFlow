@@ -704,7 +704,107 @@ jump: the same agent layer, now doing work instead of only re-prioritizing.
 
 **Design point (carried forward):** an executor doing real work needs firm limits. We already
 have a per-task iteration cap on the tool loop; this sprint keeps the leash short and defers the
-spend ceiling and destructive-action gate to Sprint 6.
+spend ceiling and destructive-action gate to Sprint 6. The one limit that cannot wait is the
+terminal-state guarantee (`T4.4`): the executor must never orphan a claimed task in `InProgress`.
+
+### Analysis and plan (plan mode, before writing code)
+
+**Grounded current state.** `ClaudeAgentBase` gives subclasses `RunToolConversationAsync(prompt,
+tools, dispatch, ct)`, `DefineTool`, `ToolResult`, `WasSuccessful`, `RecordActionAsync` (persist +
+broadcast), `RecordCycleSummaryAsync`, `ClaudeConfigured`, and the cycle broadcasts. `ITaskRepository`
+has no claim method today. `TaskItem` has `Status`, `Kind`, and provenance but no field for which
+agent owns an in-progress task. `WorkflowStatus` is `Todo/InProgress/Review/Done`. `AgentRunner`
+discovers every `ITaskFlowAgent` and runs it on its interval.
+
+**Missing pieces and decisions:**
+
+1. **Claiming needs an atomic DB guard and an owner field.** Decision:
+   `ITaskRepository.TryClaimNextAsync(TaskKind kind, string agentName, CancellationToken)` finds the
+   oldest `Todo` task of the kind and claims it with a guarded `ExecuteUpdateAsync`
+   (`WHERE Id = candidate AND Status == Todo` -> set `InProgress`, `ClaimedBy`, `UpdatedAt`). The
+   rows-affected count is the winner check, atomic even under real concurrency; if it lost (0 rows),
+   try the next candidate; return the claimed, now-tracked task or `null`. Add a nullable `ClaimedBy`
+   string to `TaskItem` (the design's "owner stamp"; shows on the live board, lets parallel executors
+   coexist later). Schema change, so `T4.0`: add the field and `dotnet ef migrations add
+   AddTaskClaimedBy` — a plain migration now that we are on migrations (no DB reset).
+
+2. **What is a Claude tool vs an agent step.** Claiming is the agent's own repository step, not a
+   Claude tool. Claude gets two tools: `record_progress(note)` and `request_review(summary)`. Per
+   cycle: claim the next `Todo` `Generic` task (it becomes `InProgress`); run
+   `RunToolConversationAsync` with those two tools; `record_progress` writes a progress `AgentLog`;
+   `request_review` moves the task `InProgress -> Review` and logs the summary. The executor never
+   sets `Done` — a human does that in Sprint 6.
+
+3. **The generic executor does a minimal real step** (per the architecture): Claude reads the task,
+   produces a short plan/result, records progress, requests review — enough to watch a card go
+   `Todo -> InProgress -> Review` end to end. Epic 3's domain executors register their own kind and
+   agent behind the same seam.
+
+4. **New `AgentActions` constants:** `Claimed`, `ProgressRecorded`, `ReviewRequested`. Additive to
+   `AgentConstants`; the React dashboard color map keys off these strings.
+
+5. **Stuck-`InProgress` edge (OBSERVED LIVE — see Live-run findings):** if Claude never calls
+   `request_review`, the task stays `InProgress`. This fired on the first real run: the executor
+   claimed Task 3, recorded progress twice, then Claude ended its turn with a long text answer and
+   never called `request_review`, stranding the card in InProgress. Decision on how to finalize is
+   pending (see Live-run findings below).
+
+6. **Agent wiring.** `GenericExecutorAgent : ClaudeAgentBase`, constructor
+   `(IClaudeClient claude, ITaskRepository tasks, IAgentLogRepository logs, IAgentNotifier notifier,
+   IConfiguration config, ILogger<GenericExecutorAgent> logger) : base(claude, logs, notifier, config, logger)`;
+   `Name = "GenericExecutor"`; `Interval` from `Agents:ExecutorIntervalMinutes` (default 15);
+   registered `AddScoped<ITaskFlowAgent, GenericExecutorAgent>()` so `AgentRunner` picks it up.
+
+**Principles.** Extends `ClaudeAgentBase` with no base change (OCP/LSP); depends only on
+`IClaudeClient` and `ITaskRepository` (DIP); the claim's concurrency lives in the repository (SRP);
+reuses `RunToolConversationAsync`, `RecordActionAsync`, `DefineTool`, `ToolResult` (DRY).
+
+**Revised order (test-first):** `T4.0` field + migration, `T4.1` `TryClaimNextAsync`, `T4.2` the
+executor agent, `T4.3` DI registration. RED tests are in the backlog.
+
+**Build note (T4.1):** `ExecuteUpdateAsync` runs immediate SQL and does not refresh entities the
+change tracker already holds, so a plain read after a claim can return a stale `Todo`/null snapshot.
+`TryClaimNextAsync` returns an `AsNoTracking()` read to reflect the claim. The same applies to the
+`InProgress -> Review` move in `T4.2`: do it as a guarded `ExecuteUpdateAsync` (or reload), not a
+mutate-tracked-entity-then-save that assumes the claim is tracked.
+
+### Live-run findings (first `dotnet run` on `feature/sprint4`)
+
+Confirmed from the startup log and a refreshed board. No data was lost; all five seed tasks were
+present after a hard refresh (To Do 1, In Progress 1, Done 3). Three separate issues surfaced:
+
+- **F1 (Sprint 4 defect) — executor strands tasks in `InProgress`.** The executor claimed Task 3,
+  called `record_progress` twice, then Claude ended its turn with a long code essay and never called
+  `request_review`. The card is left `InProgress` with `ClaimedBy` set, never reaching Review, and
+  will not be re-claimed (it is no longer `Todo`). This is a guaranteed-every-run defect, so a slice
+  of the Sprint 6 stuck-task concern is pulled forward. Fix approach is a pending decision (see below).
+- **F2 (Sprint 5) — board re-fetches the whole list on every agent log.** `Dashboard.tsx` passes
+  `refreshKey={logs.length}` to `KanbanBoard`, so each SignalR log re-runs `getTasks()`. With three
+  agents logging, the board churns and fights in-flight drags; this is what made a card appear to
+  "disappear." Proper fix is targeted SignalR task-changed events applied to the affected card, not a
+  full refetch. Belongs to Sprint 5 (Live transitions).
+- **F3 (Sprint 6) — executor moves the human's cards mid-session.** The executor claims the oldest
+  `Todo` task on startup and every interval, so it will move a card the user just placed. Correct
+  behavior, but it needs gating / opt-in / an interval control before it is demo-friendly. Sprint 6.
+
+**F1 decision (RESOLVED) — the executor guarantees a terminal state every cycle.** Chosen: option
+(a), auto-finalize to Review. Reasoning: a claimed task must never be orphaned `InProgress`. Releasing
+it back to `Todo` (option b) would re-claim and re-run the same task every interval forever, because
+the generic executor reliably ends without `request_review` — an unbounded spend leak with zero
+progress. Forcing tool use (option d) is unreliable and can loop `record_progress` to the iteration
+cap. So at the end of the tool loop, if the claimed task is still `InProgress`, move it to `Review`
+with a distinct `AutoFinalized` log (separate from `ReviewRequested`, so a human can tell the executor
+bailed vs. completed), and tighten the prompt so the model knows it cannot literally write files and
+should summarize then request review (the guarantee is the safety net, not the prompt).
+
+**Placement:** this is a correctness gap in the Sprint 4 executor, not a new guardrail. A
+guaranteed-every-run strand means Sprint 4 is not done, so it is **`T4.4` in Sprint 4**. The *broader*
+stuck-task handling — a task orphaned by an exception, process crash, or cancellation mid-cycle —
+stays in Sprint 6 as `T6.3` (rollback to `Todo`). Clean split by cause: a clean cycle end with no
+review means the executor is done trying and hands off to a human (`T4.4` → Review); an abnormal
+termination means the work never ran and should retry (`T6.3` → Todo). F2 → Sprint 5 (`T5.3`), F3 →
+Sprint 6 (`T6.5`), both below. No Sprint 8 is warranted: the findings map cleanly onto existing
+sprints, and adding an empty sprint would be scope for its own sake.
 
 **PR body (target — we work to make it true):**
 
@@ -714,13 +814,26 @@ spend ceiling and destructive-action gate to Sprint 6.
 An agent claims a To Do task, works it via Claude, and moves it to Review.
 
 ### What
-- `ITaskRepository.TryClaimNextAsync(kind, agentName)` atomic claim (no double-claim).
-- `GenericExecutorAgent : ClaudeAgentBase` for `TaskKind.Generic`, registered as `ITaskFlowAgent`.
+- `ClaimedBy` field on `TaskItem` + `AddTaskClaimedBy` migration.
+- `ITaskRepository.TryClaimNextAsync(kind, agentName)` — atomic claim via a guarded `ExecuteUpdateAsync`.
+- `ITaskRepository.MarkForReviewAsync(taskId)` — atomic `InProgress -> Review` via a guarded
+  `ExecuteUpdateAsync` (avoids the stale-tracked-entity trap after a no-tracking claim).
+- `GenericExecutorAgent : ClaudeAgentBase` for `TaskKind.Generic` with `record_progress` /
+  `request_review` tools bound to the claimed task: claims a Todo task, works it via Claude, moves
+  it to Review. Registered as `ITaskFlowAgent` so `AgentRunner` discovers it.
+- Terminal-state guarantee (`T4.4`): if the model ends without `request_review`, auto-finalize the
+  claimed task to Review so it is never orphaned `InProgress`.
+- New `AgentActions`: `Claimed`, `ProgressRecorded`, `ReviewRequested`, `AutoFinalized`.
 
 ### Tests
-- Two-claim test proves no double-claim; agent test (`StubClaude` + in-memory SQLite) asserts the
-  card reaches Review with a result log.
-- `dotnet test` green.
+- Repo: `ClaimedBy` round-trips; `TryClaimNextAsync` claims once (task -> `InProgress`, `ClaimedBy`
+  set), returns null when none / after the one task is taken (no double-claim); `MarkForReviewAsync`
+  moves `InProgress -> Review` and no-ops otherwise. Agent: `StubClaude` scripts
+  `record_progress` then `request_review`, asserting the card reaches `Review` with the owner stamped
+  and `Claimed`/`ProgressRecorded`/`ReviewRequested` logs; a no-Todo cycle never calls Claude. `T4.4`
+  adds an auto-finalize test: the model ends without `request_review`, and the card still reaches
+  `Review` with an `AutoFinalized` log.
+- `dotnet test` green (57 through `T4.3`; `T4.4` adds one more).
 
 ### Type of change
 - [x] Feature (backend) + tests
@@ -741,7 +854,9 @@ distinctly from the existing prioritizer/stale feeds.
 the transitions ride the feed that already exists.
 
 **Design point:** what counts as Review vs Done for an autonomous executor, and whether Review
-always requires a human (ties into Sprint 6).
+always requires a human (ties into Sprint 6). This sprint also fixes finding F2: the board currently
+re-fetches the whole list on every agent log (`refreshKey={logs.length}`), which churns the board and
+fights in-flight drags. The `TaskMoved` event replaces that full refetch with a targeted card update.
 
 **PR body (target — we work to make it true):**
 
@@ -770,8 +885,10 @@ Task transitions stream to the dashboard as the executor works.
 failure, designed in rather than bolted on.
 
 **Produces:** a human-approval checkpoint (approve each task, approve the batch, or fully
-autonomous with a kill switch, per the open question), a cost cap on Claude usage, and a
-rollback path when an executor step fails, all covered by tests.
+autonomous with a kill switch, per the open question), a cost cap on Claude usage, a rollback path
+when an executor step fails (abnormal termination; the clean no-review end is handled in Sprint 4
+`T4.4`), and an executor enable/pause gate so it does not move the human's cards uninvited (finding
+F3), all covered by tests.
 
 **Leans on:** everything above. This is the "give the agent an escape hatch and a leash"
 principle from the stale-task agent, scaled up to an agent that changes real state.
@@ -971,14 +1088,22 @@ exercise. Nothing merges without its tests.
 
 **Sprint 4 — Executor agent (BE)**
 
-- `T4.1` — `ITaskRepository.TryClaimNextAsync(kind, agentName)` atomic claim. RED: a two-claim
-  test proving no double-claim. *SRP: concurrency lives in the repository.*
-- `T4.2` — `GenericExecutorAgent : ClaudeAgentBase` for `TaskKind.Generic`: claim, Claude work
-  step, record result, move to `Review`. RED: `StubClaude` + in-memory SQLite, assert the card
-  reached Review with a result log. *OCP/LSP: a new agent extends the base with no base change.
-  DIP: `IClaudeClient`.*
-- `T4.3` — register the agent in DI so `AgentRunner` discovers it. RED: covered by the executor
-  test exercising the runner path.
+- `T4.0` — add nullable `ClaimedBy` to `TaskItem`; `dotnet ef migrations add AddTaskClaimedBy`. RED:
+  repo round-trips `ClaimedBy` (extend the provenance round-trip test).
+- `T4.1` — `ITaskRepository.TryClaimNextAsync(kind, agentName)` via a guarded `ExecuteUpdateAsync`.
+  RED: claim once returns the task as `InProgress` with `ClaimedBy` set; a second claim returns null
+  (no double-claim). *SRP: concurrency lives in the repository.*
+- `T4.2` — `GenericExecutorAgent : ClaudeAgentBase` for `TaskKind.Generic`: claim, run the tool
+  conversation (`record_progress`, `request_review`), and on `request_review` move `InProgress ->
+  Review` with a `ReviewRequested` log. RED: `StubClaude` scripts `request_review`; assert the card
+  reached `Review` with the log. *OCP/LSP: extends the base, no base change. DIP: `IClaudeClient`.*
+- `T4.3` — register the agent in DI (`AddScoped<ITaskFlowAgent, GenericExecutorAgent>()`) so
+  `AgentRunner` discovers it. RED: covered by the executor test exercising the runner path.
+- `T4.4` — end-of-cycle terminal guarantee (resolves finding F1). After the tool loop, if the claimed
+  task is still `InProgress`, `MarkForReviewAsync` it and log a new `AgentActions.AutoFinalized`; also
+  tighten the executor prompt (it cannot write files; summarize then request review). RED: `StubClaude`
+  ends its turn WITHOUT `request_review`; assert the card still reaches `Review` with an `AutoFinalized`
+  log (not `ReviewRequested`). *Invariant: the executor never leaves a claimed task orphaned InProgress.*
 
 **Sprint 5 — Live transitions (BE + FE)**
 
@@ -986,6 +1111,10 @@ exercise. Nothing merges without its tests.
   RED: notifier test.
 - `T5.2` (FE) — render card movement live on the board. RED: hook/RTL test against the new event.
   *DRY: extend `useAgentFeed` and the `HubEvents` constants, do not duplicate.*
+- `T5.3` (FE) — remove the `refreshKey={logs.length}` full-board refetch (resolves finding F2); drive
+  the board from the targeted `TaskMoved` event and reconcile it with in-flight optimistic drags so an
+  agent update never clobbers a drag the user is mid-way through. RED: RTL test that a `TaskMoved`
+  event moves only the target card and leaves an in-progress drag intact.
 
 **Sprint 6 — Guardrails (BE + FE)**
 
@@ -993,9 +1122,15 @@ exercise. Nothing merges without its tests.
   path can never reach `Done`, only the endpoint can.
 - `T6.2` (BE) — spend-cap policy around Claude calls. RED: test that the executor skips when the
   cap is hit.
-- `T6.3` (BE) — rollback: a failed work step returns the task to `Todo` and logs. RED: force a
-  failure, assert the task is back in `Todo`, not stuck `InProgress`.
+- `T6.3` (BE) — rollback for *abnormal* termination: a work step that throws / a cancelled cycle
+  returns the task to `Todo` and logs (complements Sprint 4 `T4.4`, which handles the clean end where
+  the model finishes without requesting review by moving to Review). RED: force an exception mid-cycle,
+  assert the task is back in `Todo`, not stuck `InProgress`.
 - `T6.4` (FE) — approval control in the UI. RED: RTL test.
+- `T6.5` (BE + FE) — executor gating (resolves finding F3): an enable/pause switch so the executor
+  does not claim and move the human's cards unless automation is on (config `Agents:ExecutorEnabled`
+  and/or a runtime kill switch, tying into the approval / kill-switch open question). RED: test that a
+  disabled executor claims nothing.
 
 **Sprint 7 — UX & Integration (FE)**
 

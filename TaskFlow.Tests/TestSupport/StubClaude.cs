@@ -65,6 +65,21 @@ public sealed class StubClaude : IClaudeClient
             Content = new List<ContentBase> { new TextContent { Text = text } }
         });
 
+    /// <summary>Scripts a record_progress call, then a request_review call, then an end_turn.</summary>
+    public static StubClaude ThatRecordsProgressThenRequestsReview(string note, string summary) => new(
+        ToolUse("tool_1", "record_progress", new { note }),
+        ToolUse("tool_2", "request_review", new { summary }),
+        EndTurn());
+
+    private static MessageResponse ToolUse(string id, string name, object args) => new()
+    {
+        StopReason = "tool_use",
+        Content = new List<ContentBase>
+        {
+            new ToolUseContent { Id = id, Name = name, Input = JsonSerializer.SerializeToNode(args)! }
+        }
+    };
+
     private static MessageResponse EndTurn() => new()
     {
         StopReason = "end_turn",

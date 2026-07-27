@@ -40,4 +40,8 @@ public class TaskItem
 
     [MaxLength(200)]
     public string? SourceSection { get; set; }
+
+    // The agent currently working this task; null when unclaimed. Stamped atomically at claim time.
+    [MaxLength(200)]
+    public string? ClaimedBy { get; set; }
 }

@@ -9,7 +9,7 @@ namespace TaskFlow.Tests.Repositories;
 public class TaskItemProvenanceTests
 {
     [Fact]
-    public async Task Round_trips_kind_and_provenance()
+    public async Task Round_trips_kind_provenance_and_owner()
     {
         using var db = new SqliteInMemoryContext();
         var repo = new TaskRepository(db.Context);
@@ -20,7 +20,8 @@ public class TaskItemProvenanceTests
             Status = WorkflowStatus.Todo,
             Kind = TaskKind.Generic,
             SourceName = "spec.md",
-            SourceSection = "Backend"
+            SourceSection = "Backend",
+            ClaimedBy = "GenericExecutor"
         };
         await repo.AddAsync(task);
         await repo.SaveChangesAsync();
@@ -30,5 +31,6 @@ public class TaskItemProvenanceTests
         loaded!.Kind.Should().Be(TaskKind.Generic);
         loaded.SourceName.Should().Be("spec.md");
         loaded.SourceSection.Should().Be("Backend");
+        loaded.ClaimedBy.Should().Be("GenericExecutor");
     }
 }
