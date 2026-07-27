@@ -7,4 +7,8 @@ export const handlers = [
     HttpResponse.json({ token: 'fake.jwt.token', name: 'Ada', email: 'ada@x.dev', expiresAt: '' })),
   http.get('*/api/Tasks', () => HttpResponse.json([])),
   http.get('*/api/AgentLogs', () => HttpResponse.json([])),
+  http.post('*/api/Ingestion', () =>
+    HttpResponse.json([
+      { title: 'Draft from server', description: null, kind: 'Generic', section: 'Doc' },
+    ])),
 ]
