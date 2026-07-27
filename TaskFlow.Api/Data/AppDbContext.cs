@@ -33,6 +33,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.Priority)
                   .HasConversion<string>();
 
+            entity.Property(t => t.Kind)
+                  .HasConversion<string>();
+
             // Relationship: Task -> User (optional assignment)
             entity.HasOne(t => t.AssignedTo)
                   .WithMany(u => u.Tasks)

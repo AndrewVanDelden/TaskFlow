@@ -113,6 +113,7 @@ builder.Services.AddScoped<ClaudeIngestionParser>();
 builder.Services.AddScoped<IIngestionParser>(sp => new TieredIngestionParser(
     free: sp.GetRequiredService<SpecDocumentParser>(),
     paid: sp.GetRequiredService<ClaudeIngestionParser>()));
+builder.Services.AddScoped<IDraftCommitService, DraftCommitService>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();
@@ -146,7 +147,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.Migrate();
 }
 
 if (app.Environment.IsDevelopment())
