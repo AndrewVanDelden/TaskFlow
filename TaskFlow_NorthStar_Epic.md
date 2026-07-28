@@ -843,38 +843,254 @@ An agent claims a To Do task, works it via Claude, and moves it to Review.
 
 ## Sprint 5 — Live Board Transitions
 
-**Goal:** as the executor works, the task moves across the board (To Do → In Progress → Review →
-Done) and the dashboard shows it live.
+> **This section is a self-contained guide.** A new chat with no prior context can execute it top to
+> bottom. It states the goal, the one architecture decision, the exact seams (with file paths), and
+> then each task as RED → GREEN → principle. Follow the standing rules at the top of this doc (TDD,
+> DRY, SOLID, the AI writes code + tests, the user runs `dotnet`/`npm`/`git`).
 
-**Produces:** status transitions written through the repositories and broadcast over
-`IAgentNotifier` / `HubEvents`, plus any dashboard adjustment to render executor activity
-distinctly from the existing prioritizer/stale feeds.
+**Status: COMPLETE.** T5.1–T5.6 shipped; findings F2, F4, F5 resolved. 59 backend tests green,
+frontend green, and the live board verified (executor moves and human drags both update single cards;
+the dragged card follows the cursor unclipped). This section is now the historical record for Sprint 5.
 
-**Leans on:** repositories + SignalR (`AgentHub`, `useAgentFeed`). No new transport is invented;
-the transitions ride the feed that already exists.
+**Goal.** When a task changes status — the executor claiming it (`Todo → InProgress`), handing it to
+review (`InProgress → Review`), or a human dragging a card — every connected dashboard updates *that
+one card* live, without reloading the whole board.
 
-**Design point:** what counts as Review vs Done for an autonomous executor, and whether Review
-always requires a human (ties into Sprint 6). This sprint also fixes finding F2: the board currently
-re-fetches the whole list on every agent log (`refreshKey={logs.length}`), which churns the board and
-fights in-flight drags. The `TaskMoved` event replaces that full refetch with a targeted card update.
+**Why this sprint exists (finding F2).** Today `Dashboard.tsx` passes `refreshKey={logs.length}` to
+`KanbanBoard`, so the board re-runs `getTasks()` on every agent log that streams in. With three agents
+logging, the board churns and fights in-flight drags; that churn is what made a card appear to vanish
+during Sprint 4 testing. The fix is to stop refetching the whole list and instead apply a targeted
+`TaskMoved` event to the single affected card.
 
-**PR body (target — we work to make it true):**
+### Architecture decision (read before writing code)
+
+Three decisions are locked so the guide is unambiguous:
+
+1. **Event payload is compact: `{ id, status }`.** A `TaskMoved` event says "task `id` is now in
+   column `status`". Rationale: the agent always knows both values at the moment it makes the
+   transition, with no re-read (so it never hits the `ExecuteUpdate` stale-entity trap from Sprint 4),
+   and the board already holds every task from its initial load, so patching one card's status is
+   enough. `status` is sent as its string name (`"InProgress"`), matching the frontend `TaskStatus`
+   union and how the DB stores it. *Limitation, accepted:* a task the board has not loaded yet will
+   not appear from a move alone; live task *creation* is a future `TaskCreated` event, out of scope
+   here.
+
+2. **The agent broadcasts; the repository never does.** The repository is data access only (SRP — see
+   its interface doc comment). SignalR concerns stay in `IAgentNotifier` / `SignalRAgentNotifier`. The
+   executor, which decides each transition, calls the notifier after each successful move.
+
+3. **One SignalR connection for the whole app, shared via a provider.** Sprint 5 adds a second event
+   stream (`TaskMoved`) alongside the existing agent feed. Rather than open a second websocket, extract
+   the single connection (today owned inline by `useAgentFeed`) into an `AgentHubProvider` that both the
+   agent feed and the board subscribe to. This is the DRY/SRP-correct moment to extract it; opening a
+   second connection would duplicate setup and auth for no reason.
+
+### Grounded current state (the seams you will touch)
+
+Backend:
+
+- `TaskFlow.Api/Hubs/HubEvents.cs` — event-name constants (`AgentAction`, `AgentCycle`). Add `TaskMoved`.
+- `TaskFlow.Api/Services/IAgentNotifier.cs` — `AgentActionAsync`, `AgentCycleAsync`. Add `TaskMovedAsync`.
+- `TaskFlow.Api/Services/SignalRAgentNotifier.cs` — implements the above over `IHubContext<AgentHub>`,
+  each broadcast wrapped in try/catch so a broadcast failure never breaks a cycle. Add the impl here.
+- `TaskFlow.Api/Agents/ClaudeAgentBase.cs` — holds a private `_notifier`; exposes `RecordActionAsync`,
+  `NotifyCycleStartedAsync/CompletedAsync`. Add a `protected NotifyTaskMovedAsync`.
+- `TaskFlow.Api/Agents/GenericExecutorAgent.cs` — the three transition points (claim,
+  `RequestReviewAsync`, the T4.4 auto-finalize block).
+
+Frontend:
+
+- `TaskFlow.Web/src/hooks/useAgentFeed.ts` — currently builds and owns the `HubConnection` inline,
+  seeds logs from `getAgentLogs`, subscribes to `AgentAction`/`AgentCycle`, exposes `{ logs, cycles,
+  connected }`.
+- `TaskFlow.Web/src/lib/hubEvents.ts` — mirror of the C# `HubEvents`; keep both ends in sync.
+- `TaskFlow.Web/src/features/KanbanBoard.tsx` — owns board state via its own `getTasks` + optimistic
+  `handleDragEnd`; takes `refreshKey`.
+- `TaskFlow.Web/src/features/Dashboard.tsx` — renders `<KanbanBoard refreshKey={logs.length} />` (the
+  F2 anti-pattern).
+- `TaskFlow.Web/src/api/tasks.ts` — `getTasks()`, `updateTaskStatus(id, status)`.
+- `TaskFlow.Web/__mocks__/@microsoft/signalr.ts` — `FakeHubConnection` whose `on()` is a no-op; it
+  must be upgraded so tests can register handlers and emit events.
+- `TaskFlow.Web/src/types.ts` — `TaskItem`, `TaskStatus`.
+
+### Backend
+
+**T5.1 — broadcast `TaskMoved` from the executor.**
+
+- *Files:* `HubEvents.cs` (+ `public const string TaskMoved = "TaskMoved";`); `IAgentNotifier.cs`
+  (+ `Task TaskMovedAsync(int taskId, WorkflowStatus status, CancellationToken ct = default);`);
+  `SignalRAgentNotifier.cs` (implement it: `await _hub.Clients.All.SendAsync(HubEvents.TaskMoved,
+  new { id = taskId, status = status.ToString() }, ct)` inside the same try/catch as the others);
+  `ClaudeAgentBase.cs` (`protected Task NotifyTaskMovedAsync(int taskId, WorkflowStatus status,
+  CancellationToken ct) => _notifier.TaskMovedAsync(taskId, status, ct);`); `GenericExecutorAgent.cs`
+  (after a successful claim → `await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, ct)`; in
+  `RequestReviewAsync` after `MarkForReviewAsync` returns true → `... WorkflowStatus.Review ...`; in the
+  T4.4 auto-finalize block → `... WorkflowStatus.Review ...`).
+- *RED:* in `GenericExecutorAgentTests`, replace `Mock.Of<IAgentNotifier>()` with a
+  `Mock<IAgentNotifier>` and assert `notifier.Verify(n => n.TaskMovedAsync(task.Id,
+  WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once)` and the `Review` move
+  `Times.AtLeastOnce`. (Existing agent tests keep using `Mock.Of<IAgentNotifier>()`, which Moq already
+  auto-satisfies for `Task`-returning methods, so adding `TaskMovedAsync` does not break them.)
+- *GREEN:* the wiring above.
+- *Principle:* DIP — the executor depends on `IAgentNotifier`, not SignalR. DRY — reuses the existing
+  notifier seam and its swallow-and-log pattern. SRP — the repository stays SignalR-free.
+
+**T5.4 (optional, recommended) — broadcast human drags too.**
+
+- A card dragged by one user should also move live on *other* clients. The acting client already
+  updates optimistically, so this only matters for multi-client. *Files:* inject `IAgentNotifier` into
+  `TaskService`; in `UpdateStatusAsync`, after the save, call `TaskMovedAsync(id, dto.Status, ct)`.
+- *RED:* a `TaskService` test with a `Mock<IAgentNotifier>` verifying `TaskMovedAsync(id, newStatus,
+  ...)` is called once after a status update.
+- *Principle:* the same broadcast seam serves agent moves and human moves (DRY). Marked optional so
+  single-user demos are not blocked on it; decide with the user before starting.
+
+### Frontend
+
+**T5.2 — extract one shared hub connection (`AgentHubProvider`), refactor `useAgentFeed` onto it.**
+
+- *Files:* new `TaskFlow.Web/src/lib/agentHub.tsx` — a context provider that builds ONE
+  `HubConnection` (same `withUrl('${BASE_URL}/hubs/agents', { accessTokenFactory })` +
+  `withAutomaticReconnect()` as today), starts it, tracks `connected`, and exposes
+  `{ connection, connected }` via `useAgentHub()`. Refactor `useAgentFeed.ts` to read the connection
+  from `useAgentHub()` and register its `AgentAction`/`AgentCycle` handlers on it (guard on
+  `connection` being non-null; keep seeding from `getAgentLogs` unchanged). Wrap the dashboard subtree
+  in `<AgentHubProvider>` in `Dashboard.tsx`.
+- *RED / regression guard:* the existing `useAgentFeed.test.ts` (seeds from `getAgentLogs`) must stay
+  green. Because seeding is independent of the connection and the hook is null-safe when no provider is
+  present, it passes unchanged; that is the proof the refactor is behavior-preserving.
+- *Principle:* SRP — connection lifecycle lives in one provider; feature hooks only subscribe. DRY —
+  one connection, one auth setup, many subscribers.
+
+**T5.3 — `useBoardTasks` hook + delete the full-refetch (resolves F2).**
+
+- *Files:* new `TaskFlow.Web/src/hooks/useBoardTasks.ts` — on mount, `getTasks()` once into state; via
+  `useAgentHub()`, subscribe to `HubEvents.TaskMoved` and patch only the matching card
+  (`setTasks(prev => prev.map(t => t.id === evt.id ? { ...t, status: evt.status } : t))`), returning
+  the handler in a cleanup with `connection.off`; expose `moveTask(id, newStatus)` that does the
+  optimistic update + `updateTaskStatus` PATCH + rollback (moved out of `KanbanBoard`). Refactor
+  `KanbanBoard.tsx` to consume `useBoardTasks` instead of its own `getTasks`/`handleDragEnd` state and
+  drop the `refreshKey` prop. In `Dashboard.tsx`, render `<KanbanBoard />` with no `refreshKey`.
+- Add `TaskMoved: 'TaskMoved'` to `src/lib/hubEvents.ts` (cross-language contract; see below).
+- *Test-support prerequisite:* upgrade `__mocks__/@microsoft/signalr.ts` so `FakeHubConnection`
+  records handlers (`on(event, cb)` pushes into a map, `off(event, cb)` removes) and exposes an
+  `emit(event, payload)` test helper; export a way to reach the last-built connection so a test can
+  emit. This is what lets a test simulate a server push.
+- *RED:* a hook/RTL test that (1) after initial load, emitting `TaskMoved { id: A, status: 'Review' }`
+  moves only card A and leaves card B untouched; (2) an in-flight optimistic `moveTask` on card A is
+  not clobbered by an unrelated `TaskMoved` for card B (id-scoped patching). Same-card drag-vs-agent
+  collisions resolve to server truth and are acceptable.
+- *Principle:* SRP — board data/state lives in one hook; the component renders. Killing
+  `refreshKey={logs.length}` removes the churn (F2) at its root rather than debouncing around it
+  (no band-aid).
+
+### Cross-language contract
+
+`TaskMoved` must be added to **both** `TaskFlow.Api/Hubs/HubEvents.cs` and
+`TaskFlow.Web/src/lib/hubEvents.ts`. There is no shared type across the boundary; a typo on either side
+silently stops the live update. The payload keys (`id`, `status`) and the string form of `status`
+(`"Todo" | "InProgress" | "Review" | "Done"`) are the contract.
+
+### Test strategy
+
+- Backend unit tests target the agent's calls to `IAgentNotifier` (the DIP seam), not the SignalR
+  wire — `SignalRAgentNotifier` needs `IHubContext` and is verified by the live run, not a unit test.
+- Frontend tests run offline against the upgraded signalr mock; `emit` drives the `TaskMoved` path.
+- Live check: `dotnet run` + the board open; watch a card move `Todo → InProgress → Review` on its own
+  as the executor runs, with no full-board flicker.
+
+### Live-run finding F4 — dropping a card onto another card blanked it (fixed as T5.5)
+
+Dragging a card onto another card (common when dragging over a populated column) made it vanish. Root
+cause: cards are `useSortable` (id = task id), columns are `useDroppable` (id = status), and
+`handleDragEnd` treated `over.id` as a status unconditionally. Dropping onto a card set the moved
+task's status to a task-id number, which matches no column, so the card disappeared. This predates
+Sprint 5, but the old full-board refetch masked it by reloading correct statuses on every log;
+removing that refetch (F2) exposed it.
+
+Fix (`T5.5`): a pure `resolveDropColumn(overId, tasks)` in `src/lib/board.ts` maps either a column or
+a card drop target to the destination column; `handleDragEnd` uses it. Unit-tested in `board.test.ts`.
+`BOARD_COLUMNS` also moved into `board.ts` as the single source of columns (DRY).
+
+Watch items (recorded): (a) a `TaskMoved` echo arriving mid-drag jostling the sortable list — now
+resolved by the DragOverlay in F5 below; (b) the API binds `WorkflowStatus` from a numeric string
+without range-checking, so a malformed client could set an out-of-range status — a small DTO/enum
+guard belongs with Sprint 6 hardening.
+
+### Live-run finding F5 — the drag visual broke on cross-column drags (fixed as T5.6)
+
+The drop worked, but the card being dragged vanished mid-gesture and the grab was lost. Cause: cards
+move via in-place sortable transforms, but the board container has `overflow-x-auto`, so a card
+dragged toward another column was clipped out of view; dnd-kit still tracked the pointer, so the drop
+still landed. Fix (`T5.6`): render the dragged card in a `DragOverlay` (a portal above the board),
+which is not clipped by overflow and is unaffected by live re-renders during the drag (this also
+resolves watch item (a)). `TaskCard` was split into a presentational `TaskCardView` (no drag hooks, so
+it can render inside the overlay) and the sortable wrapper. Verified by the live run; `TaskCardView`
+has a standalone render test.
+
+### Definition of done (Sprint 5)
+
+`TaskMoved` broadcast on every executor transition and on human status updates (T5.4); the board
+patches single cards from the event; `refreshKey={logs.length}` is gone; one shared hub connection;
+drop-target resolution fixed (T5.5); `dotnet test` and `npm run test` green; F2 and F4 marked resolved.
+
+### Ship it — commit, push, PR, merge
+
+Assumes this work is on a `feature/sprint5` branch cut from `develop`, and Sprint 4 has already landed
+on `develop`.
+
+Commit and push:
+
+```bash
+git add -A
+git commit -m "Sprint 5: live board transitions
+
+- HubEvents.TaskMoved + IAgentNotifier.TaskMovedAsync + SignalR impl + ClaudeAgentBase helper
+- Executor broadcasts on claim/review/auto-finalize; TaskService broadcasts human status updates (T5.4)
+- Frontend: single shared SignalR connection (AgentHubProvider); useAgentFeed refactored onto it
+- useBoardTasks: initial load + TaskMoved single-card patches + optimistic moveTask; removed
+  refreshKey full-board refetch (resolves F2)
+- Fix F4: resolveDropColumn maps card/column drop targets so a drop onto a card can't blank it
+- Fix F5: DragOverlay + presentational TaskCardView so the dragged card isn't clipped mid-drag
+- 59 backend tests green; frontend green"
+git push -u origin feature/sprint5
+```
+
+PR description (`feature/sprint5` → `develop`):
 
 ```markdown
 ## Sprint 5 — Live board transitions
 
-Task transitions stream to the dashboard as the executor works.
+Task status changes stream to every dashboard and update a single card, with no whole-board refetch.
 
 ### What
-- Broadcast transitions over `IAgentNotifier` / a new `HubEvents.TaskMoved`.
-- Frontend renders card movement live on the board.
+- New `HubEvents.TaskMoved` + `IAgentNotifier.TaskMovedAsync(taskId, status)`, broadcast by the
+  executor on claim (`InProgress`) and review / auto-finalize (`Review`), and by
+  `TaskService.UpdateStatusAsync` on human moves (T5.4).
+- One shared SignalR connection (`AgentHubProvider`); `useAgentFeed` refactored onto it.
+- `useBoardTasks` drives the board from an initial load + `TaskMoved` patches; `refreshKey={logs.length}`
+  removed (resolves F2).
+- `resolveDropColumn` maps card/column drop targets so dropping onto a card no longer blanks it (F4).
+- `DragOverlay` + presentational `TaskCardView` so the dragged card follows the cursor unclipped (F5).
 
 ### Tests
-- Notifier test; frontend hook/RTL test against the new event.
-- `dotnet test` and `npm run test` green.
+- Agent verifies `TaskMovedAsync(InProgress)` then `(Review)`; `TaskService` verifies the broadcast on
+  a move; `useBoardTasks` patches one card on a `TaskMoved` emit; `resolveDropColumn` and
+  `TaskCardView` unit-tested; `useAgentFeed` regression green.
+- `dotnet test` (59) and `npm run test` green.
 
 ### Type of change
 - [x] Feature (backend + frontend) + tests
+```
+
+Merge once approved:
+
+```bash
+git checkout develop
+git pull
+git merge --no-ff feature/sprint5
+git push
+git branch -d feature/sprint5
 ```
 
 ---
@@ -1105,16 +1321,30 @@ exercise. Nothing merges without its tests.
   ends its turn WITHOUT `request_review`; assert the card still reaches `Review` with an `AutoFinalized`
   log (not `ReviewRequested`). *Invariant: the executor never leaves a claimed task orphaned InProgress.*
 
-**Sprint 5 — Live transitions (BE + FE)**
+**Sprint 5 — Live transitions (BE + FE)** — full guide in the Sprint 5 section above.
 
-- `T5.1` (BE) — broadcast task transitions over `IAgentNotifier` / a new `HubEvents.TaskMoved`.
-  RED: notifier test.
-- `T5.2` (FE) — render card movement live on the board. RED: hook/RTL test against the new event.
-  *DRY: extend `useAgentFeed` and the `HubEvents` constants, do not duplicate.*
-- `T5.3` (FE) — remove the `refreshKey={logs.length}` full-board refetch (resolves finding F2); drive
-  the board from the targeted `TaskMoved` event and reconcile it with in-flight optimistic drags so an
-  agent update never clobbers a drag the user is mid-way through. RED: RTL test that a `TaskMoved`
-  event moves only the target card and leaves an in-progress drag intact.
+- `T5.1` (BE) — `HubEvents.TaskMoved` + `IAgentNotifier.TaskMovedAsync(taskId, status)` +
+  `SignalRAgentNotifier` impl + `ClaudeAgentBase.NotifyTaskMovedAsync`; executor broadcasts on claim
+  (`InProgress`) and on review / auto-finalize (`Review`). RED: `Mock<IAgentNotifier>` verifies both
+  moves in the executor test. *DIP + SRP: agent broadcasts, repository stays SignalR-free.*
+- `T5.2` (FE) — extract one shared connection (`AgentHubProvider` / `useAgentHub`) and refactor
+  `useAgentFeed` onto it. RED: existing `useAgentFeed` seed test stays green (behavior-preserving).
+  *SRP/DRY: one connection, many subscribers.*
+- `T5.3` (FE) — `useBoardTasks` (initial load + `TaskMoved` single-card patch + optimistic
+  `moveTask`); `KanbanBoard` consumes it; delete `refreshKey={logs.length}` from `Dashboard` (resolves
+  finding F2). Upgrade the signalr mock to record handlers + `emit`. RED: emit `TaskMoved` moves only
+  the target card and leaves others (and an in-flight drag) intact. *SRP: board state in one hook.*
+- `T5.4` (BE, optional/recommended) — `TaskService.UpdateStatusAsync` also broadcasts `TaskMoved` so a
+  human drag shows live on other clients. RED: `TaskService` test with `Mock<IAgentNotifier>`. Decide
+  with the user before starting.
+- `T5.5` (FE) — fix finding F4: pure `resolveDropColumn(overId, tasks)` maps a card or column drop
+  target to the destination column so a drop onto a card can't blank the moved card; `handleDragEnd`
+  uses it; `BOARD_COLUMNS` centralized in `lib/board.ts`. RED: `board.test.ts` unit tests. *SRP/DRY:
+  pure drop-resolution helper, one source of columns.*
+- `T5.6` (FE) — fix finding F5: `DragOverlay` renders the dragged card in a portal so it is not
+  clipped by the board's `overflow-x-auto` and survives live re-renders mid-drag; `TaskCard` split into
+  a presentational `TaskCardView` (renders in the overlay) plus the sortable wrapper. Standalone
+  `TaskCardView` render test. *SRP: presentation vs drag behavior.*
 
 **Sprint 6 — Guardrails (BE + FE)**
 

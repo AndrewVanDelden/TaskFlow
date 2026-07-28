@@ -4,4 +4,5 @@
 export const HubEvents = {
   AgentAction: 'AgentAction',
   AgentCycle: 'AgentCycle',
+  TaskMoved: 'TaskMoved',
 } as const

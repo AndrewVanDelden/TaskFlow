@@ -73,6 +73,8 @@ public class GenericExecutorAgent : ClaudeAgentBase
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
 
+        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, cancellationToken);
+
         // ── REASON + ACT ───────────────────────────────────────────────────────────
         // Bind the claimed task to the dispatcher so the tools act on exactly this task.
         var actions = await RunToolConversationAsync(
@@ -101,6 +103,8 @@ public class GenericExecutorAgent : ClaudeAgentBase
                 Success = true,
                 CreatedAt = DateTime.UtcNow
             }, cancellationToken);
+
+            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
 
             Logger.LogInformation(
                 "[{Agent}] Task {Id} auto-finalized to Review (no explicit review requested).", Name, task.Id);
@@ -206,6 +210,8 @@ public class GenericExecutorAgent : ClaudeAgentBase
             Success = true,
             CreatedAt = DateTime.UtcNow
         }, cancellationToken);
+
+        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
 
         Logger.LogInformation("[{Agent}] Task {Id} moved to Review: {Summary}", Name, task.Id, args.Summary);
         return ToolResult(toolUse, $"Task {task.Id} moved to Review.");

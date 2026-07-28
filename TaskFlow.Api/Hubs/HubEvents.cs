@@ -9,4 +9,5 @@ public static class HubEvents
 {
     public const string AgentAction = "AgentAction";
     public const string AgentCycle = "AgentCycle";
+    public const string TaskMoved = "TaskMoved";   // a task changed status: { id, status }
 }

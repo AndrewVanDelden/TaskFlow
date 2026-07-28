@@ -55,4 +55,21 @@ public class SignalRAgentNotifier : IAgentNotifier
             _logger.LogWarning(ex, "Failed to broadcast agent cycle.");
         }
     }
+
+    public async Task TaskMovedAsync(int taskId, WorkflowStatus status, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // status sent as its string name to match the frontend TaskStatus union.
+            await _hub.Clients.All.SendAsync(HubEvents.TaskMoved, new
+            {
+                id = taskId,
+                status = status.ToString(),
+            }, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to broadcast task move.");
+        }
+    }
 }

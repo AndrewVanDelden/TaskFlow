@@ -13,8 +13,9 @@ public class TaskServiceTests
 {
     private readonly Mock<ITaskRepository> _tasks = new();
     private readonly Mock<IUserRepository> _users = new();
+    private readonly Mock<IAgentNotifier> _notifier = new();
 
-    private TaskService CreateSut() => new(_tasks.Object, _users.Object);
+    private TaskService CreateSut() => new(_tasks.Object, _users.Object, _notifier.Object);
 
     private static TaskItem SampleTask(int id = 1) => new()
     {
@@ -107,6 +108,10 @@ public class TaskServiceTests
         var result = await CreateSut().UpdateStatusAsync(9, new UpdateTaskStatusDto { Status = WorkflowStatus.Done });
 
         result.Status.Should().Be(ResultStatus.NotFound);
+        // No move happened, so nothing is broadcast.
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -119,6 +124,19 @@ public class TaskServiceTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Status.Should().Be(nameof(WorkflowStatus.Done));
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_broadcasts_the_move_so_boards_update_live()
+    {
+        SetupGetById(SampleTask());
+
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.InProgress });
+
+        result.IsSuccess.Should().BeTrue();
+        _notifier.Verify(
+            n => n.TaskMovedAsync(1, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // ── GetById ───────────────────────────────────────────────────────────────

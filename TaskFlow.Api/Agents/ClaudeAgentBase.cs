@@ -221,4 +221,8 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
     /// <summary>Broadcasts that this agent has completed a cycle.</summary>
     protected Task NotifyCycleCompletedAsync(CancellationToken cancellationToken) =>
         _notifier.AgentCycleAsync(Name, AgentPhases.Completed, cancellationToken);
+
+    /// <summary>Broadcasts that a task moved to a new status, so boards update that one card live.</summary>
+    protected Task NotifyTaskMovedAsync(int taskId, WorkflowStatus status, CancellationToken cancellationToken) =>
+        _notifier.TaskMovedAsync(taskId, status, cancellationToken);
 }
