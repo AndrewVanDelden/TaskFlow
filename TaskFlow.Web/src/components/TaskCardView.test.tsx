@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, it, expect, vi } from 'vitest'
 import { TaskCardView } from './TaskCardView'
 import type { TaskItem } from '../types'
 
@@ -23,5 +24,17 @@ describe('TaskCardView', () => {
     expect(screen.getByText('Ship it')).toBeInTheDocument()
     expect(screen.getByText('High')).toBeInTheDocument()
     expect(screen.getByText('Unassigned')).toBeInTheDocument()
+  })
+
+  it('shows no Approve button by default', () => {
+    render(<TaskCardView task={task} />)
+    expect(screen.queryByRole('button', { name: /approve/i })).toBeNull()
+  })
+
+  it('shows an Approve button that fires onApprove when provided', async () => {
+    const onApprove = vi.fn()
+    render(<TaskCardView task={task} onApprove={onApprove} />)
+    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+    expect(onApprove).toHaveBeenCalledOnce()
   })
 })

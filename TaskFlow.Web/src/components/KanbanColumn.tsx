@@ -7,9 +7,10 @@ interface Props {
   status: TaskStatus
   label: string
   tasks: TaskItem[]
+  onApprove?: (id: number) => void
 }
 
-export function KanbanColumn({ status, label, tasks }: Props) {
+export function KanbanColumn({ status, label, tasks, onApprove }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: status })
 
   return (
@@ -31,7 +32,11 @@ export function KanbanColumn({ status, label, tasks }: Props) {
         strategy={verticalListSortingStrategy}
       >
         {tasks.map((task) => (
-          <TaskCard key={task.id} task={task} />
+          <TaskCard
+            key={task.id}
+            task={task}
+            onApprove={onApprove ? () => onApprove(task.id) : undefined}
+          />
         ))}
       </SortableContext>
 

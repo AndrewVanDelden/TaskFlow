@@ -25,6 +25,10 @@ public class AgentLogRepository : IAgentLogRepository
             .Take(limit)
             .ToListAsync(ct);
 
+    public Task<int> CountByAgentActionSinceAsync(string agentName, string action, DateTime since, CancellationToken ct = default) =>
+        _db.AgentLogs.CountAsync(
+            l => l.AgentName == agentName && l.Action == action && l.CreatedAt >= since, ct);
+
     public async Task AddAsync(AgentLog log, CancellationToken ct = default) =>
         await _db.AgentLogs.AddAsync(log, ct);
 

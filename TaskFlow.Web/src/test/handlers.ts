@@ -12,4 +12,12 @@ export const handlers = [
       { title: 'Draft from server', description: null, kind: 'Generic', section: 'Doc' },
     ])),
   http.post('*/api/Ingestion/commit', () => HttpResponse.json(1)),
+  http.get('*/api/agents/executor', () => HttpResponse.json({ enabled: false })),
+  http.post('*/api/agents/executor/enable', () => HttpResponse.json({ enabled: true })),
+  http.post('*/api/agents/executor/disable', () => HttpResponse.json({ enabled: false })),
+  http.post('*/api/Tasks/:id/approve', () =>
+    HttpResponse.json({
+      id: 1, title: 'Approved', description: null, status: 'Done', priority: 'High',
+      dueDate: null, createdAt: '', updatedAt: '', assignedToId: null, assignedToName: null,
+    })),
 ]

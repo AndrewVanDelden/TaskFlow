@@ -25,10 +25,14 @@ public class GenericExecutorAgent : ClaudeAgentBase
     private const string ReviewTool = "request_review";
 
     private readonly ITaskRepository _tasks;
+    private readonly IExecutorSwitch _switch;
+    private readonly ISpendGuard _spendGuard;
 
     public GenericExecutorAgent(
         IClaudeClient claude,
         ITaskRepository tasks,
+        IExecutorSwitch executorSwitch,
+        ISpendGuard spendGuard,
         IAgentLogRepository logs,
         IAgentNotifier notifier,
         IConfiguration config,
@@ -36,15 +40,24 @@ public class GenericExecutorAgent : ClaudeAgentBase
         : base(claude, logs, notifier, config, logger)
     {
         _tasks = tasks;
+        _switch = executorSwitch;
+        _spendGuard = spendGuard;
     }
 
-    public override string Name => "GenericExecutor";
+    public override string Name => AgentNames.GenericExecutor;
 
     public override TimeSpan Interval =>
         TimeSpan.FromMinutes(Config.GetValue("Agents:ExecutorIntervalMinutes", 15));
 
     public override async Task RunAsync(CancellationToken cancellationToken)
     {
+        // ── GUARDS (run before claiming; each is a separate policy) ─────────────────
+        if (!_switch.IsEnabled)
+        {
+            Logger.LogInformation("[{Agent}] Executor is paused. Skipping cycle.", Name);
+            return;
+        }
+
         // Without Claude we cannot do the work, so do not claim a task we would leave stuck InProgress.
         if (!ClaudeConfigured)
         {
@@ -52,65 +65,122 @@ public class GenericExecutorAgent : ClaudeAgentBase
             return;
         }
 
+        if (!await _spendGuard.CanRunAsync(cancellationToken))
+        {
+            Logger.LogWarning("[{Agent}] Daily execution cap reached. Skipping cycle.", Name);
+            return;
+        }
+
         // ── CLAIM ──────────────────────────────────────────────────────────────────
         var task = await _tasks.TryClaimNextAsync(TaskKind.Generic, Name, cancellationToken);
         if (task is null)
         {
-            Logger.LogInformation("[{Agent}] No Todo task to execute. Skipping cycle.", Name);
+            // Nothing to claim. If the board still has open work (anything not Done), stay enabled and
+            // keep polling; if the board is clear, pause the executor until a human turns it back on.
+            var openCount = await _tasks.CountOpenAsync(cancellationToken);
+            if (openCount == 0)
+            {
+                Logger.LogInformation("[{Agent}] Board is clear; pausing the executor.", Name);
+                _switch.Disable();
+            }
+            else
+            {
+                Logger.LogInformation(
+                    "[{Agent}] No Todo task to execute; {Open} open task(s) remain, staying enabled.", Name, openCount);
+            }
             return;
         }
 
-        Logger.LogInformation("[{Agent}] Claimed Task {Id} '{Title}'.", Name, task.Id, task.Title);
-        await NotifyCycleStartedAsync(cancellationToken);
-
-        await RecordActionAsync(new AgentLog
+        try
         {
-            AgentName = Name,
-            Action = AgentActions.Claimed,
-            TaskId = task.Id,
-            Details = $"Claimed '{task.Title}' for execution.",
-            Success = true,
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
+            Logger.LogInformation("[{Agent}] Claimed Task {Id} '{Title}'.", Name, task.Id, task.Title);
+            await NotifyCycleStartedAsync(cancellationToken);
 
-        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, cancellationToken);
-
-        // ── REASON + ACT ───────────────────────────────────────────────────────────
-        // Bind the claimed task to the dispatcher so the tools act on exactly this task.
-        var actions = await RunToolConversationAsync(
-            prompt: BuildPrompt(task),
-            tools: BuildTools(),
-            dispatch: (toolUse, ct) => ExecuteToolAsync(task, toolUse, ct),
-            cancellationToken);
-
-        Logger.LogInformation(
-            "[{Agent}] Cycle complete for Task {Id}. {Count} tool action(s).", Name, task.Id, actions);
-
-        // ── TERMINAL-STATE GUARANTEE (T4.4) ────────────────────────────────────────
-        // If Claude ended without calling request_review, the task is still InProgress. The guarded
-        // MarkForReviewAsync moves it to Review only in that case (it no-ops if request_review already
-        // moved it), so a claimed task is never orphaned InProgress. Abnormal termination (an
-        // exception mid-cycle) is a separate concern handled by Sprint 6 rollback-to-Todo.
-        var autoFinalized = await _tasks.MarkForReviewAsync(task.Id, cancellationToken);
-        if (autoFinalized)
-        {
             await RecordActionAsync(new AgentLog
             {
                 AgentName = Name,
-                Action = AgentActions.AutoFinalized,
+                Action = AgentActions.Claimed,
                 TaskId = task.Id,
-                Details = "Claude ended its turn without requesting review; auto-finalized to Review.",
+                Details = $"Claimed '{task.Title}' for execution.",
                 Success = true,
                 CreatedAt = DateTime.UtcNow
             }, cancellationToken);
 
-            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
+            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, cancellationToken);
+
+            // ── REASON + ACT ───────────────────────────────────────────────────────────
+            // Bind the claimed task to the dispatcher so the tools act on exactly this task.
+            var actions = await RunToolConversationAsync(
+                prompt: BuildPrompt(task),
+                tools: BuildTools(),
+                dispatch: (toolUse, ct) => ExecuteToolAsync(task, toolUse, ct),
+                cancellationToken);
 
             Logger.LogInformation(
-                "[{Agent}] Task {Id} auto-finalized to Review (no explicit review requested).", Name, task.Id);
-        }
+                "[{Agent}] Cycle complete for Task {Id}. {Count} tool action(s).", Name, task.Id, actions);
 
-        await NotifyCycleCompletedAsync(cancellationToken);
+            // A cancelled cycle is abnormal termination: roll back rather than finalize a half-done
+            // task (T6.3), so a shutdown mid-work does not leave a card sitting in Review.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                await RollBackAsync(task, "cycle cancelled");
+                return;
+            }
+
+            // ── TERMINAL-STATE GUARANTEE (T4.4) ────────────────────────────────────────
+            // If Claude ended without calling request_review, the task is still InProgress. The guarded
+            // MarkForReviewAsync moves it to Review only in that case (it no-ops if request_review already
+            // moved it), so a claimed task is never orphaned InProgress.
+            var autoFinalized = await _tasks.MarkForReviewAsync(task.Id, cancellationToken);
+            if (autoFinalized)
+            {
+                await RecordActionAsync(new AgentLog
+                {
+                    AgentName = Name,
+                    Action = AgentActions.AutoFinalized,
+                    TaskId = task.Id,
+                    Details = "Claude ended its turn without requesting review; auto-finalized to Review.",
+                    Success = true,
+                    CreatedAt = DateTime.UtcNow
+                }, cancellationToken);
+
+                await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
+
+                Logger.LogInformation(
+                    "[{Agent}] Task {Id} auto-finalized to Review (no explicit review requested).", Name, task.Id);
+            }
+
+            await NotifyCycleCompletedAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // Abnormal termination (T6.3): release the claim so the task is never orphaned InProgress.
+            Logger.LogError(ex, "[{Agent}] Cycle failed for Task {Id}; rolling back to Todo.", Name, task.Id);
+            await RollBackAsync(task, ex.Message);
+        }
+    }
+
+    // ── ROLLBACK (T6.3) ─────────────────────────────────────────────────────────────
+    // Returns a claimed task to the pool. The guarded ReleaseClaimAsync no-ops if the task already
+    // moved on (e.g. request_review reached Review before the failure), so this is safe to call.
+    // Uses CancellationToken.None so the rollback completes even when the cycle itself was cancelled.
+    private async Task RollBackAsync(TaskItem task, string reason)
+    {
+        var released = await _tasks.ReleaseClaimAsync(task.Id, CancellationToken.None);
+        if (!released)
+            return;
+
+        await RecordActionAsync(new AgentLog
+        {
+            AgentName = Name,
+            Action = AgentActions.RolledBack,
+            TaskId = task.Id,
+            Details = $"Rolled back to Todo: {reason}",
+            Success = false,
+            CreatedAt = DateTime.UtcNow
+        }, CancellationToken.None);
+
+        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, CancellationToken.None);
     }
 
     // ── TOOL DEFINITIONS ───────────────────────────────────────────────────────────

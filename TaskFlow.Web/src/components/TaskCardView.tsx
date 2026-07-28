@@ -3,8 +3,9 @@ import { priorityStyles } from '../lib/styles'
 import { formatDate } from '../lib/formatting'
 
 // Presentational card with no drag behavior, so it can render both inside the sortable TaskCard
-// and inside the DragOverlay (which has no SortableContext).
-export function TaskCardView({ task }: { task: TaskItem }) {
+// and inside the DragOverlay (which has no SortableContext). When onApprove is provided (Review
+// cards), it shows an Approve button.
+export function TaskCardView({ task, onApprove }: { task: TaskItem; onApprove?: () => void }) {
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 cursor-grab active:cursor-grabbing hover:border-slate-600">
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -26,6 +27,17 @@ export function TaskCardView({ task }: { task: TaskItem }) {
         <span>{task.assignedToName ?? 'Unassigned'}</span>
         {task.dueDate && <span>{formatDate(task.dueDate)}</span>}
       </div>
+
+      {onApprove && (
+        <button
+          onClick={onApprove}
+          // Stop the drag sensor from treating a button click as the start of a drag.
+          onPointerDown={(e) => e.stopPropagation()}
+          className="mt-2 w-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded"
+        >
+          Approve
+        </button>
+      )}
     </div>
   )
 }

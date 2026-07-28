@@ -85,6 +85,26 @@ public class TaskService : ITaskService
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
+    public async Task<Result<TaskResponseDto>> ApproveAsync(int id, CancellationToken ct = default)
+    {
+        var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
+        if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        // Guardrail: Done is a human sign-off reachable only from Review. Agents stop at Review.
+        if (task.Status != WorkflowStatus.Review)
+            return Result<TaskResponseDto>.Invalid(
+                $"Task {id} is {task.Status}; only a task in Review can be approved.");
+
+        task.Status = WorkflowStatus.Done;
+        task.UpdatedAt = DateTime.UtcNow;
+
+        await _tasks.SaveChangesAsync(ct);
+        await _notifier.TaskMovedAsync(id, WorkflowStatus.Done, ct);
+
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
+    }
+
     public async Task<Result<TaskResponseDto>> GetByIdAsync(int id, CancellationToken ct = default)
     {
         var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);

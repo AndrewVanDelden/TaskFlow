@@ -139,6 +139,48 @@ public class TaskServiceTests
             Times.Once);
     }
 
+    // ── Approve (Review -> Done, human only) ──────────────────────────────────
+    [Fact]
+    public async Task Approve_moves_a_Review_task_to_Done_and_broadcasts()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Review;
+        SetupGetById(task);
+
+        var result = await CreateSut().ApproveAsync(1);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Status.Should().Be(nameof(WorkflowStatus.Done));
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _notifier.Verify(n => n.TaskMovedAsync(1, WorkflowStatus.Done, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Approve_rejects_a_task_that_is_not_in_Review()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Todo;
+        SetupGetById(task);
+
+        var result = await CreateSut().ApproveAsync(1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Approve_returns_NotFound_when_task_missing()
+    {
+        SetupGetById(null);
+
+        var result = await CreateSut().ApproveAsync(9);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
     // ── GetById ───────────────────────────────────────────────────────────────
     [Fact]
     public async Task GetById_returns_NotFound_when_task_missing()
