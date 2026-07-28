@@ -283,6 +283,7 @@ The old refactor mapped this destination as future slices M–R. Renumbered fres
 | **5** | Board transitions driven by the executor, streamed live | Repositories + SignalR |
 | **6** | Guardrails: human approval gates, cost caps, rollback on failure | All of the above |
 | **7** | UX & Integration: reachable ingestion, single-origin dev, polished login | Frontend layers + router |
+| **8** | Resilience: retry transient Claude errors (overloaded/rate-limit) with backoff | `IClaudeClient` decorator |
 
 Each sprint is specified in full, small and test-first, when we reach it. The stubs below fix
 the destination and the seams; they are not yet the RED/GREEN code.
@@ -1097,33 +1098,235 @@ git branch -d feature/sprint5
 
 ## Sprint 6 — Guardrails
 
-**Goal:** make autonomous execution safe: human approval gates, a spend ceiling, and rollback on
-failure, designed in rather than bolted on.
+> **This section is a self-contained guide.** A new chat with no prior context can execute it top to
+> bottom. It states the goal, the architecture decisions, the exact seams (with file paths), then each
+> task as RED → GREEN → principle. Follow the standing rules at the top of this doc (TDD, DRY, SOLID,
+> the AI writes code + tests, the user runs `dotnet`/`npm`/`git`).
 
-**Produces:** a human-approval checkpoint (approve each task, approve the batch, or fully
-autonomous with a kill switch, per the open question), a cost cap on Claude usage, a rollback path
-when an executor step fails (abnormal termination; the clean no-review end is handled in Sprint 4
-`T4.4`), and an executor enable/pause gate so it does not move the human's cards uninvited (finding
-F3), all covered by tests.
+**Status: planned.**
 
-**Leans on:** everything above. This is the "give the agent an escape hatch and a leash"
-principle from the stale-task agent, scaled up to an agent that changes real state.
+**Goal.** Make autonomous execution safe before the executor is turned loose: the agent can never
+reach `Done` (a human approves), a spend cap stops runaway Claude usage, a failed or cancelled cycle
+rolls the task back instead of stranding it, and the executor is paused by default until a human
+enables it.
+
+**Why now.** After Sprint 5 the executor moves real cards live. Before it runs unattended it needs a
+leash. Finding F3 (the executor claimed the human's `Todo` cards uninvited) is closed here by the
+default-off kill switch.
+
+### Architecture decisions (read before writing code)
+
+1. **`Done` is human-only — enforced structurally, plus one explicit approve action.** The agent path
+   already cannot reach `Done`: the executor only does `Todo → InProgress → Review` through repository
+   methods (`TryClaimNextAsync`, `MarkForReviewAsync`) that never target `Done`. T6.1 adds an explicit
+   `ApproveAsync` (`Review → Done`, guarded) plus a `POST .../approve` endpoint so approval is
+   intentional and auditable, and a test that *pins* the invariant (a full executor cycle never yields
+   `Done`). We do **not** forbid a human dragging a card to `Done` (that is still a human approval); the
+   approve endpoint/button is the explicit affordance, and the invariant that matters is that *agents*
+   cannot reach `Done`.
+
+2. **Guards are cheap, ordered pre-checks the executor runs before claiming, each behind its own
+   abstraction (SRP/DIP).** Order: enabled? (T6.5) → Claude configured? (exists) → within budget?
+   (T6.2) → claim. The executor reads like a policy list; each guard is independently mockable and
+   testable.
+
+3. **Rollback is the exception/cancel counterpart to T4.4's clean-end auto-finalize.** Wrap the work in
+   try/catch: a clean end (Claude finished, no `request_review`) auto-finalizes to `Review` (T4.4); an
+   exception or a cancelled cycle releases the claim back to `Todo` (T6.3). Same guarded-transition +
+   `TaskMoved` broadcast machinery; different cause, different terminal state. Together they complete
+   the invariant "a claimed task always ends a cycle in a terminal state, never orphaned `InProgress`."
+
+4. **The pause control is a runtime kill switch, default OFF.** T6.5 needs a frontend control, so the
+   enable/pause state is a thread-safe in-memory singleton (`IExecutorSwitch`) toggled via an endpoint,
+   seeded from `Agents:ExecutorEnabled` (default `false`). Default-off means the executor will not
+   touch the board until a human turns it on (closes F3). **Auto-pause (post-Sprint-6):** when a cycle
+   finds nothing to claim, the executor pauses *itself* if the board is clear (no tasks in Todo,
+   InProgress, or Review — `CountOpenAsync == 0`); it stays enabled while any open work remains, so it
+   powers down once there is nothing left to do and waits for a human to re-enable it. The dev cadence
+   is `Agents:ExecutorIntervalMinutes = 1` (in `appsettings.Development.json`).
+
+5. **Spend cap v1 counts executor tasks per day as a proxy, behind `ISpendGuard`.** A precise
+   dollar/token cap needs per-call token usage (`MessageResponse.Usage`) persisted, which is a schema
+   change. v1 caps `Agents:DailyExecutorTaskCap` claims per UTC day (one claim ≈ one Claude
+   conversation), counted from existing `AgentLog` rows, no migration. Token-based accounting is a
+   documented future refinement behind the same interface.
+
+### Grounded current state (the seams you will touch)
+
+Backend:
+
+- `TaskFlow.Api/Agents/GenericExecutorAgent.cs` — `RunAsync` currently: `ClaudeConfigured` check →
+  `TryClaimNextAsync` → record `Claimed` + broadcast `InProgress` → `RunToolConversationAsync` →
+  `MarkForReviewAsync` auto-finalize (T4.4) → cycle complete. Add the guards before the claim and the
+  try/catch around the work. Constructor gains `IExecutorSwitch` and `ISpendGuard`.
+- `TaskFlow.Api/Repositories/ITaskRepository.cs` + `TaskRepository.cs` — has `TryClaimNextAsync`,
+  `MarkForReviewAsync` (guarded `ExecuteUpdateAsync`). Add `ReleaseClaimAsync` (InProgress → Todo,
+  clear `ClaimedBy`) symmetrically.
+- `TaskFlow.Api/Services/TaskService.cs` + `ITaskService.cs` + `Controllers/TasksControllers.cs` — add
+  `ApproveAsync` and `POST api/Tasks/{id}/approve`. `TaskService` already has `IAgentNotifier` for the
+  `TaskMoved` broadcast (Sprint 5).
+- `TaskFlow.Api/Repositories/IAgentLogRepository.cs` — has `GetRecentAsync`, `GetTaskScopedSinceAsync`.
+  Add `CountByAgentActionSinceAsync(agentName, action, since)` for the spend guard.
+- `TaskFlow.Api/Agents/AgentConstants.cs` — add `RolledBack` (T6.3). Human approve does not need an
+  agent-log action.
+- `TaskFlow.Api/Services/IAgentNotifier.cs` — reuse `TaskMovedAsync` for the Done / Todo broadcasts.
+- `TaskFlow.Api/Program.cs` — DI block registers repositories/services/agents; `IAgentNotifier` is a
+  **singleton**. Add `IExecutorSwitch` (singleton) and `ISpendGuard` (scoped).
+- New: `IExecutorSwitch` + `ExecutorSwitch`, `ISpendGuard` + `DailyExecutorSpendGuard`, and an
+  `AgentsController` (or extend `AgentDiagnosticsController`) for the executor enable/disable/status.
+
+Frontend:
+
+- `TaskFlow.Web/src/api/tasks.ts` — `getTasks`, `updateTaskStatus`. Add `approveTask(id)`.
+- new `TaskFlow.Web/src/api/executor.ts` — `getExecutorState`, `enableExecutor`, `disableExecutor`.
+- `TaskFlow.Web/src/hooks/useBoardTasks.ts` — add `approve(id)` mirroring the optimistic `moveTask`.
+- `TaskFlow.Web/src/components/TaskCardView.tsx` — accept an optional `onApprove` and render an
+  "Approve" button when present; `TaskCard` threads it through; `KanbanColumn` passes it only for the
+  `Review` column.
+- `TaskFlow.Web/src/components/AgentStatus.tsx` — hardcodes two agents; add the executor with an
+  Enable/Pause toggle wired to `api/executor.ts`.
+
+### Backend
+
+**T6.1 — explicit human approval (`Review → Done`); agents can never reach `Done`.**
+
+- *Files:* `ITaskService`/`TaskService` add `ApproveAsync(int id, CancellationToken)`: load the task;
+  if status is not `Review` return `Result.Invalid` (only `Review → Done`); set `Done`; save; then
+  `await _notifier.TaskMovedAsync(id, WorkflowStatus.Done, ct)`; return the DTO. `TasksControllers`
+  add `[HttpPost("{id:int}/approve")] Approve(int id) => (await _tasks.ApproveAsync(id)).ToActionResult()`.
+- *RED:* `TaskServiceTests` — approve from `Review` → `Done` and broadcasts `TaskMovedAsync(id, Done)`;
+  approve from a non-`Review` status → `Invalid`, no broadcast, no save. Invariant test (extend the
+  executor tests): after a full cycle the task is `Review`, never `Done` — the executor has no path to
+  `Done`.
+- *Principle:* SRP — approval is its own service method with the `Review → Done` guard; the agent
+  invariant is test-pinned, not assumed.
+
+**T6.2 — spend cap around Claude usage.**
+
+- *Files:* new `ISpendGuard { Task<bool> CanRunAsync(CancellationToken ct); }`; new
+  `DailyExecutorSpendGuard` counting `AgentActions.Claimed` for `"GenericExecutor"` since UTC midnight
+  via a new `IAgentLogRepository.CountByAgentActionSinceAsync(agentName, action, since, ct)`, compared
+  to `Agents:DailyExecutorTaskCap` (default 25) — returns `false` at/over the cap. Executor: before the
+  claim, `if (!await _spendGuard.CanRunAsync(ct)) { log "daily cap reached"; return; }`. Register
+  `AddScoped<ISpendGuard, DailyExecutorSpendGuard>()`.
+- *RED:* executor test — inject `Mock<ISpendGuard>` returning `false`; assert nothing is claimed and
+  Claude is never called. Guard unit test (in-memory SQLite + `AgentLogRepository`) — seed N `Claimed`
+  logs today; cap N → `false`; cap N+1 → `true`.
+- *Principle:* DIP — the executor depends on `ISpendGuard`, not on how spend is measured; SRP — policy
+  in one class; the count-tasks-per-day proxy is swappable for token accounting later.
+
+**T6.3 — rollback on abnormal termination (exception or cancellation).**
+
+- *Files:* `ITaskRepository`/`TaskRepository` add `ReleaseClaimAsync(int taskId, CancellationToken)` —
+  guarded `ExecuteUpdateAsync` `WHERE Id = @id AND Status = InProgress` → set `Todo`, `ClaimedBy = null`,
+  `UpdatedAt`; returns `bool`. `AgentConstants` add `RolledBack`. Executor: wrap the work (record
+  `Claimed` through auto-finalize) in try/catch. On exception → `await _tasks.ReleaseClaimAsync(task.Id)`,
+  record a `RolledBack` log, `await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, ct)`, log the
+  error, and swallow (let the runner continue). Also: after the tool loop, `if
+  (cancellationToken.IsCancellationRequested)` roll back instead of auto-finalizing.
+- *RED:* repo test — `ReleaseClaimAsync` moves `InProgress → Todo` and clears `ClaimedBy`; no-ops
+  otherwise. Executor test — a Claude stub that throws (`StubClaude.ThatThrows()`); assert the task is
+  back in `Todo`, `ClaimedBy` is null, and a `RolledBack` log exists.
+- *Principle:* symmetric guarded transition (DRY with claim/review); completes the terminal-state
+  invariant across clean-end (Review, T4.4) and failure (Todo, T6.3).
+
+**T6.5 (BE) — executor kill switch, default OFF (finding F3).**
+
+- *Files:* new `IExecutorSwitch { bool IsEnabled { get; } void Enable(); void Disable(); }`; new
+  `ExecutorSwitch` (thread-safe, seeded from `Agents:ExecutorEnabled`, default `false`), registered
+  `AddSingleton<IExecutorSwitch, ExecutorSwitch>()`. Executor: first guard —
+  `if (!_switch.IsEnabled) { log "paused"; return; }`. New `AgentsController`:
+  `GET api/agents/executor` → `{ enabled }`, `POST api/agents/executor/enable`,
+  `POST api/agents/executor/disable`.
+- *RED:* executor test — switch disabled → nothing claimed, Claude never called. Switch unit test —
+  `Enable`/`Disable` flip `IsEnabled`. (Endpoint covered by an integration test if desired.)
+- *Principle:* SRP — one concern, one class; safe default OFF closes F3; runtime state (singleton) so
+  the toggle takes effect without a restart and the UI can drive it.
+
+### Frontend
+
+**T6.4 — approval control in the UI.**
+
+- *Files:* `api/tasks.ts` `approveTask(id)` → `POST /api/Tasks/{id}/approve`. `useBoardTasks` add
+  `approve(id)` mirroring the optimistic `moveTask` (optimistic `Done`, call `approveTask`, roll back on
+  failure). `TaskCardView` render an "Approve" button when given `onApprove`; `TaskCard` threads
+  `onApprove`; `KanbanColumn` passes it to its cards only when `status === 'Review'`; `KanbanBoard`
+  wires `approve` down to the `Review` column.
+- *RED:* RTL — a `Review` card shows "Approve"; clicking it calls the approve endpoint (MSW) and the
+  card lands in `Done`; a non-`Review` card shows no button.
+- *Principle:* presentational button in `TaskCardView` (SRP); the approve action lives in the hook like
+  `moveTask` (DRY).
+
+**T6.5 (FE) — executor enable/pause toggle.**
+
+- *Files:* new `api/executor.ts` (`getExecutorState`, `enableExecutor`, `disableExecutor`).
+  `AgentStatus.tsx` add the executor as a third agent card with an Enable/Pause toggle reading/writing
+  that API (seed state from `getExecutorState` on mount).
+- *RED:* RTL — the toggle shows the current state and calls enable/disable on click.
+- *Principle:* the UI drives the runtime switch; state comes from the server, not a guess.
+
+### Executor guard order (target `RunAsync`)
+
+```
+if (!_switch.IsEnabled)            -> log "paused"; return         (T6.5)
+if (!ClaudeConfigured)             -> log; return                  (existing)
+if (!await _spendGuard.CanRunAsync)-> log "daily cap"; return      (T6.2)
+task = await TryClaimNextAsync(); if (task is null) return
+try {
+    NotifyCycleStarted; record Claimed; broadcast InProgress
+    actions = await RunToolConversationAsync(...)
+    if (cancellationToken.IsCancellationRequested) { rollback -> Todo; return; }   (T6.3)
+    autoFinalize -> Review                                          (T4.4)
+    NotifyCycleCompleted
+}
+catch (Exception ex) {
+    await ReleaseClaimAsync(task.Id); record RolledBack; broadcast Todo; log ex   (T6.3)
+}
+```
+
+**Constructor-change note:** `GenericExecutorAgent` gains `IExecutorSwitch` and `ISpendGuard`. Its
+tests construct it directly, so update those constructions to pass an enabled switch and a permissive
+guard by default (e.g. `Mock` objects with `IsEnabled = true` and `CanRunAsync => true`); the guard-
+specific tests then override one of them. Consider a small test helper to build the executor with
+permissive defaults so the many existing call sites stay DRY.
+
+### Test strategy
+
+- Backend guards are tested at the agent's dependency seams (`Mock<IExecutorSwitch>`,
+  `Mock<ISpendGuard>`, `StubClaude.ThatThrows`), not through SignalR or the HTTP stack; the guarded
+  repository transitions get focused in-memory-SQLite tests; the approve service method is unit-tested.
+- Frontend runs offline against MSW + the signalr mock; the approve and toggle paths assert the API
+  calls.
+- Live check: turn the executor **on** from the UI, watch it claim/work/Review; approve a Review card
+  and see it reach Done; force an error (e.g. bad key) and see a card roll back to Todo.
+
+### Definition of done (Sprint 6)
+
+Agents cannot reach `Done` (test-pinned) and a human approve endpoint + button move `Review → Done`;
+the executor skips when the daily cap is hit; a thrown/cancelled cycle rolls the task back to `Todo`
+with a `RolledBack` log; the executor is OFF by default with a working UI toggle (F3 resolved);
+`dotnet test` and `npm run test` green.
 
 **PR body (target — we work to make it true):**
 
 ```markdown
 ## Sprint 6 — Guardrails
 
-Makes autonomous execution safe before it touches anything destructive.
+Makes autonomous execution safe before it runs unattended.
 
 ### What
-- Approval endpoint for `Review → Done` (human only); the agent path can never reach Done.
-- Spend cap around Claude calls.
-- Rollback: a failed executor step returns the task to Todo and logs.
-- Frontend approval control.
+- `ApproveAsync` + `POST /api/Tasks/{id}/approve` for `Review → Done` (human only); a test pins that
+  the agent path never reaches Done.
+- `ISpendGuard` (daily executor-task cap) — the executor skips when the cap is hit.
+- `ReleaseClaimAsync` + try/catch rollback: a thrown or cancelled cycle returns the task to Todo with a
+  `RolledBack` log (complements the T4.4 clean-end auto-finalize).
+- `IExecutorSwitch` (default OFF) + `api/agents/executor` endpoints and a UI toggle (resolves F3).
+- Frontend Approve button on Review cards.
 
 ### Tests
-- Agent-cannot-reach-Done test; spend-cap skip test; rollback test; RTL approval control.
+- Approve service tests; agent-never-Done invariant; spend-cap skip + guard unit; `ReleaseClaimAsync`
+  + executor rollback (`StubClaude.ThatThrows`); switch unit + executor-paused; RTL approve button and
+  executor toggle.
 - `dotnet test` and `npm run test` green.
 
 ### Type of change
@@ -1257,6 +1460,103 @@ Makes TaskFlow feel like one app: reachable ingestion, single-origin dev, a poli
 
 ---
 
+## Sprint 8 — Resilience (transient-error backoff)
+
+> **This section is a self-contained guide.** A new chat can execute it top to bottom. Follow the
+> standing rules at the top of this doc (TDD, DRY, SOLID; the AI writes code + tests, the user runs
+> `dotnet`/`git`).
+
+**Status: planned.**
+
+**Why this sprint exists (finding F6).** A live run hit `overloaded_error` (HTTP 529) from Anthropic:
+an `HttpRequestException` carrying `{"type":"overloaded_error","message":"Overloaded"}` propagated out
+of `ClaudeAgentBase.RunToolConversationAsync`. `AgentRunner` caught it and retried only after the full
+interval (30 min for the prioritizer), and for the executor the Sprint 6 rollback returned the task to
+`Todo`. Nothing was lost, but a one-second blip costs a full interval. Anthropic overloads (529) and
+rate limits (429) are transient and should be retried in place with backoff.
+
+**Goal.** A brief transient Claude failure is retried a few times over a few seconds before the cycle
+gives up. The retry lives in one place so all three agents benefit; the existing per-cycle fallbacks
+(executor rollback, prioritizer/stale skip) remain the last resort once retries are exhausted.
+
+### Architecture decisions
+
+1. **Decorate, don't modify.** Add `RetryingClaudeClient : IClaudeClient` that wraps the real
+   `ClaudeClient`, delegates `IsConfigured`, and retries `SendAsync` on transient errors. `ClaudeClient`
+   stays a thin SDK forwarder (SRP); resilience is added without touching it (OCP). DI registers the
+   concrete `ClaudeClient` and binds `IClaudeClient` to the decorator wrapping it (DIP). Agents are
+   unchanged — they still depend on `IClaudeClient`.
+2. **Transient = retryable.** Retry only `HttpRequestException` whose `StatusCode` is 429, 502, 503, or
+   529 (or whose message contains `overloaded`/`rate_limit` if the SDK does not surface a status).
+   Never retry a 4xx like 400/401 (a real error) or an `OperationCanceledException`.
+3. **Bounded + configurable.** `Anthropic:MaxRetries` (default 3) and `Anthropic:RetryBaseDelayMs`
+   (default 500). Delay = base × 2^attempt with a little jitter. (Honoring a `Retry-After` header is a
+   future nicety.)
+4. **Testable delay.** The backoff delay is injected as a `Func<int, TimeSpan>` (attempt → delay) with a
+   real default, so tests pass a zero-delay function and never actually sleep.
+
+### Grounded current state (seams you will touch)
+
+- `TaskFlow.Api/Services/IClaudeClient.cs` — `IsConfigured` + `SendAsync(MessageParameters, ct)`.
+- `TaskFlow.Api/Services/ClaudeClient.cs` — forwards to `AnthropicClient.Messages.GetClaudeMessageAsync`.
+  Unchanged by this sprint.
+- `TaskFlow.Api/Program.cs` — currently `AddScoped<IClaudeClient, ClaudeClient>()`. Change to register
+  the concrete `ClaudeClient` plus `IClaudeClient` → `RetryingClaudeClient` wrapping it.
+- `TaskFlow.Api/Agents/ClaudeAgentBase.cs` — calls `Claude.SendAsync`; benefits transparently, no change.
+
+### Task
+
+**T8.1 — `RetryingClaudeClient` decorator.**
+
+- *Files:* new `RetryingClaudeClient : IClaudeClient` — ctor `(IClaudeClient inner, IConfiguration config,
+  Func<int, TimeSpan>? delay = null)`; `IsConfigured => inner.IsConfigured`; a private
+  `static bool IsTransient(HttpRequestException ex)`; `SendAsync` loops up to `MaxRetries`, awaits the
+  inner, catches a transient `HttpRequestException`, delays `delay(attempt)`, and rethrows on the final
+  attempt or immediately for a non-transient error. `Program.cs` DI wiring (concrete `ClaudeClient` +
+  `IClaudeClient` → decorator).
+- *RED:* a controllable inner stub (throws a transient `HttpRequestException` N times, then returns a
+  response). Assert: retries and eventually succeeds (zero-delay); rethrows after exceeding `MaxRetries`;
+  does NOT retry a non-transient error (e.g. status 400) and rethrows immediately; does not retry an
+  `OperationCanceledException`.
+- *Principle:* OCP/DIP — resilience by decoration, `ClaudeClient` and every agent unchanged. SRP — the
+  retry policy is one class. DRY — one retry path serves all three agents.
+
+### Test strategy
+
+Unit-test the decorator against a small controllable inner `IClaudeClient` stub (counts calls; throws a
+transient or non-transient error, or returns a canned response) with a zero-delay function, so tests are
+instant and offline. `StubClaude` replays scripted responses; add a tiny throwing/counting stub for the
+retry tests rather than overloading `StubClaude`.
+
+### Definition of done (Sprint 8)
+
+Transient `429/502/503/529` errors from Claude are retried with backoff and succeed if the blip clears;
+non-transient errors and cancellations are not retried; `ClaudeClient` and the agents are unchanged;
+`dotnet test` green.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 8 — Resilience: transient-error backoff
+
+Transient Claude API errors (overloaded / rate-limit) are retried with backoff instead of failing the cycle.
+
+### What
+- `RetryingClaudeClient : IClaudeClient` decorator retries `SendAsync` on 429/502/503/529 with
+  exponential backoff + jitter, bounded by `Anthropic:MaxRetries` (default 3). Non-transient errors and
+  cancellation are not retried. `ClaudeClient` and the agents are unchanged; DI wraps the concrete client.
+
+### Tests
+- Decorator retries a transient failure and succeeds; gives up after MaxRetries; does not retry a 4xx or
+  a cancellation (zero-delay, no network).
+- `dotnet test` green.
+
+### Type of change
+- [x] Feature (backend, resilience) + tests
+```
+
+---
+
 # Product Owner — Sprint Backlog (assigned, test-first)
 
 Every task is **RED first**: the developer writes the failing test, we confirm red, then the
@@ -1346,21 +1646,26 @@ exercise. Nothing merges without its tests.
   a presentational `TaskCardView` (renders in the overlay) plus the sortable wrapper. Standalone
   `TaskCardView` render test. *SRP: presentation vs drag behavior.*
 
-**Sprint 6 — Guardrails (BE + FE)**
+**Sprint 6 — Guardrails (BE + FE)** — full guide in the Sprint 6 section above.
 
-- `T6.1` (BE) — approval endpoint for `Review → Done` (human only). RED: a test proving the agent
-  path can never reach `Done`, only the endpoint can.
-- `T6.2` (BE) — spend-cap policy around Claude calls. RED: test that the executor skips when the
-  cap is hit.
-- `T6.3` (BE) — rollback for *abnormal* termination: a work step that throws / a cancelled cycle
-  returns the task to `Todo` and logs (complements Sprint 4 `T4.4`, which handles the clean end where
-  the model finishes without requesting review by moving to Review). RED: force an exception mid-cycle,
-  assert the task is back in `Todo`, not stuck `InProgress`.
-- `T6.4` (FE) — approval control in the UI. RED: RTL test.
-- `T6.5` (BE + FE) — executor gating (resolves finding F3): an enable/pause switch so the executor
-  does not claim and move the human's cards unless automation is on (config `Agents:ExecutorEnabled`
-  and/or a runtime kill switch, tying into the approval / kill-switch open question). RED: test that a
-  disabled executor claims nothing.
+- `T6.1` (BE) — `ITaskService.ApproveAsync` (`Review → Done`, guarded) + `POST api/Tasks/{id}/approve`;
+  broadcasts `TaskMoved(Done)`. RED: approve from Review → Done + broadcast; approve from non-Review →
+  Invalid; a full executor cycle never yields `Done` (invariant). *SRP + test-pinned invariant.*
+- `T6.2` (BE) — `ISpendGuard` (`DailyExecutorSpendGuard` counts `Claimed` since UTC midnight via
+  `IAgentLogRepository.CountByAgentActionSinceAsync` vs `Agents:DailyExecutorTaskCap`); executor checks
+  it before claiming. RED: `Mock<ISpendGuard>` false → executor claims nothing / no Claude; guard unit
+  test at the cap. *DIP: executor depends on the policy, not the measurement.*
+- `T6.3` (BE) — `ITaskRepository.ReleaseClaimAsync` (`InProgress → Todo`, clear `ClaimedBy`) +
+  `AgentActions.RolledBack`; wrap the executor work in try/catch (exception → rollback; also roll back
+  on cancellation) — complements Sprint 4 `T4.4` (clean end → Review). RED: `ReleaseClaimAsync` repo
+  test; `StubClaude.ThatThrows` → task back in `Todo`, `ClaimedBy` null, `RolledBack` log.
+- `T6.4` (FE) — `approveTask` + `useBoardTasks.approve`; an "Approve" button on `Review` cards
+  (`TaskCardView`/`TaskCard`/`KanbanColumn`). RED: RTL — Review card approves to Done, others show no
+  button. *SRP: presentational button; approve action in the hook like `moveTask`.*
+- `T6.5` (BE + FE) — `IExecutorSwitch`/`ExecutorSwitch` (singleton, default OFF via
+  `Agents:ExecutorEnabled`) + `api/agents/executor` enable/disable/status + a UI toggle in
+  `AgentStatus`; executor's first guard is `IsEnabled` (resolves finding F3). RED: disabled executor
+  claims nothing; switch unit test; RTL toggle. *Safe default OFF; runtime state drives the UI.*
 
 **Sprint 7 — UX & Integration (FE)**
 
@@ -1371,6 +1676,14 @@ exercise. Nothing merges without its tests.
   `dev:all` `concurrently` script. Verified by running (config, not unit-tested).
 - `T7.3` — polish the login screen, preserving the `Email`/`Password` placeholders and button names
   the tests rely on. RED: a register/sign-in toggle RTL test if not already covered.
+
+**Sprint 8 — Resilience (BE)** — full guide in the Sprint 8 section above.
+
+- `T8.1` (BE) — `RetryingClaudeClient : IClaudeClient` decorator retrying transient Claude errors
+  (429/502/503/529 / overloaded / rate-limit) with exponential backoff (config `Anthropic:MaxRetries`
+  default 3, `Anthropic:RetryBaseDelayMs` default 500); DI wraps the concrete `ClaudeClient`. RED: an
+  inner stub throws a transient error N times then succeeds → retried; exceeds the cap → rethrows; a 4xx
+  or `OperationCanceledException` → not retried (zero-delay in tests). *OCP/DIP: decorate, don't modify.*
 
 ---
 

@@ -14,14 +14,31 @@ namespace TaskFlow.Tests.TestSupport;
 public sealed class StubClaude : IClaudeClient
 {
     private readonly Queue<MessageResponse> _responses;
+    private readonly bool _throws;
 
-    public StubClaude(params MessageResponse[] responses) =>
+    public StubClaude(params MessageResponse[] responses)
+    {
         _responses = new Queue<MessageResponse>(responses);
+        _throws = false;
+    }
+
+    private StubClaude(bool throws)
+    {
+        _responses = new Queue<MessageResponse>();
+        _throws = throws;
+    }
 
     public bool IsConfigured => true;
 
-    public Task<MessageResponse> SendAsync(MessageParameters parameters, CancellationToken ct = default) =>
-        Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : EndTurn());
+    public Task<MessageResponse> SendAsync(MessageParameters parameters, CancellationToken ct = default)
+    {
+        if (_throws)
+            throw new InvalidOperationException("Claude call failed (test).");
+        return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : EndTurn());
+    }
+
+    /// <summary>A client whose every call throws, to exercise the executor's rollback path.</summary>
+    public static StubClaude ThatThrows() => new(throws: true);
 
     /// <summary>Scripts one escalate_task tool call, then an end_turn.</summary>
     public static StubClaude ThatEscalates(int taskId, string reason) => new(

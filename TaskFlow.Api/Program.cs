@@ -118,6 +118,12 @@ builder.Services.AddScoped<IDraftCommitService, DraftCommitService>();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();
 
+// ── Guardrails (Sprint 6) ──────────────────────────────────────────────────────
+// Executor kill switch is a singleton so its runtime state is shared app-wide; the spend guard is
+// scoped because it reads the request-scoped log repository.
+builder.Services.AddSingleton<IExecutorSwitch, ExecutorSwitch>();
+builder.Services.AddScoped<ISpendGuard, DailyExecutorSpendGuard>();
+
 // ── Agent Infrastructure ──────────────────────────────────────────────────────
 // Register each agent as a scoped service implementing ITaskFlowAgent
 // The AgentRunner discovers these automatically via GetServices<ITaskFlowAgent>()

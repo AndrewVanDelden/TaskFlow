@@ -21,31 +21,63 @@ public class GenericExecutorAgentTests
             ["Anthropic:ApiKey"] = "test"
         }).Build();
 
-    [Fact]
-    public async Task Claims_a_todo_task_works_it_and_moves_it_to_Review()
+    private static IExecutorSwitch EnabledSwitch()
     {
-        using var db = new SqliteInMemoryContext();
+        var sw = new Mock<IExecutorSwitch>();
+        sw.SetupGet(s => s.IsEnabled).Returns(true);
+        return sw.Object;
+    }
+
+    private static ISpendGuard PermissiveSpendGuard()
+    {
+        var guard = new Mock<ISpendGuard>();
+        guard.Setup(g => g.CanRunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        return guard.Object;
+    }
+
+    // A real switch (enabled) so a test can assert the executor pauses itself.
+    private static ExecutorSwitch RealEnabledSwitch() =>
+        new(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Agents:ExecutorEnabled"] = "true" })
+            .Build());
+
+    // Builds the executor with enabled/permissive guards by default; a test overrides the one it exercises.
+    private static GenericExecutorAgent CreateSut(
+        IClaudeClient claude,
+        ITaskRepository tasks,
+        IAgentLogRepository logs,
+        IAgentNotifier notifier,
+        IExecutorSwitch? sw = null,
+        ISpendGuard? guard = null) =>
+        new(claude, tasks, sw ?? EnabledSwitch(), guard ?? PermissiveSpendGuard(),
+            logs, notifier, Config(), NullLogger<GenericExecutorAgent>.Instance);
+
+    private static async Task<TaskItem> SeedTodoTaskAsync(SqliteInMemoryContext db)
+    {
         await db.Context.Tasks.ExecuteDeleteAsync();      // start from a known-empty board
         var task = new TaskItem { Title = "Do the thing", Status = WorkflowStatus.Todo, Kind = TaskKind.Generic };
         db.Context.Tasks.Add(task);
         await db.Context.SaveChangesAsync();
+        return task;
+    }
 
+    [Fact]
+    public async Task Claims_a_todo_task_works_it_and_moves_it_to_Review()
+    {
+        using var db = new SqliteInMemoryContext();
+        var task = await SeedTodoTaskAsync(db);
         var tasks = new TaskRepository(db.Context);
         var logs = new AgentLogRepository(db.Context);
         var claude = StubClaude.ThatRecordsProgressThenRequestsReview(
             note: "Planned the work.", summary: "Completed the thing.");
-
-        // Constructor order: claude, tasks, logs, notifier, config, logger.
         var notifier = new Mock<IAgentNotifier>();
-        var sut = new GenericExecutorAgent(
-            claude, tasks, logs, notifier.Object, Config(), NullLogger<GenericExecutorAgent>.Instance);
 
+        var sut = CreateSut(claude, tasks, logs, notifier.Object);
         await sut.RunAsync(CancellationToken.None);
 
-        // ExecuteUpdate bypasses the tracker; clear it so the read reflects true DB state.
         db.Context.ChangeTracker.Clear();
         var updated = await tasks.GetByIdAsync(task.Id);
-        updated!.Status.Should().Be(WorkflowStatus.Review);
+        updated!.Status.Should().Be(WorkflowStatus.Review);   // guardrail: the executor never reaches Done
         updated.ClaimedBy.Should().Be("GenericExecutor");
 
         var recent = await logs.GetRecentAsync("GenericExecutor", 10);
@@ -53,7 +85,6 @@ public class GenericExecutorAgentTests
         recent.Should().Contain(l => l.Action == AgentActions.ProgressRecorded && l.TaskId == task.Id);
         recent.Should().Contain(l => l.Action == AgentActions.ReviewRequested && l.TaskId == task.Id);
 
-        // T5.1: the board is told about each transition, live.
         notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once);
         notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.Review, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
@@ -62,20 +93,13 @@ public class GenericExecutorAgentTests
     public async Task Auto_finalizes_to_Review_when_Claude_never_requests_review()
     {
         using var db = new SqliteInMemoryContext();
-        await db.Context.Tasks.ExecuteDeleteAsync();
-        var task = new TaskItem { Title = "Do the thing", Status = WorkflowStatus.Todo, Kind = TaskKind.Generic };
-        db.Context.Tasks.Add(task);
-        await db.Context.SaveChangesAsync();
-
+        var task = await SeedTodoTaskAsync(db);
         var tasks = new TaskRepository(db.Context);
         var logs = new AgentLogRepository(db.Context);
-        // Claude ends its turn with plain text and never calls request_review.
         var claude = StubClaude.ThatReturnsText("I thought about it but did not request review.");
-
         var notifier = new Mock<IAgentNotifier>();
-        var sut = new GenericExecutorAgent(
-            claude, tasks, logs, notifier.Object, Config(), NullLogger<GenericExecutorAgent>.Instance);
 
+        var sut = CreateSut(claude, tasks, logs, notifier.Object);
         await sut.RunAsync(CancellationToken.None);
 
         db.Context.ChangeTracker.Clear();
@@ -86,31 +110,110 @@ public class GenericExecutorAgentTests
         recent.Should().Contain(l => l.Action == AgentActions.AutoFinalized && l.TaskId == task.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.ReviewRequested && l.TaskId == task.Id);
 
-        // T5.1: claim and the auto-finalize both broadcast their transition.
         notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once);
         notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.Review, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Fact]
-    public async Task No_todo_task_skips_without_calling_Claude()
+    public async Task Pauses_itself_when_the_board_is_clear()
     {
         using var db = new SqliteInMemoryContext();
-        await db.Context.Tasks.ExecuteDeleteAsync();      // no Todo tasks at all
+        await db.Context.Tasks.ExecuteDeleteAsync();      // no open work anywhere
+
+        var claude = new Mock<IClaudeClient>();
+        claude.SetupGet(c => c.IsConfigured).Returns(true);
+        var sw = RealEnabledSwitch();
+
+        var sut = CreateSut(claude.Object, new TaskRepository(db.Context), new AgentLogRepository(db.Context),
+            Mock.Of<IAgentNotifier>(), sw: sw);
+        await sut.RunAsync(CancellationToken.None);
+
+        sw.IsEnabled.Should().BeFalse();   // paused itself: nothing To Do / In Progress / Review
+        claude.Verify(c => c.SendAsync(It.IsAny<MessageParameters>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Stays_enabled_when_open_work_remains_but_nothing_to_claim()
+    {
+        using var db = new SqliteInMemoryContext();
+        await db.Context.Tasks.ExecuteDeleteAsync();
+        db.Context.Tasks.Add(new TaskItem { Title = "Awaiting review", Status = WorkflowStatus.Review, Kind = TaskKind.Generic });
+        await db.Context.SaveChangesAsync();
+
+        var claude = new Mock<IClaudeClient>();
+        claude.SetupGet(c => c.IsConfigured).Returns(true);
+        var sw = RealEnabledSwitch();
+
+        var sut = CreateSut(claude.Object, new TaskRepository(db.Context), new AgentLogRepository(db.Context),
+            Mock.Of<IAgentNotifier>(), sw: sw);
+        await sut.RunAsync(CancellationToken.None);
+
+        sw.IsEnabled.Should().BeTrue();    // a Review task is still open, so it keeps running
+        claude.Verify(c => c.SendAsync(It.IsAny<MessageParameters>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Skips_without_claiming_when_the_executor_is_paused()
+    {
+        using var db = new SqliteInMemoryContext();
+        var task = await SeedTodoTaskAsync(db);
+        var tasks = new TaskRepository(db.Context);
 
         var claude = new Mock<IClaudeClient>();
         claude.SetupGet(c => c.IsConfigured).Returns(true);
 
-        var sut = new GenericExecutorAgent(
-            claude.Object,
-            new TaskRepository(db.Context),
-            new AgentLogRepository(db.Context),
-            Mock.Of<IAgentNotifier>(),
-            Config(),
-            NullLogger<GenericExecutorAgent>.Instance);
+        var pausedSwitch = new Mock<IExecutorSwitch>();
+        pausedSwitch.SetupGet(s => s.IsEnabled).Returns(false);
 
+        var sut = CreateSut(claude.Object, tasks, new AgentLogRepository(db.Context), Mock.Of<IAgentNotifier>(),
+            sw: pausedSwitch.Object);
         await sut.RunAsync(CancellationToken.None);
 
-        // Nothing to claim → the agent returns before ever calling Claude.
         claude.Verify(c => c.SendAsync(It.IsAny<MessageParameters>(), It.IsAny<CancellationToken>()), Times.Never);
+        db.Context.ChangeTracker.Clear();
+        (await tasks.GetByIdAsync(task.Id))!.Status.Should().Be(WorkflowStatus.Todo);   // untouched
+    }
+
+    [Fact]
+    public async Task Skips_without_claiming_when_over_the_daily_cap()
+    {
+        using var db = new SqliteInMemoryContext();
+        var task = await SeedTodoTaskAsync(db);
+        var tasks = new TaskRepository(db.Context);
+
+        var claude = new Mock<IClaudeClient>();
+        claude.SetupGet(c => c.IsConfigured).Returns(true);
+
+        var overBudget = new Mock<ISpendGuard>();
+        overBudget.Setup(g => g.CanRunAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        var sut = CreateSut(claude.Object, tasks, new AgentLogRepository(db.Context), Mock.Of<IAgentNotifier>(),
+            guard: overBudget.Object);
+        await sut.RunAsync(CancellationToken.None);
+
+        claude.Verify(c => c.SendAsync(It.IsAny<MessageParameters>(), It.IsAny<CancellationToken>()), Times.Never);
+        db.Context.ChangeTracker.Clear();
+        (await tasks.GetByIdAsync(task.Id))!.Status.Should().Be(WorkflowStatus.Todo);   // untouched
+    }
+
+    [Fact]
+    public async Task Rolls_the_task_back_to_Todo_when_the_cycle_throws()
+    {
+        using var db = new SqliteInMemoryContext();
+        var task = await SeedTodoTaskAsync(db);
+        var tasks = new TaskRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatThrows();
+
+        var sut = CreateSut(claude, tasks, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);   // must not throw; the executor rolls back
+
+        db.Context.ChangeTracker.Clear();
+        var updated = await tasks.GetByIdAsync(task.Id);
+        updated!.Status.Should().Be(WorkflowStatus.Todo);   // returned to the pool
+        updated.ClaimedBy.Should().BeNull();
+
+        var recent = await logs.GetRecentAsync("GenericExecutor", 10);
+        recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == task.Id);
     }
 }

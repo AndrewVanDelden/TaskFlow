@@ -37,6 +37,9 @@ public class TaskRepository : ITaskRepository
             .OrderBy(t => t.UpdatedAt)
             .ToListAsync(ct);
 
+    public Task<int> CountOpenAsync(CancellationToken ct = default) =>
+        _db.Tasks.CountAsync(t => t.Status != WorkflowStatus.Done, ct);
+
     public async Task<Dictionary<int, int>> GetOpenCountsByUserAsync(CancellationToken ct = default) =>
         await _db.Tasks
             .Where(t => t.Status != WorkflowStatus.Done && t.AssignedToId != null)
@@ -81,6 +84,19 @@ public class TaskRepository : ITaskRepository
             .Where(t => t.Id == taskId && t.Status == WorkflowStatus.InProgress)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.Status, WorkflowStatus.Review)
+                .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+
+        return moved == 1;
+    }
+
+    public async Task<bool> ReleaseClaimAsync(int taskId, CancellationToken ct = default)
+    {
+        // Guarded UPDATE (InProgress -> Todo, owner cleared). No-ops if the task already moved on.
+        var moved = await _db.Tasks
+            .Where(t => t.Id == taskId && t.Status == WorkflowStatus.InProgress)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, WorkflowStatus.Todo)
+                .SetProperty(t => t.ClaimedBy, (string?)null)
                 .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
 
         return moved == 1;

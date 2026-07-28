@@ -3,6 +3,7 @@ import { useAgentFeed } from '../hooks/useAgentFeed'
 import { KanbanBoard } from './KanbanBoard'
 import { AgentFeed } from '../components/AgentFeed'
 import { AgentStatus } from '../components/AgentStatus'
+import { ExecutorControl } from '../components/ExecutorControl'
 
 export function Dashboard() {
   const { userName, signOut } = useAuth()
@@ -26,16 +27,20 @@ export function Dashboard() {
         </div>
       </header>
 
-      <main className="p-6 grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6">
-        <section>
-          <h2 className="text-sm font-semibold text-slate-300 mb-3">Board</h2>
-          <KanbanBoard />
-        </section>
+      <main className="p-6">
+        <ExecutorControl />
 
-        <aside>
-          <AgentStatus logs={logs} cycles={cycles} />
-          <AgentFeed logs={logs} connected={connected} />
-        </aside>
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6">
+          <section>
+            <h2 className="text-sm font-semibold text-slate-300 mb-3">Board</h2>
+            <KanbanBoard />
+          </section>
+
+          <aside>
+            <AgentStatus logs={logs} cycles={cycles} />
+            <AgentFeed logs={logs} connected={connected} />
+          </aside>
+        </div>
       </main>
     </div>
   )

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { TaskItem, TaskStatus } from '../types'
-import { getTasks, updateTaskStatus } from '../api/tasks'
+import { getTasks, updateTaskStatus, approveTask } from '../api/tasks'
 import { HubEvents } from '../lib/hubEvents'
 import { useAgentHub } from '../lib/agentHub'
 
@@ -45,8 +45,14 @@ export function useBoardTasks() {
     return () => connection.off(HubEvents.TaskMoved, onMoved)
   }, [connection])
 
-  // Optimistic drag: change the UI immediately, roll back if the server rejects it.
-  const moveTask = async (id: number, newStatus: TaskStatus) => {
+  // One optimistic-update-with-rollback path, shared by drag-moves and approvals (DRY): change the
+  // UI immediately, persist, and roll back if the server rejects it.
+  const applyOptimistic = async (
+    id: number,
+    newStatus: TaskStatus,
+    persist: () => Promise<unknown>,
+    fallback: string,
+  ) => {
     const task = tasks.find((t) => t.id === id)
     if (!task || task.status === newStatus) return
 
@@ -54,12 +60,19 @@ export function useBoardTasks() {
     setTasks(tasks.map((t) => (t.id === id ? { ...t, status: newStatus } : t)))
 
     try {
-      await updateTaskStatus(id, newStatus)
+      await persist()
     } catch (err) {
       setTasks(previous)
-      setError(err instanceof Error ? err.message : 'Failed to move task.')
+      setError(err instanceof Error ? err.message : fallback)
     }
   }
 
-  return { tasks, error, moveTask }
+  const moveTask = (id: number, newStatus: TaskStatus) =>
+    applyOptimistic(id, newStatus, () => updateTaskStatus(id, newStatus), 'Failed to move task.')
+
+  // Human approval: Review -> Done through the dedicated approve endpoint.
+  const approve = (id: number) =>
+    applyOptimistic(id, 'Done', () => approveTask(id), 'Failed to approve task.')
+
+  return { tasks, error, moveTask, approve }
 }

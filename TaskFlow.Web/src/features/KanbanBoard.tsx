@@ -14,7 +14,7 @@ import { TaskCardView } from '../components/TaskCardView'
 import { BOARD_COLUMNS, resolveDropColumn } from '../lib/board'
 
 export function KanbanBoard() {
-  const { tasks, error, moveTask } = useBoardTasks()
+  const { tasks, error, moveTask, approve } = useBoardTasks()
   const [activeId, setActiveId] = useState<number | null>(null)
 
   // Require a small drag distance before starting, so clicks still work.
@@ -58,6 +58,8 @@ export function KanbanBoard() {
               status={col.status}
               label={col.label}
               tasks={tasks.filter((t) => t.status === col.status)}
+              // Approval is the Review-column affordance only.
+              onApprove={col.status === 'Review' ? approve : undefined}
             />
           ))}
         </div>
