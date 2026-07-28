@@ -36,8 +36,9 @@ public class GenericExecutorAgentTests
             note: "Planned the work.", summary: "Completed the thing.");
 
         // Constructor order: claude, tasks, logs, notifier, config, logger.
+        var notifier = new Mock<IAgentNotifier>();
         var sut = new GenericExecutorAgent(
-            claude, tasks, logs, Mock.Of<IAgentNotifier>(), Config(), NullLogger<GenericExecutorAgent>.Instance);
+            claude, tasks, logs, notifier.Object, Config(), NullLogger<GenericExecutorAgent>.Instance);
 
         await sut.RunAsync(CancellationToken.None);
 
@@ -51,6 +52,10 @@ public class GenericExecutorAgentTests
         recent.Should().Contain(l => l.Action == AgentActions.Claimed && l.TaskId == task.Id);
         recent.Should().Contain(l => l.Action == AgentActions.ProgressRecorded && l.TaskId == task.Id);
         recent.Should().Contain(l => l.Action == AgentActions.ReviewRequested && l.TaskId == task.Id);
+
+        // T5.1: the board is told about each transition, live.
+        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once);
+        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.Review, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Fact]
@@ -67,8 +72,9 @@ public class GenericExecutorAgentTests
         // Claude ends its turn with plain text and never calls request_review.
         var claude = StubClaude.ThatReturnsText("I thought about it but did not request review.");
 
+        var notifier = new Mock<IAgentNotifier>();
         var sut = new GenericExecutorAgent(
-            claude, tasks, logs, Mock.Of<IAgentNotifier>(), Config(), NullLogger<GenericExecutorAgent>.Instance);
+            claude, tasks, logs, notifier.Object, Config(), NullLogger<GenericExecutorAgent>.Instance);
 
         await sut.RunAsync(CancellationToken.None);
 
@@ -79,6 +85,10 @@ public class GenericExecutorAgentTests
         var recent = await logs.GetRecentAsync("GenericExecutor", 10);
         recent.Should().Contain(l => l.Action == AgentActions.AutoFinalized && l.TaskId == task.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.ReviewRequested && l.TaskId == task.Id);
+
+        // T5.1: claim and the auto-finalize both broadcast their transition.
+        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once);
+        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.Review, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Fact]

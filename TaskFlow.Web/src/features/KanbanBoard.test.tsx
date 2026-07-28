@@ -25,9 +25,10 @@ describe('KanbanBoard integration', () => {
       ),
     )
 
-    // KanbanBoard provides its own DndContext, so no wrapper is needed. This exercises the
-    // real flow: KanbanBoard -> getTasks (api/tasks) -> MSW -> KanbanColumn -> TaskCard.
-    render(<KanbanBoard refreshKey={0} />)
+    // KanbanBoard provides its own DndContext, so no wrapper is needed. With no AgentHubProvider
+    // the shared connection is null, so the board just does its initial load. This exercises the
+    // real flow: KanbanBoard -> useBoardTasks -> getTasks (api/tasks) -> MSW -> KanbanColumn -> TaskCard.
+    render(<KanbanBoard />)
 
     expect(await screen.findByText('Wire the dashboard')).toBeInTheDocument()
   })

@@ -13,11 +13,13 @@ public class TaskService : ITaskService
 {
     private readonly ITaskRepository _tasks;
     private readonly IUserRepository _users;
+    private readonly IAgentNotifier _notifier;
 
-    public TaskService(ITaskRepository tasks, IUserRepository users)
+    public TaskService(ITaskRepository tasks, IUserRepository users, IAgentNotifier notifier)
     {
         _tasks = tasks;
         _users = users;
+        _notifier = notifier;
     }
 
     public async Task<Result<TaskResponseDto>> CreateAsync(CreateTaskDto dto, CancellationToken ct = default)
@@ -76,6 +78,10 @@ public class TaskService : ITaskService
         task.UpdatedAt = DateTime.UtcNow;
 
         await _tasks.SaveChangesAsync(ct);
+
+        // Broadcast so every connected board updates this one card live (the same seam agents use).
+        await _notifier.TaskMovedAsync(id, dto.Status, ct);
+
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 

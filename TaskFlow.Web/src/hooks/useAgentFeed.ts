@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { HubConnectionBuilder, HubConnectionState, type HubConnection } from '@microsoft/signalr'
+import { useEffect, useState } from 'react'
 import type { AgentLog } from '../types'
-import { getToken, BASE_URL } from '../api/client'
 import { getAgentLogs } from '../api/agentLogs'
 import { HubEvents } from '../lib/hubEvents'
+import { useAgentHub } from '../lib/agentHub'
 
 export interface CycleEvent {
   agentName: string
@@ -11,48 +10,33 @@ export interface CycleEvent {
   at: string
 }
 
+// Consumes the app-wide connection from useAgentHub and subscribes to the agent events.
+// It no longer owns the connection (that moved to AgentHubProvider), so the board can share it.
 export function useAgentFeed(maxItems = 50) {
   const [logs, setLogs] = useState<AgentLog[]>([])
   const [cycles, setCycles] = useState<Record<string, CycleEvent>>({})
-  const [connected, setConnected] = useState(false)
-  const connectionRef = useRef<HubConnection | null>(null)
+  const { connection, connected } = useAgentHub()
 
+  // Seed with history so the feed is not empty on first load.
   useEffect(() => {
-    // Seed with history so the feed is not empty on first load.
     getAgentLogs(maxItems).then(setLogs).catch(() => {})
-
-    const connection = new HubConnectionBuilder()
-      .withUrl(`${BASE_URL}/hubs/agents`, {
-        accessTokenFactory: () => getToken() ?? '',
-      })
-      .withAutomaticReconnect()
-      .build()
-
-    connection.on(HubEvents.AgentAction, (log: AgentLog) => {
-      setLogs((prev) => [log, ...prev].slice(0, maxItems))
-    })
-
-    connection.on(HubEvents.AgentCycle, (evt: CycleEvent) => {
-      setCycles((prev) => ({ ...prev, [evt.agentName]: evt }))
-    })
-
-    connection.onreconnected(() => setConnected(true))
-    connection.onclose(() => setConnected(false))
-
-    connection
-      .start()
-      .then(() => setConnected(true))
-      .catch(() => setConnected(false))
-
-    connectionRef.current = connection
-
-    // Cleanup: React runs this when the component unmounts.
-    return () => {
-      if (connection.state !== HubConnectionState.Disconnected) {
-        connection.stop()
-      }
-    }
   }, [maxItems])
+
+  // Subscribe to live agent events on the shared connection.
+  useEffect(() => {
+    if (!connection) return
+
+    const onAction = (log: AgentLog) => setLogs((prev) => [log, ...prev].slice(0, maxItems))
+    const onCycle = (evt: CycleEvent) => setCycles((prev) => ({ ...prev, [evt.agentName]: evt }))
+
+    connection.on(HubEvents.AgentAction, onAction)
+    connection.on(HubEvents.AgentCycle, onCycle)
+
+    return () => {
+      connection.off(HubEvents.AgentAction, onAction)
+      connection.off(HubEvents.AgentCycle, onCycle)
+    }
+  }, [connection, maxItems])
 
   return { logs, cycles, connected }
 }
