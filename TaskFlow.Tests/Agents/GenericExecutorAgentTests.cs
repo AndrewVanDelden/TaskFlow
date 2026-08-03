@@ -216,4 +216,42 @@ public class GenericExecutorAgentTests
         var recent = await logs.GetRecentAsync("GenericExecutor", 10);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == task.Id);
     }
+
+    [Fact]
+    public async Task Includes_prior_rejection_reasons_in_the_prompt_it_sends_to_Claude()
+    {
+        using var db = new SqliteInMemoryContext();
+        var task = await SeedTodoTaskAsync(db);
+        var tasks = new TaskRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        db.Context.AgentLogs.Add(new AgentLog
+        {
+            AgentName = "Reviewer",
+            Action = AgentActions.Rejected,
+            TaskId = task.Id,
+            Details = "The haiku must mention frost.",
+            Success = false,
+            CreatedAt = DateTime.UtcNow
+        });
+        await db.Context.SaveChangesAsync();
+
+        string? prompt = null;
+        var claude = new Mock<IClaudeClient>();
+        claude.SetupGet(c => c.IsConfigured).Returns(true);
+        claude
+            .Setup(c => c.SendAsync(It.IsAny<MessageParameters>(), It.IsAny<CancellationToken>()))
+            .Callback<MessageParameters, CancellationToken>((p, _) =>
+                prompt ??= p.Messages[0].Content.OfType<TextContent>().FirstOrDefault()?.Text)
+            .ReturnsAsync(new MessageResponse
+            {
+                StopReason = "end_turn",
+                Content = new List<ContentBase> { new TextContent { Text = "ok" } }
+            });
+
+        var sut = CreateSut(claude.Object, tasks, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
+        prompt.Should().NotBeNull();
+        prompt!.Should().Contain("The haiku must mention frost."); // the rejection is folded into the prompt
+    }
 }
