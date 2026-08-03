@@ -48,3 +48,16 @@ Thumbs.db
 [Tt]est[Rr]esults/
 coverage/
 *.trx
+
+# ─────────────────────────────────────────────────────────────
+# Cloud sync artifacts (Google Drive, OneDrive, Dropbox)
+# Google Drive stages uploads in .tmp.driveupload — never commit it.
+# ─────────────────────────────────────────────────────────────
+.tmp.driveupload/
+.tmp.drivedownload/
+*.driveupload
+*.drivedownload
+desktop.ini
+Icon?
+.~lock.*
+~$*
