@@ -33,7 +33,7 @@ export function Dashboard() {
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6">
           <section>
             <h2 className="text-sm font-semibold text-slate-300 mb-3">Board</h2>
-            <KanbanBoard />
+            <KanbanBoard logs={logs} />
           </section>
 
           <aside>

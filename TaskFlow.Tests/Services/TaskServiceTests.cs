@@ -14,8 +14,9 @@ public class TaskServiceTests
     private readonly Mock<ITaskRepository> _tasks = new();
     private readonly Mock<IUserRepository> _users = new();
     private readonly Mock<IAgentNotifier> _notifier = new();
+    private readonly Mock<IAgentLogRepository> _logs = new();
 
-    private TaskService CreateSut() => new(_tasks.Object, _users.Object, _notifier.Object);
+    private TaskService CreateSut() => new(_tasks.Object, _users.Object, _notifier.Object, _logs.Object);
 
     private static TaskItem SampleTask(int id = 1) => new()
     {
@@ -177,6 +178,53 @@ public class TaskServiceTests
         SetupGetById(null);
 
         var result = await CreateSut().ApproveAsync(9);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
+    // ── Reject (Review -> Todo with a reason) ─────────────────────────────────
+    [Fact]
+    public async Task Reject_sends_a_Review_task_back_to_Todo_with_the_reason()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Review;
+        task.ClaimedBy = "GenericExecutor";
+        SetupGetById(task);
+
+        var result = await CreateSut().RejectAsync(1, "Needs a better haiku.");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Status.Should().Be(nameof(WorkflowStatus.Todo));
+        task.ClaimedBy.Should().BeNull();   // claim dropped so it can be re-picked
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _logs.Verify(l => l.AddAsync(
+            It.Is<AgentLog>(a => a.Action == "Rejected" && a.TaskId == 1 && a.Details == "Needs a better haiku."),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _notifier.Verify(n => n.TaskMovedAsync(1, WorkflowStatus.Todo, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Reject_rejects_a_task_that_is_not_in_Review()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Todo;
+        SetupGetById(task);
+
+        var result = await CreateSut().RejectAsync(1, "reason");
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Reject_returns_NotFound_when_task_missing()
+    {
+        SetupGetById(null);
+
+        var result = await CreateSut().RejectAsync(9, "reason");
 
         result.Status.Should().Be(ResultStatus.NotFound);
     }

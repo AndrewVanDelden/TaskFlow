@@ -8,9 +8,11 @@ interface Props {
   label: string
   tasks: TaskItem[]
   onApprove?: (id: number) => void
+  onReject?: (id: number, reason: string) => void
+  outputFor?: (id: number) => string[]
 }
 
-export function KanbanColumn({ status, label, tasks, onApprove }: Props) {
+export function KanbanColumn({ status, label, tasks, onApprove, onReject, outputFor }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: status })
 
   return (
@@ -35,7 +37,9 @@ export function KanbanColumn({ status, label, tasks, onApprove }: Props) {
           <TaskCard
             key={task.id}
             task={task}
+            output={outputFor?.(task.id)}
             onApprove={onApprove ? () => onApprove(task.id) : undefined}
+            onReject={onReject ? (reason) => onReject(task.id, reason) : undefined}
           />
         ))}
       </SortableContext>

@@ -8,7 +8,7 @@ const task: TaskItem = {
   id: 1,
   title: 'Ship it',
   description: 'now',
-  status: 'Todo',
+  status: 'Review',
   priority: 'High',
   dueDate: null,
   createdAt: '',
@@ -26,15 +26,32 @@ describe('TaskCardView', () => {
     expect(screen.getByText('Unassigned')).toBeInTheDocument()
   })
 
-  it('shows no Approve button by default', () => {
+  it('shows no review controls by default', () => {
     render(<TaskCardView task={task} />)
-    expect(screen.queryByRole('button', { name: /approve/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull()
   })
 
-  it('shows an Approve button that fires onApprove when provided', async () => {
+  it('shows the executor output when provided', () => {
+    render(<TaskCardView task={task} output={['Planned the work.', 'Crimson leaves drift down']} />)
+    expect(screen.getByText('Planned the work.')).toBeInTheDocument()
+    expect(screen.getByText('Crimson leaves drift down')).toBeInTheDocument()
+  })
+
+  it('approves, and gates reject on a typed reason', async () => {
     const onApprove = vi.fn()
-    render(<TaskCardView task={task} onApprove={onApprove} />)
-    await userEvent.click(screen.getByRole('button', { name: /approve/i }))
+    const onReject = vi.fn()
+    render(<TaskCardView task={task} onApprove={onApprove} onReject={onReject} />)
+
+    const reject = screen.getByRole('button', { name: 'Reject' })
+    expect(reject).toBeDisabled() // empty reason -> greyed out and unclickable
+
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect(onApprove).toHaveBeenCalledOnce()
+
+    await userEvent.type(screen.getByPlaceholderText(/reason/i), 'Needs work')
+    expect(reject).toBeEnabled()
+    await userEvent.click(reject)
+    expect(onReject).toHaveBeenCalledWith('Needs work')
   })
 })

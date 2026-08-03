@@ -16,3 +16,11 @@ export function updateTaskStatus(id: number, status: TaskStatus): Promise<TaskIt
 export function approveTask(id: number): Promise<TaskItem> {
   return request<TaskItem>(`/api/Tasks/${id}/approve`, { method: 'POST' })
 }
+
+// Human rejection: Review -> Todo with a required reason (rework).
+export function rejectTask(id: number, reason: string): Promise<TaskItem> {
+  return request<TaskItem>(`/api/Tasks/${id}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+}

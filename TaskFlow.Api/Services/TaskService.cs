@@ -1,3 +1,4 @@
+using TaskFlow.Api.Agents;
 using TaskFlow.Api.Common;
 using TaskFlow.Api.DTOs;
 using TaskFlow.Api.Models;
@@ -14,12 +15,14 @@ public class TaskService : ITaskService
     private readonly ITaskRepository _tasks;
     private readonly IUserRepository _users;
     private readonly IAgentNotifier _notifier;
+    private readonly IAgentLogRepository _logs;
 
-    public TaskService(ITaskRepository tasks, IUserRepository users, IAgentNotifier notifier)
+    public TaskService(ITaskRepository tasks, IUserRepository users, IAgentNotifier notifier, IAgentLogRepository logs)
     {
         _tasks = tasks;
         _users = users;
         _notifier = notifier;
+        _logs = logs;
     }
 
     public async Task<Result<TaskResponseDto>> CreateAsync(CreateTaskDto dto, CancellationToken ct = default)
@@ -101,6 +104,39 @@ public class TaskService : ITaskService
 
         await _tasks.SaveChangesAsync(ct);
         await _notifier.TaskMovedAsync(id, WorkflowStatus.Done, ct);
+
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
+    }
+
+    public async Task<Result<TaskResponseDto>> RejectAsync(int id, string reason, CancellationToken ct = default)
+    {
+        var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
+        if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (task.Status != WorkflowStatus.Review)
+            return Result<TaskResponseDto>.Invalid(
+                $"Task {id} is {task.Status}; only a task in Review can be rejected.");
+
+        // Send it back to the pool for rework and drop the executor's claim so it can be re-picked.
+        task.Status = WorkflowStatus.Todo;
+        task.ClaimedBy = null;
+        task.UpdatedAt = DateTime.UtcNow;
+        await _tasks.SaveChangesAsync(ct);
+
+        // Record the reviewer's reason so there is a trail in the activity feed.
+        await _logs.AddAsync(new AgentLog
+        {
+            AgentName = "Reviewer",
+            Action = AgentActions.Rejected,
+            TaskId = id,
+            Details = reason,
+            Success = false,
+            CreatedAt = DateTime.UtcNow
+        }, ct);
+        await _logs.SaveChangesAsync(ct);
+
+        await _notifier.TaskMovedAsync(id, WorkflowStatus.Todo, ct);
 
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }

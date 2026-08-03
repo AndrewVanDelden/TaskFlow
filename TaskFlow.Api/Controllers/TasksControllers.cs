@@ -39,6 +39,11 @@ public class TasksController : ControllerBase
     public async Task<IActionResult> Approve(int id) =>
         (await _tasks.ApproveAsync(id)).ToActionResult();
 
+    // Human rejection: Review -> Todo with a reason (rework).
+    [HttpPost("{id:int}/reject")]
+    public async Task<IActionResult> Reject(int id, [FromBody] RejectTaskDto dto) =>
+        (await _tasks.RejectAsync(id, dto.Reason)).ToActionResult();
+
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id) =>
         (await _tasks.DeleteAsync(id)).ToActionResult();

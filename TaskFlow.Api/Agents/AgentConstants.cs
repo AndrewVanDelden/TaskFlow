@@ -32,6 +32,9 @@ public static class AgentActions
     public const string ReviewRequested = "ReviewRequested";     // work done -> moved to Review
     public const string AutoFinalized = "AutoFinalized";         // cycle ended without review -> moved to Review
     public const string RolledBack = "RolledBack";               // cycle failed/cancelled -> returned to Todo
+
+    // Human review
+    public const string Rejected = "Rejected";                   // reviewer sent a Review task back to Todo
 }
 
 /// <summary>Canonical agent names. Each must match the agent's <c>Name</c> property.</summary>

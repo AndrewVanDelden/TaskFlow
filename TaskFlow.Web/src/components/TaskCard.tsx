@@ -4,7 +4,17 @@ import type { TaskItem } from '../types'
 import { TaskCardView } from './TaskCardView'
 
 // Sortable wrapper: owns the drag behavior and delegates the visuals to TaskCardView.
-export function TaskCard({ task, onApprove }: { task: TaskItem; onApprove?: () => void }) {
+export function TaskCard({
+  task,
+  output,
+  onApprove,
+  onReject,
+}: {
+  task: TaskItem
+  output?: string[]
+  onApprove?: () => void
+  onReject?: (reason: string) => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id })
 
@@ -17,7 +27,7 @@ export function TaskCard({ task, onApprove }: { task: TaskItem; onApprove?: () =
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="mb-2">
-      <TaskCardView task={task} onApprove={onApprove} />
+      <TaskCardView task={task} output={output} onApprove={onApprove} onReject={onReject} />
     </div>
   )
 }
