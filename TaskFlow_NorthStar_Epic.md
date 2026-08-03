@@ -1333,6 +1333,53 @@ Makes autonomous execution safe before it runs unattended.
 - [x] Feature (backend + frontend) + tests
 ```
 
+### Post-Sprint-6 — status, review-UX additions, and operational changes
+
+**Status.** Sprint 6 complete and green, including the review-UX additions below: 76 `dotnet test`
+and 30 `npm test` (17 files) passing.
+
+**Human review UX (extends the Sprint 6 approval flow).**
+
+- **Reject.** `ITaskService.RejectAsync` + `POST /api/Tasks/{id}/reject`: guarded `Review → Todo`,
+  clears `ClaimedBy` for rework, records the reviewer's reason as an `AgentActions.Rejected` log, and
+  broadcasts `TaskMoved(Todo)`. Frontend: `rejectTask`, `useBoardTasks.reject` (reuses the shared
+  optimistic path), and a red **Reject** button gated on a required reason text box — the
+  `ReviewActions` component owns the reason state; `TaskCardView` stays presentational.
+- **Executor output on the card.** `taskOutput(logs, taskId)` (pure helper in `lib/board.ts`) gathers
+  a task's `ProgressRecorded` / `ReviewRequested` / `AutoFinalized` log details oldest-first; the Review
+  card shows them in an "Executor output" box so the result is visible without hunting the feed. `logs`
+  are threaded Dashboard → KanbanBoard → the Review column (no board refetch, so F2 stays fixed). The
+  box is scoped to the current cycle (output at/after the most recent `Claimed`), so earlier runs and a
+  reused seed id do not pile up.
+- **Rejections feed back into rework.** The executor folds a task's outstanding `Rejected` reasons into
+  its prompt (`ExecutorPrompt.Build` + `IAgentLogRepository.GetByTaskAndActionAsync`), oldest-first, so
+  the feedback is not lost across reworks; multiple rejections accumulate as `Rejected` logs until the
+  task is approved. Prompt building was extracted into the pure, testable `ExecutorPrompt` (SRP).
+
+**Operational changes.**
+
+- **Seed swapped to executor-completable demo tasks** (migration `ReplaceSeedWithTrivialTasks`): the
+  five engineering seed tasks were replaced with trivial, self-contained ones (haiku, paperclip uses,
+  robot name, one-sentence description, number-7 fact), all in `Todo`, so the executor can genuinely
+  finish them Todo → Review and a human can approve to Done.
+- **Executor cadence 1 minute in dev** (`appsettings.Development.json`, `Agents:ExecutorIntervalMinutes = 1`).
+- **Auto-pause when the board is clear** (recorded in decision #4 above).
+- **ExecutorControl** moved full-width above the board and tinted faded green when enabled / faded red
+  when paused.
+- **Single-origin dev (Sprint 7 `T7.2`, pulled forward):** Vite now proxies `/api` and `/hubs` to the
+  API on `:5002`, `client.ts` `BASE_URL` defaults to `''` (same-origin), and a `dev:all` script
+  (`concurrently`) starts both. The whole app is one URL — `http://localhost:5173` — startable with one
+  command; the old `VITE_API_BASE_URL=:5002` override in `.env.local` was commented out. Routing/nav
+  (`T7.1`) and login polish (`T7.3`) remain.
+
+**Where we are / building towards.** Epic 2 (generic, document-driven autonomous execution) is
+essentially built across Sprints 1-6: ingest → drafts → board tasks → an executor that claims, works,
+and hands to a gated human review, all live and guardrailed. Remaining planned work: **Sprint 7**
+(UX & integration — routing, single-origin dev, login polish) and **Sprint 8** (resilience — retry
+transient Claude errors). The north star beyond that is **Epic 3**, the resume / cover-letter builder,
+layered on the same pipeline via a new ingestion parser plus a domain executor, with no change to the
+core seams.
+
 ---
 
 ## Sprint 7 — UX & Integration (make it one usable app)
