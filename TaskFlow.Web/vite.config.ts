@@ -20,5 +20,12 @@ export default defineConfig({
     environment: 'jsdom',               // fake browser DOM so components render in Node
     setupFiles: './src/test/setup.ts',  // runs once before each test file
     css: true,                          // process CSS imports instead of erroring on them
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.{ts,tsx}'],
+      // Exclude tests, the entry point, test scaffolding, and type-only files from the denominator.
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/main.tsx', 'src/test/**', 'src/**/*.d.ts'],
+    },
   },
 })

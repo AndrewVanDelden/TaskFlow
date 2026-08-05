@@ -48,6 +48,7 @@ Thumbs.db
 [Tt]est[Rr]esults/
 coverage/
 *.trx
+test-results.txt
 
 # ─────────────────────────────────────────────────────────────
 # Cloud sync artifacts (Google Drive, OneDrive, Dropbox)

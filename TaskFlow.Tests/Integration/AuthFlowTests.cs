@@ -11,7 +11,8 @@ namespace TaskFlow.Tests.Integration;
 /// JSON, the Result -> status mapping) and talk to it over HttpClient. One shared factory (and
 /// one throwaway DB) is reused across the class via IClassFixture.
 /// </summary>
-public class AuthFlowTests : IClassFixture<TestWebAppFactory>
+[Collection("Integration")]
+public class AuthFlowTests
 {
     private readonly TestWebAppFactory _factory;
     public AuthFlowTests(TestWebAppFactory factory) => _factory = factory;

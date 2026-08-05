@@ -1370,7 +1370,24 @@ and 30 `npm test` (17 files) passing.
   API on `:5002`, `client.ts` `BASE_URL` defaults to `''` (same-origin), and a `dev:all` script
   (`concurrently`) starts both. The whole app is one URL — `http://localhost:5173` — startable with one
   command; the old `VITE_API_BASE_URL=:5002` override in `.env.local` was commented out. Routing/nav
-  (`T7.1`) and login polish (`T7.3`) remain.
+  (`T7.1`, done: react-router, `/board` `/ingest` `/login`, `NavBar`, `ProtectedLayout`) and login
+  polish (`T7.3`, done) shipped. **Sprint 7 complete.**
+- **Single front door (T7.3 re-scope decision).** The real disjointedness was that `dotnet run`
+  auto-launched Swagger, making it look like the entry point when the web app at `:5173` is already
+  self-sufficient (its own login hits `/api/Auth/*` through the proxy and stores the JWT — Swagger is
+  never needed to use the app). Fix: `launchSettings.json` `launchBrowser: false` (Swagger stays opt-in
+  at `/swagger`), and `dev:all` runs `vite --open` so one command opens the app at `:5173`. The login
+  screen was polished (card, brand, focus states, friendlier error) while preserving the `Email`/`Password`
+  placeholders and `Sign in`/`Create account` button names the tests rely on; a register/sign-in toggle
+  RTL test was added. **Deferred (own sprint): true single-origin build where the API serves the built
+  SPA (one URL / one deploy in prod, Vite still for dev HMR).**
+- **Test-coverage hardening.** Added HTTP integration tests (`TaskWorkflowIntegrationTests`, sharing an
+  `Integration` xUnit collection with `AuthFlowTests` so they run sequentially and don't race on the
+  factory's global env vars) covering approve / reject / executor toggle / ingest→commit through the
+  real routing + auth + Result-to-status stack. Coverage tooling wired up: backend
+  `dotnet test /p:CollectCoverage=true` (coverlet.msbuild console summary), frontend `npm run coverage`
+  (`@vitest/coverage-v8`, text + html reporters). `.\test` (test.cmd) at the repo root runs both suites
+  with coverage into `test-results.txt` (git-ignored) in one command; `.\run` (run.cmd) starts the app.
 
 **Where we are / building towards.** Epic 2 (generic, document-driven autonomous execution) is
 essentially built across Sprints 1-6: ingest → drafts → board tasks → an executor that claims, works,
