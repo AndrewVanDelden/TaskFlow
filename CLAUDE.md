@@ -90,11 +90,14 @@
   `index.html` `<title>` and `package.json` `"name"` (npm names must be lowercase). The web
   source recovery point after the reset is commit `6ca203d`.
 - **Source of truth is the active working document.** `TaskFlow_Refactor_Architecture_and_TDD.md`
-  is COMPLETE (Slices A–L shipped, 39 backend + 14 frontend tests green) and is now the historical
-  record. Ongoing work lives in **`TaskFlow_NorthStar_Epic.md`** (the North Star epic, Sprints 1–8).
-  On any new chat, read the active epic doc first; do not re-derive context from chat history and
-  do not use a "RESUME HERE" block. Record every bug fix and decision back into the active doc so
-  the chat stays disposable.
+  is COMPLETE (Slices A–L shipped, 39 backend + 14 frontend tests green) and is now historical.
+  `TaskFlow_NorthStar_Epic.md` (Epic 2, Sprints 1–7 shipped) is also now historical — **Sprint 8
+  (Claude retry/resilience) was deliberately deferred indefinitely (2026-08-06)** and was never
+  built; do not assume it exists. Ongoing work now lives in **`TaskFlow_Epic3_ResumeBuilder.md`**
+  (Epic 3: resume + cover-letter builder, Sprints 0, 1, 2, 3R, 4R, 5, 6 — all seven sprint docs are
+  in hand as of 2026-08-06). On any new chat, read the active epic doc
+  first; do not re-derive context from chat history and do not use a "RESUME HERE" block. Record
+  every bug fix and decision back into the active doc so the chat stays disposable.
 - **Do not edit the user's source files unless asked.** The user is learning; tell them what
   to change and where, and let them apply it. Always keep the guide doc updated yourself.
   Edit source directly only on explicit request, and do not overstep a "where does this go?"
