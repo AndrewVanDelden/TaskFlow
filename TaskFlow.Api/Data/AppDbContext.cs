@@ -33,6 +33,9 @@ public class AppDbContext : DbContext
             entity.Property(t => t.Priority)
                   .HasConversion<string>();
 
+            entity.Property(t => t.Kind)
+                  .HasConversion<string>();
+
             // Relationship: Task -> User (optional assignment)
             entity.HasOne(t => t.AssignedTo)
                   .WithMany(u => u.Tasks)
@@ -68,65 +71,67 @@ public class AppDbContext : DbContext
 
         // Seed tasks spread across all statuses and priorities
         modelBuilder.Entity<TaskItem>().HasData(
+            // Trivial, self-contained demo tasks the executor can actually finish: it reasons,
+            // records progress, and requests review, then a human approves each to Done.
             new TaskItem
             {
                 Id = 1,
-                Title = "Set up CI/CD pipeline",
-                Description = "Configure GitHub Actions to run tests and deploy to Azure on push to main.",
+                Title = "Write a haiku about autumn",
+                Description = "Compose a three-line haiku (5-7-5 syllables) about the fall season.",
                 Status = Models.WorkflowStatus.Todo,
-                Priority = TaskPriority.High,
-                DueDate = new DateTime(2026, 5, 20, 0, 0, 0, DateTimeKind.Utc),
-                AssignedToId = 1,
-                CreatedAt = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc),
-                UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc)
+                Priority = TaskPriority.Low,
+                DueDate = null,
+                AssignedToId = null,
+                CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc),
+                UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc)
             },
             new TaskItem
             {
                 Id = 2,
-                Title = "Design database schema",
-                Description = "Finalize the entity relationships and run migrations.",
-                Status = Models.WorkflowStatus.Done,
-                Priority = TaskPriority.High,
-                DueDate = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc),
-                AssignedToId = 1,
-                CreatedAt = new DateTime(2026, 5, 13, 0, 0, 0, DateTimeKind.Utc),
-                UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc)
+                Title = "List three uses for a paperclip",
+                Description = "Give three short, creative uses for a paperclip.",
+                Status = Models.WorkflowStatus.Todo,
+                Priority = TaskPriority.Low,
+                DueDate = null,
+                AssignedToId = null,
+                CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc),
+                UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc)
             },
             new TaskItem
             {
                 Id = 3,
-                Title = "Write API integration tests",
-                Description = "Cover CRUD endpoints and auth flows with xUnit.",
-                Status = Models.WorkflowStatus.InProgress,
-                Priority = TaskPriority.Medium,
-                DueDate = new DateTime(2026, 5, 18, 0, 0, 0, DateTimeKind.Utc),
-                AssignedToId = 2,
-                CreatedAt = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc),
-                UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc)
+                Title = "Name a friendly robot",
+                Description = "Suggest one name for a friendly helper robot, with a one-line reason.",
+                Status = Models.WorkflowStatus.Todo,
+                Priority = TaskPriority.Low,
+                DueDate = null,
+                AssignedToId = null,
+                CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc),
+                UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc)
             },
             new TaskItem
             {
                 Id = 4,
-                Title = "Build Kanban board UI",
-                Description = "React drag-and-drop board with columns for each workflow state.",
+                Title = "Describe a to-do app in one sentence",
+                Description = "Write a single clear sentence explaining what a to-do app does.",
                 Status = Models.WorkflowStatus.Todo,
-                Priority = TaskPriority.Medium,
-                DueDate = new DateTime(2026, 5, 21, 0, 0, 0, DateTimeKind.Utc),
+                Priority = TaskPriority.Low,
+                DueDate = null,
                 AssignedToId = null,
-                CreatedAt = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc),
-                UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc)
+                CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc),
+                UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc)
             },
             new TaskItem
             {
                 Id = 5,
-                Title = "Add JWT authentication",
-                Description = "Register and login endpoints, protect all task routes.",
-                Status = Models.WorkflowStatus.Review,
-                Priority = TaskPriority.High,
-                DueDate = new DateTime(2026, 5, 17, 0, 0, 0, DateTimeKind.Utc),
-                AssignedToId = 1,
-                CreatedAt = new DateTime(2026, 5, 13, 0, 0, 0, DateTimeKind.Utc),
-                UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, DateTimeKind.Utc)
+                Title = "Share a fun fact about the number 7",
+                Description = "Provide one interesting fact about the number seven.",
+                Status = Models.WorkflowStatus.Todo,
+                Priority = TaskPriority.Low,
+                DueDate = null,
+                AssignedToId = null,
+                CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc),
+                UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, DateTimeKind.Utc)
             }
         );
     }

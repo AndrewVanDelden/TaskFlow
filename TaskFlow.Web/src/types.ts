@@ -33,3 +33,12 @@ export interface AgentLog {
   success: boolean
   createdAt: string
 }
+
+// A proposed task returned by ingestion, before it is persisted to the board.
+// Mirrors TaskFlow.Api/Ingestion/TaskDraft.cs (kind serializes as a string).
+export interface TaskDraft {
+  title: string
+  description: string | null
+  kind: string
+  section: string
+}

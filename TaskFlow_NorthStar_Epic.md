@@ -14,6 +14,31 @@ the house down. We add rooms while people are still living in it.
 
 ---
 
+# Epic Roadmap and the Extensibility Bet
+
+This is **Epic 2**. The sequence:
+
+- **Epic 1 — Architecture & TDD refactor.** Complete. The layered, tested foundation.
+- **Epic 2 — Generic document-driven execution (this doc).** Build the ingestion and executor
+  framework *generically*, so a new idea is a plug-in, not a rewrite.
+- **Epic 3 — Resume & cover-letter builder (planned, not started).** The first concrete
+  application: a job posting is the "document," and the executor writes a tailored resume and
+  cover letter. It will be added as a new ingestion parser plus a new executor agent type on top
+  of Epic 2's generic core, with no change to the board, repositories, or transport.
+
+**The extensibility bet (the whole point of Epic 2):** every future idea reduces to two
+pluggable pieces on top of the shared platform:
+
+1. an **ingestion parser** that turns some input into task drafts, and
+2. an **executor agent type** (a `ClaudeAgentBase` subclass) that does the work.
+
+The Kanban board, repositories, the `IClaudeClient` seam, the live SignalR feed, and the
+guardrails are shared and generic. Build Epic 2 so those never need to change when a new
+application is added. If a new idea forces a change to that shared core, that is a design smell
+to fix, not a change to accept.
+
+---
+
 # Rules to follow for AI who are reading this
 
 - **TDD is how we build everything.** Red (failing test) → green (simplest code) → refactor.
@@ -47,6 +72,16 @@ the house down. We add rooms while people are still living in it.
 - **Never hand over anything you claim works but have not tested.** Test it, or state plainly it
   is untested and why.
 - **Hold the whole map.** Read the whole document before advising so guidance fits overall scope.
+- **Do not invent scope, and never slip unspecified work into a "next step."** If something is
+  missing and should be added, say so explicitly and record it in the doc as a labeled decision
+  before acting. (Violated: dropped "thread a source name into provenance" as if it were task
+  `T1.3`, which it was not.)
+- **Refer to a task by exactly what the doc says it is.** Do not silently relabel or re-scope a
+  numbered task in passing. (Violated: called `T1.3` "thread a source name" when `T1.3` was
+  "stamp kind + provenance," already satisfied.)
+- **Own the decisions that are yours; do not punt "your call" on an architect/developer choice.**
+  Decide, record it in the doc, and commit. Reserve "your call" for genuine product decisions.
+  (Violated: flagged the provenance gap, then deferred where it goes back to the user.)
 
 **Naming conventions (carried forward):** domain types never reuse a .NET BCL name (the old
 `TaskStatus` collided with `System.Threading.Tasks.TaskStatus`, hence `WorkflowStatus`); result
@@ -122,6 +157,102 @@ not to reach around it.
 
 ---
 
+# Architecture — the 10,000ft View (the design to build toward)
+
+Epic 2 adds exactly two new capabilities to the existing layered app: turning input into task
+drafts (**ingestion**) and working tasks off the board (**execution**). Both are built as
+generic, pluggable seams so Epic 3 and anything after is a plug-in, not a rewrite.
+
+## The one new idea: tasks have a *kind*, and executors self-select by kind
+
+Today every task is generic. To let different agents do different work on the same board,
+`TaskItem` gains a **`TaskKind`** discriminator (`Generic` now, `ResumeTailoring` later).
+Ingestion stamps a kind on every draft; each executor declares the one kind it works. The
+`AgentRunner` already discovers every agent, so adding an executor for a new kind is just
+registering a new agent. That single discriminator is what makes the platform extensible:
+
+> **A new application = a new parser that emits a new kind + a new executor that claims that
+> kind.** The board, repositories, transport, and guardrails never change.
+
+```mermaid
+flowchart TB
+    subgraph Ingestion [Ingestion - pluggable per idea]
+        IN["Raw input<br/>(spec doc; later a job posting)"]
+        PARSER["IIngestionParser<br/>(one per input type)"]
+        DRAFTS["TaskDraft[]<br/>(title, kind, provenance)"]
+    end
+    subgraph Core [Shared core - never changes per idea]
+        PREVIEW["Preview + approve<br/>(human checkpoint)"]
+        REPO["ITaskRepository.AddAsync"]
+        BOARD[("Tasks table + Kanban<br/>TaskKind discriminator")]
+    end
+    subgraph Execution [Execution - pluggable per idea]
+        CLAIM["TryClaimNextAsync(kind)"]
+        EXEC["Executor agent : ClaudeAgentBase<br/>(one per kind)"]
+        CLAUDE["IClaudeClient"]
+    end
+    GATE["Approval gate<br/>Review to Done = human only"]
+    FEED["SignalR feed to React board"]
+
+    IN --> PARSER --> DRAFTS --> PREVIEW --> REPO --> BOARD
+    BOARD --> CLAIM --> EXEC
+    EXEC -. reason .-> CLAUDE
+    EXEC -->|move to Review| BOARD
+    BOARD --> GATE
+    BOARD -. live .-> FEED
+```
+
+## New building blocks (all generic)
+
+- **`TaskDraft`** — a proposed task (title, description, priority, `TaskKind`, provenance).
+  Ingestion output; not yet persisted.
+- **`IIngestionParser`** — returns `Result<IReadOnlyList<TaskDraft>>` from raw content. Two
+  implementations sit behind the seam: the free deterministic `SpecDocumentParser` (rules) and the
+  paid `ClaudeIngestionParser` (agent, `IClaudeClient`, `StubClaude`-tested). A
+  `TieredIngestionParser` composes them **free-first**: run the rules parser, and escalate to
+  Claude only when it returns zero drafts (unstructured content rules cannot handle). Free when it
+  reaches the outcome, agent when it must, still works with no Claude key.
+- **Source-agnostic input** — file, paste, and link are acquisition adapters that all reduce to
+  content plus a source name; the parser never knows where the content came from. Paste and
+  file-to-text first; the link adapter fetches server-side (with the usual fetch caveats) as a
+  follow-up.
+- **Provenance** — every agent-created task records where it came from. `Section` (the source
+  heading) is captured on the draft at ingestion (Sprint 1). The **source-document id** is stamped
+  when a draft is persisted as a board task (Sprint 3), completing provenance = source id +
+  section. The nullable provenance fields on `TaskItem` and their migration land in Sprint 3, not
+  earlier.
+- **Atomic claiming** — `ITaskRepository.TryClaimNextAsync(kind, agentName)` moves the next
+  unclaimed `Todo` task of a kind to `InProgress` with an owner stamp, guarded so two agents never
+  grab the same card. Concurrency stays in the repository (its single responsibility).
+- **Executor agents** — each a `ClaudeAgentBase` subclass for one `TaskKind`: claim, work via
+  Claude tools, move to `Review` (never straight to `Done`). Epic 2's generic executor does a
+  minimal real step (ask Claude to draft a plan/result for the task and record it) so the whole
+  pipeline runs end-to-end before any domain work exists.
+- **Guardrails** — the approval gate (`Review → Done` is a human action, never the agent), a
+  spend cap around Claude calls, rollback (a failed step returns the task to `Todo` and logs,
+  never leaves it stuck `InProgress`), and the existing per-cycle tool-loop cap.
+
+## Dependency direction (unchanged from Epic 1)
+
+React board → api → hooks; controllers → services → repositories → EF; executors → repositories
++ `IClaudeClient`; live updates → SignalR. Every arrow already exists. Ingestion is a new
+service; executors are new agents. Nothing new at the data or transport layer.
+
+## Decisions this design makes (confirm before Sprint 1)
+
+1. **`TaskKind` discriminator on `TaskItem`** is the extensibility mechanism (enum + migration).
+2. **Claiming = an atomic `Todo → InProgress` transition** via a guarded repository method, not an
+   app-level lock.
+3. **Executors always stop at `Review`;** only a human moves `Review → Done`. The approval gate is
+   in from the start and hardened in Sprint 6.
+4. **Epic 2's generic executor does a trivial real step** so the pipeline is demonstrable
+   end-to-end; Epic 3 registers the first domain executor.
+5. **Left open (product calls, decided when we reach them):** parsing granularity and
+   rules-vs-Claude (Sprint 1); whether a `Blocked`/`Failed` column is worth adding for rollback
+   visibility (Sprint 6).
+
+---
+
 # The TDD Loop and Git Workflow (per sprint)
 
 The loop is identical to the refactor:
@@ -151,6 +282,8 @@ The old refactor mapped this destination as future slices M–R. Renumbered fres
 | **4** | Executor agent: claims a To Do task, plans sub-steps, works it | `IClaudeClient` + `ClaudeAgentBase` |
 | **5** | Board transitions driven by the executor, streamed live | Repositories + SignalR |
 | **6** | Guardrails: human approval gates, cost caps, rollback on failure | All of the above |
+| **7** | UX & Integration: reachable ingestion, single-origin dev, polished login | Frontend layers + router |
+| **8** | Resilience: retry transient Claude errors (overloaded/rate-limit) with backoff | `IClaudeClient` decorator |
 
 Each sprint is specified in full, small and test-first, when we reach it. The stubs below fix
 the destination and the seams; they are not yet the RED/GREEN code.
@@ -171,24 +304,277 @@ parsing rule (see open questions) is the unit under test, so it must be determin
 Claude-assisted parse is chosen, put it behind the `IClaudeClient` seam so the test uses
 `StubClaude`.
 
-**Design points to settle here:** granularity of parsing (one task per heading vs per checklist
-item vs Claude's judgment), and whether parsing is rules-based, Claude-assisted, or both.
+**Decided (2026-07-26):** the first parser is **rules-based and deterministic** — one draft per
+markdown heading and per top-level checklist item. Zero Claude in Sprint 1, so
+`SpecDocumentParser` is fully unit-testable with plain string input. A `ClaudeIngestionParser`
+can be added later behind the same `IIngestionParser` interface (DIP) without touching anything
+downstream.
+
+### RED — the failing test (T1.2)
+
+**FILE — create new: `TaskFlow.Tests/Ingestion/SpecDocumentParserTests.cs`**
+
+```csharp
+using FluentAssertions;
+using TaskFlow.Api.Ingestion;
+using TaskFlow.Api.Models;
+using Xunit;
+
+namespace TaskFlow.Tests.Ingestion;
+
+public class SpecDocumentParserTests
+{
+    // Two headings + three checklist items = five drafts.
+    private const string Doc =
+        "# Set up auth\n" +
+        "Add JWT login and registration.\n" +
+        "\n" +
+        "- [ ] Create the login endpoint\n" +
+        "- [ ] Protect the task routes\n" +
+        "\n" +
+        "# Build the board\n" +
+        "- [ ] Render the columns\n";
+
+    [Fact]
+    public void Parses_one_draft_per_heading_and_per_checklist_item()
+    {
+        var result = new SpecDocumentParser().Parse(Doc);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Should().HaveCount(5);
+    }
+
+    [Fact]
+    public void Heading_becomes_a_draft_titled_and_sectioned_by_the_heading()
+    {
+        var drafts = new SpecDocumentParser().Parse(Doc).Value!;
+
+        drafts.Should().Contain(d => d.Title == "Set up auth" && d.Section == "Set up auth");
+    }
+
+    [Fact]
+    public void Checklist_item_becomes_a_draft_under_its_parent_heading()
+    {
+        var drafts = new SpecDocumentParser().Parse(Doc).Value!;
+
+        drafts.Should().Contain(d =>
+            d.Title == "Create the login endpoint" && d.Section == "Set up auth");
+    }
+
+    [Fact]
+    public void Every_draft_is_kind_Generic()
+    {
+        var drafts = new SpecDocumentParser().Parse(Doc).Value!;
+
+        drafts.Should().OnlyContain(d => d.Kind == TaskKind.Generic);
+    }
+}
+```
+
+**Expect RED.** `TaskDraft`, `IIngestionParser`, `SpecDocumentParser`, and `TaskKind` do not exist
+yet, so `dotnet test` will not compile. That is the red. The test encodes the contract: a parser
+whose `Parse(string)` returns `Result<IReadOnlyList<TaskDraft>>`, where each `TaskDraft` has a
+`Title`, a `Section` (its source heading, i.e. provenance), and a `Kind`.
+
+### GREEN — the implementation
+
+Four new files in `TaskFlow.Api`. Nothing more than the tests demand: descriptions are left
+null (no test asks for them yet).
+
+**FILE — `TaskFlow.Api/Models/TaskKind.cs`**
+
+```csharp
+namespace TaskFlow.Api.Models;
+
+/// <summary>
+/// Discriminator that lets different executor agents self-select which tasks they work.
+/// New applications (epics) add their own kinds; the shared core never changes.
+/// </summary>
+public enum TaskKind
+{
+    Generic
+}
+```
+
+**FILE — `TaskFlow.Api/Ingestion/TaskDraft.cs`**
+
+```csharp
+using TaskFlow.Api.Models;
+
+namespace TaskFlow.Api.Ingestion;
+
+/// <summary>
+/// A proposed task produced by ingestion, before it is persisted to the board.
+/// <c>Section</c> is the source heading it came from (provenance).
+/// </summary>
+public sealed record TaskDraft(string Title, string? Description, TaskKind Kind, string Section);
+```
+
+**FILE — `TaskFlow.Api/Ingestion/IIngestionParser.cs`**
+
+```csharp
+using TaskFlow.Api.Common;
+
+namespace TaskFlow.Api.Ingestion;
+
+public interface IIngestionParser
+{
+    Result<IReadOnlyList<TaskDraft>> Parse(string documentText);
+}
+```
+
+**FILE — `TaskFlow.Api/Ingestion/SpecDocumentParser.cs`**
+
+```csharp
+using System.Text.RegularExpressions;
+using TaskFlow.Api.Common;
+using TaskFlow.Api.Models;
+
+namespace TaskFlow.Api.Ingestion;
+
+/// <summary>
+/// Rules-based, deterministic parser: one draft per markdown heading and per top-level
+/// checklist item. A pure function of the input text - no Claude, no I/O. Each checklist
+/// item is filed under the most recent heading (its provenance).
+/// </summary>
+public sealed class SpecDocumentParser : IIngestionParser
+{
+    private static readonly Regex Heading =
+        new(@"^\s*#+\s+(?<text>.+?)\s*$", RegexOptions.Compiled);
+
+    private static readonly Regex ChecklistItem =
+        new(@"^\s*[-*]\s*\[[ xX]\]\s+(?<text>.+?)\s*$", RegexOptions.Compiled);
+
+    public Result<IReadOnlyList<TaskDraft>> Parse(string documentText)
+    {
+        var drafts = new List<TaskDraft>();
+        var currentHeading = string.Empty;
+
+        foreach (var rawLine in documentText.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r');
+
+            var heading = Heading.Match(line);
+            if (heading.Success)
+            {
+                currentHeading = heading.Groups["text"].Value;
+                drafts.Add(new TaskDraft(currentHeading, null, TaskKind.Generic, currentHeading));
+                continue;
+            }
+
+            var item = ChecklistItem.Match(line);
+            if (item.Success)
+            {
+                drafts.Add(new TaskDraft(item.Groups["text"].Value, null, TaskKind.Generic, currentHeading));
+            }
+        }
+
+        return Result<IReadOnlyList<TaskDraft>>.Ok(drafts);
+    }
+}
+```
+
+### Sprint 1 status
+
+`T1.1`, `T1.2`, and `T1.3` are all satisfied by the single red-green cycle above: `TaskDraft` +
+`IIngestionParser` (T1.1), the deterministic `SpecDocumentParser` (T1.2), and stamping
+`TaskKind.Generic` + `Section` provenance on every draft (T1.3, asserted by the tests). Sprint 1
+is complete once `dotnet test` is green. Scope line: provenance here is the `Section` only; the
+source-document id is deliberately deferred to Sprint 3 (see that sprint), not added now.
+
+**PR body (shipped):**
+
+```markdown
+## Sprint 1 — Document ingestion service
+
+Adds the first pluggable ingestion seam: a rules-based, deterministic parser that turns a
+markdown spec document into task drafts.
+
+### What
+- `TaskKind` enum (executor self-selection discriminator; `Generic` for now).
+- `TaskDraft` record (title, description, kind, section-as-provenance).
+- `IIngestionParser` seam.
+- `SpecDocumentParser`: one draft per heading and per top-level checklist item, pure function.
+
+### Tests
+4 new `SpecDocumentParserTests`; full backend suite 43 passing.
+
+### Type of change
+- [x] Feature (backend) + tests
+```
 
 ---
 
-## Sprint 2 — Ingestion Endpoint + Upload/Preview UI
+## Sprint 2 — Agent-capable Ingestion + Source-agnostic Endpoint + Preview
 
-**Goal:** hand a document to the app over HTTP and preview the drafts before they hit the board.
+**Goal:** hand content to the app from any source (file, paste, link), parse it into drafts
+free-first (rules, escalating to a Claude agent only when needed), and preview the drafts before
+they hit the board.
 
-**Produces:** a thin controller endpoint (calls the Sprint 1 service, `.ToActionResult()`), and a
-frontend upload-and-preview screen in `features/` that calls a new `api/` function and renders
-the drafts. Controller test with a mocked service; frontend api/hook tests against MSW; a preview
-component test in the RTL style.
+**Decided (this sprint's shape):**
+- Parsing is a **tiered** `IIngestionParser`: free `SpecDocumentParser` first, escalate to
+  `ClaudeIngestionParser` only when the rules parser returns zero drafts. Works with no Claude key.
+- The endpoint is **source-agnostic**: it accepts content plus a source name. File, paste, and
+  link are acquisition adapters that produce that content (paste and file-to-text now; the link
+  adapter, which fetches server-side, is a follow-up with the usual fetch caveats).
+- Preview is the human checkpoint before anything is written, setting up the approval surface
+  Sprint 6 hardens.
 
-**Leans on:** the thin-controller pattern and the `api/ hooks/ components/ features/` split.
+**Parts (each its own red-green):**
+- `T2.1` (BE) `ClaudeIngestionParser : IIngestionParser` — agent parsing via `IClaudeClient`,
+  `StubClaude`-tested.
+- `T2.2` (BE) `TieredIngestionParser : IIngestionParser` — free-first with escalation; registered
+  as the app's `IIngestionParser`. Tests: structured input never calls Claude; unstructured does.
+- `T2.3` (BE) source-agnostic endpoint: `IngestDocumentDto { content, sourceName }`,
+  `POST /api/Ingestion`, returns drafts via `.ToActionResult()`. Controller test with a mocked parser.
+- `T2.4` (FE) `TaskDraft` type, `api/ingestion.ts`, a `useIngestion` hook, and a paste/file preview
+  container in `features/`. MSW + RTL tests.
 
-**Design point:** preview is the natural human checkpoint before anything is written, so this
-sprint sets up the approval surface that Sprint 6 hardens.
+**Leans on:** the `IClaudeClient` + `StubClaude` seam, the thin-controller pattern, and the
+`api/ hooks/ components/ features/` split.
+
+**Implementation notes / issues found (backend, 2026-07-26):**
+- **Issue (fixed): `IIngestionParser` was synchronous.** A Claude-backed parser must await
+  `IClaudeClient.SendAsync`, and blocking on it risks deadlocks, so the seam is now
+  `Task<Result<IReadOnlyList<TaskDraft>>> ParseAsync(...)`. `SpecDocumentParser` and its Sprint 1
+  tests were updated to match; the parsing logic is unchanged.
+- **Decision: the endpoint takes `Content` only.** A source name/id is provenance and lands in
+  Sprint 3, so adding it to `IngestDocumentDto` now would be a dead field. How the content was
+  obtained (file, paste, link) stays the caller's concern, which keeps the endpoint source-agnostic.
+- **Decision: `IngestionController` is `[Authorize]`,** matching the task routes; the preview lives
+  in the authed area.
+- **Backend files:** `ClaudeIngestionParser`, `TieredIngestionParser` (free-first), `IngestDocumentDto`,
+  `IngestionController`, DI wiring in `Program.cs`, and `StubClaude.ThatReturnsText`. Tests cover each
+  parser and the controller. The live-Claude path (prompt + JSON shape) is validated against a real
+  key at runtime, not in tests.
+- **Frontend (T2.4, done):** `TaskDraft` type, `api/ingestion.ts`, the `useIngestion` hook, and the
+  paste/file `IngestDocument` preview in `features/`, plus an `/api/Ingestion` MSW handler. Tests:
+  api (MSW), hook (`renderHook`), component (RTL). Not yet wired into the app nav (it is standalone
+  and tested); hooking the preview into the dashboard is a small follow-up.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 2 — Agent-capable ingestion + source-agnostic endpoint + preview
+
+Adds agent parsing behind the ingestion seam, a tiered free-first parser, a source-agnostic
+endpoint, and a paste/file preview screen.
+
+### What
+- `ClaudeIngestionParser : IIngestionParser` — agent parsing via `IClaudeClient`.
+- `TieredIngestionParser : IIngestionParser` — free rules first, escalate to Claude only on zero
+  drafts, graceful with no key; registered as the app's `IIngestionParser`.
+- `IngestDocumentDto` (content + source name) + `IngestionController` (`POST /api/Ingestion`).
+- Frontend: `TaskDraft` type, `api/ingestion.ts`, `useIngestion` hook, paste/file preview.
+
+### Tests
+- `ClaudeIngestionParser` via `StubClaude`; `TieredIngestionParser` (structured input skips Claude,
+  unstructured escalates); controller with a mocked parser; MSW api/hook + RTL preview.
+- `dotnet test` and `npm run test` green.
+
+### Type of change
+- [x] Feature (backend + frontend) + tests
+```
 
 ---
 
@@ -197,15 +583,111 @@ sprint sets up the approval surface that Sprint 6 hardens.
 **Goal:** approved drafts are written as real tasks in the To Do column, each carrying provenance
 (which document and section it came from).
 
-**Produces:** persistence of drafts through `ITaskRepository.AddAsync`, a provenance field on the
-task model (migration + `WorkflowStatus.Todo` default), and repository/service tests over the
-write path using real in-memory SQLite.
+**Produces:** persistence of drafts through `ITaskRepository.AddAsync`, `Kind` + provenance fields
+on `TaskItem`, and repository/service tests over the write path using real in-memory SQLite. The
+schema-management approach is decided in the analysis below.
 
 **Leans on:** the repositories and the existing `Tasks` table. This is the point where the
 document truly becomes cards on the same board.
 
-**Design point:** provenance shape (document id + section anchor) so a task can be traced back,
-and so the executor in Sprint 4 has context to work from.
+### Analysis and plan (2026-07-26, before writing code)
+
+**Issue found — the project uses `EnsureCreated()`, not migrations, yet a `Migrations/` folder
+exists.** `Program.cs` startup calls `db.Database.EnsureCreated()`, which builds the schema
+straight from the current model and neither runs nor records migrations. The three migrations in
+`Migrations/` are dead at runtime, so adding a new migration would not take effect. Two
+consequences: new model fields appear only on a *fresh* database (EnsureCreated never alters an
+existing table), so the dev `taskflow.db` must be deleted once to pick them up (tests always get a
+fresh DB and see them automatically); and the migrations and the model are now out of sync.
+
+**Decision (DECIDED 2026-07-26) — adopt migrations.** `T3.0` is this ordered checklist. Every step
+is mandatory; run them in order.
+1. **(Claude, done)** `Program.cs` startup: `db.Database.EnsureCreated()` -> `db.Database.Migrate()`.
+2. **(Claude, done in T3.1)** add the `TaskItem` fields (`Kind`, `SourceName`, `SourceSection`).
+3. **(You)** generate the migration:
+   `dotnet ef migrations add AddTaskKindAndProvenance --project TaskFlow.Api`.
+   Claude cannot run EF tooling, and a hand-written migration must not be guessed.
+4. **(You)** delete the old dev database, a one-time reset. It was built by `EnsureCreated` and has
+   no migration history, so `Migrate()` would try to re-create existing tables and fail. From the
+   solution root: `Remove-Item TaskFlow.Api\taskflow.db` (and `taskflow.db-wal` / `taskflow.db-shm`
+   if present). Migrations are the only schema workflow after this.
+5. **(You)** `dotnet test` — unit tests plus the integration test, which now boots through `Migrate()`.
+6. **(You)** `dotnet run --project TaskFlow.Api` once to confirm the app starts and migrates a fresh
+   dev DB.
+
+**Test implications:** the in-memory unit/repo/agent tests (`SqliteInMemoryContext`) keep using
+`EnsureCreated`, which builds the current model on a separate throwaway DB, so they pick up new
+fields automatically and need no migration. Only the app runtime and the `WebApplicationFactory`
+integration test go through `Migrate()`. The two stay in sync as long as a migration is generated
+whenever the model changes.
+
+**Bug found during T3.0 verification (fixed 2026-07-27).** `dotnet run` applied all migrations,
+then the agents immediately failed with `SQLite Error 1: 'no such table: Tasks'` — a table the
+migration had just created. Root cause: there was no `ConnectionStrings:DefaultConnection`
+configured anywhere (no `appsettings.json`; the Development file has only logging; user secrets
+held only the Anthropic key), so `UseSqlite(null)` fell back to a private per-connection SQLite
+database. The schema built during `Migrate()` was destroyed when that connection closed, and the
+agents' new connections saw an empty DB. Nothing caught it earlier because the unit tests keep one
+in-memory connection open (`SqliteInMemoryContext`) and the integration test injects a temp-file
+connection string through the factory; the dev app was the only context with no connection string.
+Fix: `dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Data Source=taskflow.db" --project TaskFlow.Api`.
+Confirmed: the app runs clean and the agents execute end-to-end against Claude.
+
+**Second dev-config bug (fixed 2026-07-27) — missing JWT settings.** The first real authenticated
+request (the ingestion call) crashed at `Program.cs` with `ArgumentNullException` from
+`Encoding.UTF8.GetBytes(jwtKey)`: `Jwt:Key` (and `Jwt:Issuer`/`Jwt:Audience`) were not in dev config
+either. The JWT handler only initializes on the first `[Authorize]` request, so it stayed hidden
+until the app was actually used. Same class as the connection string — config the test factory
+injects via env vars but dev never had. Fix: `dotnet user-secrets set "Jwt:Key" <32+ byte random>`,
+plus `Jwt:Issuer` = `TaskFlowApi` and `Jwt:Audience` = `TaskFlowClient`, then a fresh login (the old
+token was signed with a different key). Confirmed working.
+
+**Future hardening (noted only, not built — avoids scope creep):** fail fast at startup if required
+config (`ConnectionStrings:DefaultConnection`, `Jwt:Key`) is missing, so neither a silent DB
+fallback nor a lazy crash on first use can recur. Captured here; not part of Sprint 3.
+
+**Decision (owned) — provenance is two nullable strings, not a foreign key.** There is no
+`Document` entity (a document is transient ingested text), so "which document" is a `SourceName`
+string and "which section" is a `SourceSection` string, both nullable on `TaskItem` (ingested
+tasks carry them; hand-created tasks do not).
+
+**Decision (owned) — the source name re-enters here.** Sprint 2 deferred it; the commit step
+carries it. The client sends the approved drafts plus a `sourceName` to a new endpoint.
+
+**Code plan (written test-first when we start Sprint 3):**
+- `TaskItem`: add `Kind` (`TaskKind`, default `Generic`, `HasConversion<string>()` like `Status`)
+  plus nullable `SourceName` and `SourceSection`. Seed tasks default to `Generic`.
+- Persist path: a `CommitDraftsDto { SourceName, Drafts[] }`, a service method mapping each
+  `TaskDraft` to a `TaskItem` (`Todo`, `Kind`, `SourceName`, `SourceSection = draft.Section`) and
+  writing it via `ITaskRepository.AddAsync`, and a thin `POST /api/Ingestion/commit`. RED:
+  in-memory SQLite asserts tasks land as `Todo` with kind + provenance.
+- Frontend (small): the Sprint 2 preview gains an "Approve" action that calls the commit endpoint.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 3 — Drafts become board tasks (with provenance)
+
+Approved drafts are persisted as real To Do tasks carrying provenance, and the app adopts EF
+migrations for schema changes.
+
+### What
+- Adopt migrations: `Program.cs` startup `EnsureCreated()` -> `Migrate()`, plus a generated
+  `AddTaskKindAndProvenance` migration.
+- `TaskItem` gains `Kind` (default `Generic`, stored as a string) and nullable `SourceName` +
+  `SourceSection`. Provenance is two strings; there is no `Document` entity to key off.
+- `CommitDraftsDto { SourceName, Drafts[] }` + a service mapping drafts to `TaskItem`
+  (`Todo`, kind, provenance) via `ITaskRepository.AddAsync` + thin `POST /api/Ingestion/commit`.
+- Frontend: the ingestion preview gains an Approve action that commits the drafts.
+
+### Tests
+- Repository round-trips kind + provenance (in-memory SQLite); commit service lands tasks as
+  `Todo`; controller with a mocked service; MSW + RTL for the Approve action.
+- `dotnet test` and `npm run test` green; the integration test exercises `Migrate()`.
+
+### Type of change
+- [x] Feature (backend + frontend) + tests + migration
+```
 
 ---
 
@@ -223,38 +705,1049 @@ jump: the same agent layer, now doing work instead of only re-prioritizing.
 
 **Design point (carried forward):** an executor doing real work needs firm limits. We already
 have a per-task iteration cap on the tool loop; this sprint keeps the leash short and defers the
-spend ceiling and destructive-action gate to Sprint 6.
+spend ceiling and destructive-action gate to Sprint 6. The one limit that cannot wait is the
+terminal-state guarantee (`T4.4`): the executor must never orphan a claimed task in `InProgress`.
+
+### Analysis and plan (plan mode, before writing code)
+
+**Grounded current state.** `ClaudeAgentBase` gives subclasses `RunToolConversationAsync(prompt,
+tools, dispatch, ct)`, `DefineTool`, `ToolResult`, `WasSuccessful`, `RecordActionAsync` (persist +
+broadcast), `RecordCycleSummaryAsync`, `ClaudeConfigured`, and the cycle broadcasts. `ITaskRepository`
+has no claim method today. `TaskItem` has `Status`, `Kind`, and provenance but no field for which
+agent owns an in-progress task. `WorkflowStatus` is `Todo/InProgress/Review/Done`. `AgentRunner`
+discovers every `ITaskFlowAgent` and runs it on its interval.
+
+**Missing pieces and decisions:**
+
+1. **Claiming needs an atomic DB guard and an owner field.** Decision:
+   `ITaskRepository.TryClaimNextAsync(TaskKind kind, string agentName, CancellationToken)` finds the
+   oldest `Todo` task of the kind and claims it with a guarded `ExecuteUpdateAsync`
+   (`WHERE Id = candidate AND Status == Todo` -> set `InProgress`, `ClaimedBy`, `UpdatedAt`). The
+   rows-affected count is the winner check, atomic even under real concurrency; if it lost (0 rows),
+   try the next candidate; return the claimed, now-tracked task or `null`. Add a nullable `ClaimedBy`
+   string to `TaskItem` (the design's "owner stamp"; shows on the live board, lets parallel executors
+   coexist later). Schema change, so `T4.0`: add the field and `dotnet ef migrations add
+   AddTaskClaimedBy` — a plain migration now that we are on migrations (no DB reset).
+
+2. **What is a Claude tool vs an agent step.** Claiming is the agent's own repository step, not a
+   Claude tool. Claude gets two tools: `record_progress(note)` and `request_review(summary)`. Per
+   cycle: claim the next `Todo` `Generic` task (it becomes `InProgress`); run
+   `RunToolConversationAsync` with those two tools; `record_progress` writes a progress `AgentLog`;
+   `request_review` moves the task `InProgress -> Review` and logs the summary. The executor never
+   sets `Done` — a human does that in Sprint 6.
+
+3. **The generic executor does a minimal real step** (per the architecture): Claude reads the task,
+   produces a short plan/result, records progress, requests review — enough to watch a card go
+   `Todo -> InProgress -> Review` end to end. Epic 3's domain executors register their own kind and
+   agent behind the same seam.
+
+4. **New `AgentActions` constants:** `Claimed`, `ProgressRecorded`, `ReviewRequested`. Additive to
+   `AgentConstants`; the React dashboard color map keys off these strings.
+
+5. **Stuck-`InProgress` edge (OBSERVED LIVE — see Live-run findings):** if Claude never calls
+   `request_review`, the task stays `InProgress`. This fired on the first real run: the executor
+   claimed Task 3, recorded progress twice, then Claude ended its turn with a long text answer and
+   never called `request_review`, stranding the card in InProgress. Decision on how to finalize is
+   pending (see Live-run findings below).
+
+6. **Agent wiring.** `GenericExecutorAgent : ClaudeAgentBase`, constructor
+   `(IClaudeClient claude, ITaskRepository tasks, IAgentLogRepository logs, IAgentNotifier notifier,
+   IConfiguration config, ILogger<GenericExecutorAgent> logger) : base(claude, logs, notifier, config, logger)`;
+   `Name = "GenericExecutor"`; `Interval` from `Agents:ExecutorIntervalMinutes` (default 15);
+   registered `AddScoped<ITaskFlowAgent, GenericExecutorAgent>()` so `AgentRunner` picks it up.
+
+**Principles.** Extends `ClaudeAgentBase` with no base change (OCP/LSP); depends only on
+`IClaudeClient` and `ITaskRepository` (DIP); the claim's concurrency lives in the repository (SRP);
+reuses `RunToolConversationAsync`, `RecordActionAsync`, `DefineTool`, `ToolResult` (DRY).
+
+**Revised order (test-first):** `T4.0` field + migration, `T4.1` `TryClaimNextAsync`, `T4.2` the
+executor agent, `T4.3` DI registration. RED tests are in the backlog.
+
+**Build note (T4.1):** `ExecuteUpdateAsync` runs immediate SQL and does not refresh entities the
+change tracker already holds, so a plain read after a claim can return a stale `Todo`/null snapshot.
+`TryClaimNextAsync` returns an `AsNoTracking()` read to reflect the claim. The same applies to the
+`InProgress -> Review` move in `T4.2`: do it as a guarded `ExecuteUpdateAsync` (or reload), not a
+mutate-tracked-entity-then-save that assumes the claim is tracked.
+
+### Live-run findings (first `dotnet run` on `feature/sprint4`)
+
+Confirmed from the startup log and a refreshed board. No data was lost; all five seed tasks were
+present after a hard refresh (To Do 1, In Progress 1, Done 3). Three separate issues surfaced:
+
+- **F1 (Sprint 4 defect) — executor strands tasks in `InProgress`.** The executor claimed Task 3,
+  called `record_progress` twice, then Claude ended its turn with a long code essay and never called
+  `request_review`. The card is left `InProgress` with `ClaimedBy` set, never reaching Review, and
+  will not be re-claimed (it is no longer `Todo`). This is a guaranteed-every-run defect, so a slice
+  of the Sprint 6 stuck-task concern is pulled forward. Fix approach is a pending decision (see below).
+- **F2 (Sprint 5) — board re-fetches the whole list on every agent log.** `Dashboard.tsx` passes
+  `refreshKey={logs.length}` to `KanbanBoard`, so each SignalR log re-runs `getTasks()`. With three
+  agents logging, the board churns and fights in-flight drags; this is what made a card appear to
+  "disappear." Proper fix is targeted SignalR task-changed events applied to the affected card, not a
+  full refetch. Belongs to Sprint 5 (Live transitions).
+- **F3 (Sprint 6) — executor moves the human's cards mid-session.** The executor claims the oldest
+  `Todo` task on startup and every interval, so it will move a card the user just placed. Correct
+  behavior, but it needs gating / opt-in / an interval control before it is demo-friendly. Sprint 6.
+
+**F1 decision (RESOLVED) — the executor guarantees a terminal state every cycle.** Chosen: option
+(a), auto-finalize to Review. Reasoning: a claimed task must never be orphaned `InProgress`. Releasing
+it back to `Todo` (option b) would re-claim and re-run the same task every interval forever, because
+the generic executor reliably ends without `request_review` — an unbounded spend leak with zero
+progress. Forcing tool use (option d) is unreliable and can loop `record_progress` to the iteration
+cap. So at the end of the tool loop, if the claimed task is still `InProgress`, move it to `Review`
+with a distinct `AutoFinalized` log (separate from `ReviewRequested`, so a human can tell the executor
+bailed vs. completed), and tighten the prompt so the model knows it cannot literally write files and
+should summarize then request review (the guarantee is the safety net, not the prompt).
+
+**Placement:** this is a correctness gap in the Sprint 4 executor, not a new guardrail. A
+guaranteed-every-run strand means Sprint 4 is not done, so it is **`T4.4` in Sprint 4**. The *broader*
+stuck-task handling — a task orphaned by an exception, process crash, or cancellation mid-cycle —
+stays in Sprint 6 as `T6.3` (rollback to `Todo`). Clean split by cause: a clean cycle end with no
+review means the executor is done trying and hands off to a human (`T4.4` → Review); an abnormal
+termination means the work never ran and should retry (`T6.3` → Todo). F2 → Sprint 5 (`T5.3`), F3 →
+Sprint 6 (`T6.5`), both below. No Sprint 8 is warranted: the findings map cleanly onto existing
+sprints, and adding an empty sprint would be scope for its own sake.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 4 — Executor agent
+
+An agent claims a To Do task, works it via Claude, and moves it to Review.
+
+### What
+- `ClaimedBy` field on `TaskItem` + `AddTaskClaimedBy` migration.
+- `ITaskRepository.TryClaimNextAsync(kind, agentName)` — atomic claim via a guarded `ExecuteUpdateAsync`.
+- `ITaskRepository.MarkForReviewAsync(taskId)` — atomic `InProgress -> Review` via a guarded
+  `ExecuteUpdateAsync` (avoids the stale-tracked-entity trap after a no-tracking claim).
+- `GenericExecutorAgent : ClaudeAgentBase` for `TaskKind.Generic` with `record_progress` /
+  `request_review` tools bound to the claimed task: claims a Todo task, works it via Claude, moves
+  it to Review. Registered as `ITaskFlowAgent` so `AgentRunner` discovers it.
+- Terminal-state guarantee (`T4.4`): if the model ends without `request_review`, auto-finalize the
+  claimed task to Review so it is never orphaned `InProgress`.
+- New `AgentActions`: `Claimed`, `ProgressRecorded`, `ReviewRequested`, `AutoFinalized`.
+
+### Tests
+- Repo: `ClaimedBy` round-trips; `TryClaimNextAsync` claims once (task -> `InProgress`, `ClaimedBy`
+  set), returns null when none / after the one task is taken (no double-claim); `MarkForReviewAsync`
+  moves `InProgress -> Review` and no-ops otherwise. Agent: `StubClaude` scripts
+  `record_progress` then `request_review`, asserting the card reaches `Review` with the owner stamped
+  and `Claimed`/`ProgressRecorded`/`ReviewRequested` logs; a no-Todo cycle never calls Claude. `T4.4`
+  adds an auto-finalize test: the model ends without `request_review`, and the card still reaches
+  `Review` with an `AutoFinalized` log.
+- `dotnet test` green (57 through `T4.3`; `T4.4` adds one more).
+
+### Type of change
+- [x] Feature (backend) + tests
+```
 
 ---
 
 ## Sprint 5 — Live Board Transitions
 
-**Goal:** as the executor works, the task moves across the board (To Do → In Progress → Review →
-Done) and the dashboard shows it live.
+> **This section is a self-contained guide.** A new chat with no prior context can execute it top to
+> bottom. It states the goal, the one architecture decision, the exact seams (with file paths), and
+> then each task as RED → GREEN → principle. Follow the standing rules at the top of this doc (TDD,
+> DRY, SOLID, the AI writes code + tests, the user runs `dotnet`/`npm`/`git`).
 
-**Produces:** status transitions written through the repositories and broadcast over
-`IAgentNotifier` / `HubEvents`, plus any dashboard adjustment to render executor activity
-distinctly from the existing prioritizer/stale feeds.
+**Status: COMPLETE.** T5.1–T5.6 shipped; findings F2, F4, F5 resolved. 59 backend tests green,
+frontend green, and the live board verified (executor moves and human drags both update single cards;
+the dragged card follows the cursor unclipped). This section is now the historical record for Sprint 5.
 
-**Leans on:** repositories + SignalR (`AgentHub`, `useAgentFeed`). No new transport is invented;
-the transitions ride the feed that already exists.
+**Goal.** When a task changes status — the executor claiming it (`Todo → InProgress`), handing it to
+review (`InProgress → Review`), or a human dragging a card — every connected dashboard updates *that
+one card* live, without reloading the whole board.
 
-**Design point:** what counts as Review vs Done for an autonomous executor, and whether Review
-always requires a human (ties into Sprint 6).
+**Why this sprint exists (finding F2).** Today `Dashboard.tsx` passes `refreshKey={logs.length}` to
+`KanbanBoard`, so the board re-runs `getTasks()` on every agent log that streams in. With three agents
+logging, the board churns and fights in-flight drags; that churn is what made a card appear to vanish
+during Sprint 4 testing. The fix is to stop refetching the whole list and instead apply a targeted
+`TaskMoved` event to the single affected card.
+
+### Architecture decision (read before writing code)
+
+Three decisions are locked so the guide is unambiguous:
+
+1. **Event payload is compact: `{ id, status }`.** A `TaskMoved` event says "task `id` is now in
+   column `status`". Rationale: the agent always knows both values at the moment it makes the
+   transition, with no re-read (so it never hits the `ExecuteUpdate` stale-entity trap from Sprint 4),
+   and the board already holds every task from its initial load, so patching one card's status is
+   enough. `status` is sent as its string name (`"InProgress"`), matching the frontend `TaskStatus`
+   union and how the DB stores it. *Limitation, accepted:* a task the board has not loaded yet will
+   not appear from a move alone; live task *creation* is a future `TaskCreated` event, out of scope
+   here.
+
+2. **The agent broadcasts; the repository never does.** The repository is data access only (SRP — see
+   its interface doc comment). SignalR concerns stay in `IAgentNotifier` / `SignalRAgentNotifier`. The
+   executor, which decides each transition, calls the notifier after each successful move.
+
+3. **One SignalR connection for the whole app, shared via a provider.** Sprint 5 adds a second event
+   stream (`TaskMoved`) alongside the existing agent feed. Rather than open a second websocket, extract
+   the single connection (today owned inline by `useAgentFeed`) into an `AgentHubProvider` that both the
+   agent feed and the board subscribe to. This is the DRY/SRP-correct moment to extract it; opening a
+   second connection would duplicate setup and auth for no reason.
+
+### Grounded current state (the seams you will touch)
+
+Backend:
+
+- `TaskFlow.Api/Hubs/HubEvents.cs` — event-name constants (`AgentAction`, `AgentCycle`). Add `TaskMoved`.
+- `TaskFlow.Api/Services/IAgentNotifier.cs` — `AgentActionAsync`, `AgentCycleAsync`. Add `TaskMovedAsync`.
+- `TaskFlow.Api/Services/SignalRAgentNotifier.cs` — implements the above over `IHubContext<AgentHub>`,
+  each broadcast wrapped in try/catch so a broadcast failure never breaks a cycle. Add the impl here.
+- `TaskFlow.Api/Agents/ClaudeAgentBase.cs` — holds a private `_notifier`; exposes `RecordActionAsync`,
+  `NotifyCycleStartedAsync/CompletedAsync`. Add a `protected NotifyTaskMovedAsync`.
+- `TaskFlow.Api/Agents/GenericExecutorAgent.cs` — the three transition points (claim,
+  `RequestReviewAsync`, the T4.4 auto-finalize block).
+
+Frontend:
+
+- `TaskFlow.Web/src/hooks/useAgentFeed.ts` — currently builds and owns the `HubConnection` inline,
+  seeds logs from `getAgentLogs`, subscribes to `AgentAction`/`AgentCycle`, exposes `{ logs, cycles,
+  connected }`.
+- `TaskFlow.Web/src/lib/hubEvents.ts` — mirror of the C# `HubEvents`; keep both ends in sync.
+- `TaskFlow.Web/src/features/KanbanBoard.tsx` — owns board state via its own `getTasks` + optimistic
+  `handleDragEnd`; takes `refreshKey`.
+- `TaskFlow.Web/src/features/Dashboard.tsx` — renders `<KanbanBoard refreshKey={logs.length} />` (the
+  F2 anti-pattern).
+- `TaskFlow.Web/src/api/tasks.ts` — `getTasks()`, `updateTaskStatus(id, status)`.
+- `TaskFlow.Web/__mocks__/@microsoft/signalr.ts` — `FakeHubConnection` whose `on()` is a no-op; it
+  must be upgraded so tests can register handlers and emit events.
+- `TaskFlow.Web/src/types.ts` — `TaskItem`, `TaskStatus`.
+
+### Backend
+
+**T5.1 — broadcast `TaskMoved` from the executor.**
+
+- *Files:* `HubEvents.cs` (+ `public const string TaskMoved = "TaskMoved";`); `IAgentNotifier.cs`
+  (+ `Task TaskMovedAsync(int taskId, WorkflowStatus status, CancellationToken ct = default);`);
+  `SignalRAgentNotifier.cs` (implement it: `await _hub.Clients.All.SendAsync(HubEvents.TaskMoved,
+  new { id = taskId, status = status.ToString() }, ct)` inside the same try/catch as the others);
+  `ClaudeAgentBase.cs` (`protected Task NotifyTaskMovedAsync(int taskId, WorkflowStatus status,
+  CancellationToken ct) => _notifier.TaskMovedAsync(taskId, status, ct);`); `GenericExecutorAgent.cs`
+  (after a successful claim → `await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, ct)`; in
+  `RequestReviewAsync` after `MarkForReviewAsync` returns true → `... WorkflowStatus.Review ...`; in the
+  T4.4 auto-finalize block → `... WorkflowStatus.Review ...`).
+- *RED:* in `GenericExecutorAgentTests`, replace `Mock.Of<IAgentNotifier>()` with a
+  `Mock<IAgentNotifier>` and assert `notifier.Verify(n => n.TaskMovedAsync(task.Id,
+  WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once)` and the `Review` move
+  `Times.AtLeastOnce`. (Existing agent tests keep using `Mock.Of<IAgentNotifier>()`, which Moq already
+  auto-satisfies for `Task`-returning methods, so adding `TaskMovedAsync` does not break them.)
+- *GREEN:* the wiring above.
+- *Principle:* DIP — the executor depends on `IAgentNotifier`, not SignalR. DRY — reuses the existing
+  notifier seam and its swallow-and-log pattern. SRP — the repository stays SignalR-free.
+
+**T5.4 (optional, recommended) — broadcast human drags too.**
+
+- A card dragged by one user should also move live on *other* clients. The acting client already
+  updates optimistically, so this only matters for multi-client. *Files:* inject `IAgentNotifier` into
+  `TaskService`; in `UpdateStatusAsync`, after the save, call `TaskMovedAsync(id, dto.Status, ct)`.
+- *RED:* a `TaskService` test with a `Mock<IAgentNotifier>` verifying `TaskMovedAsync(id, newStatus,
+  ...)` is called once after a status update.
+- *Principle:* the same broadcast seam serves agent moves and human moves (DRY). Marked optional so
+  single-user demos are not blocked on it; decide with the user before starting.
+
+### Frontend
+
+**T5.2 — extract one shared hub connection (`AgentHubProvider`), refactor `useAgentFeed` onto it.**
+
+- *Files:* new `TaskFlow.Web/src/lib/agentHub.tsx` — a context provider that builds ONE
+  `HubConnection` (same `withUrl('${BASE_URL}/hubs/agents', { accessTokenFactory })` +
+  `withAutomaticReconnect()` as today), starts it, tracks `connected`, and exposes
+  `{ connection, connected }` via `useAgentHub()`. Refactor `useAgentFeed.ts` to read the connection
+  from `useAgentHub()` and register its `AgentAction`/`AgentCycle` handlers on it (guard on
+  `connection` being non-null; keep seeding from `getAgentLogs` unchanged). Wrap the dashboard subtree
+  in `<AgentHubProvider>` in `Dashboard.tsx`.
+- *RED / regression guard:* the existing `useAgentFeed.test.ts` (seeds from `getAgentLogs`) must stay
+  green. Because seeding is independent of the connection and the hook is null-safe when no provider is
+  present, it passes unchanged; that is the proof the refactor is behavior-preserving.
+- *Principle:* SRP — connection lifecycle lives in one provider; feature hooks only subscribe. DRY —
+  one connection, one auth setup, many subscribers.
+
+**T5.3 — `useBoardTasks` hook + delete the full-refetch (resolves F2).**
+
+- *Files:* new `TaskFlow.Web/src/hooks/useBoardTasks.ts` — on mount, `getTasks()` once into state; via
+  `useAgentHub()`, subscribe to `HubEvents.TaskMoved` and patch only the matching card
+  (`setTasks(prev => prev.map(t => t.id === evt.id ? { ...t, status: evt.status } : t))`), returning
+  the handler in a cleanup with `connection.off`; expose `moveTask(id, newStatus)` that does the
+  optimistic update + `updateTaskStatus` PATCH + rollback (moved out of `KanbanBoard`). Refactor
+  `KanbanBoard.tsx` to consume `useBoardTasks` instead of its own `getTasks`/`handleDragEnd` state and
+  drop the `refreshKey` prop. In `Dashboard.tsx`, render `<KanbanBoard />` with no `refreshKey`.
+- Add `TaskMoved: 'TaskMoved'` to `src/lib/hubEvents.ts` (cross-language contract; see below).
+- *Test-support prerequisite:* upgrade `__mocks__/@microsoft/signalr.ts` so `FakeHubConnection`
+  records handlers (`on(event, cb)` pushes into a map, `off(event, cb)` removes) and exposes an
+  `emit(event, payload)` test helper; export a way to reach the last-built connection so a test can
+  emit. This is what lets a test simulate a server push.
+- *RED:* a hook/RTL test that (1) after initial load, emitting `TaskMoved { id: A, status: 'Review' }`
+  moves only card A and leaves card B untouched; (2) an in-flight optimistic `moveTask` on card A is
+  not clobbered by an unrelated `TaskMoved` for card B (id-scoped patching). Same-card drag-vs-agent
+  collisions resolve to server truth and are acceptable.
+- *Principle:* SRP — board data/state lives in one hook; the component renders. Killing
+  `refreshKey={logs.length}` removes the churn (F2) at its root rather than debouncing around it
+  (no band-aid).
+
+### Cross-language contract
+
+`TaskMoved` must be added to **both** `TaskFlow.Api/Hubs/HubEvents.cs` and
+`TaskFlow.Web/src/lib/hubEvents.ts`. There is no shared type across the boundary; a typo on either side
+silently stops the live update. The payload keys (`id`, `status`) and the string form of `status`
+(`"Todo" | "InProgress" | "Review" | "Done"`) are the contract.
+
+### Test strategy
+
+- Backend unit tests target the agent's calls to `IAgentNotifier` (the DIP seam), not the SignalR
+  wire — `SignalRAgentNotifier` needs `IHubContext` and is verified by the live run, not a unit test.
+- Frontend tests run offline against the upgraded signalr mock; `emit` drives the `TaskMoved` path.
+- Live check: `dotnet run` + the board open; watch a card move `Todo → InProgress → Review` on its own
+  as the executor runs, with no full-board flicker.
+
+### Live-run finding F4 — dropping a card onto another card blanked it (fixed as T5.5)
+
+Dragging a card onto another card (common when dragging over a populated column) made it vanish. Root
+cause: cards are `useSortable` (id = task id), columns are `useDroppable` (id = status), and
+`handleDragEnd` treated `over.id` as a status unconditionally. Dropping onto a card set the moved
+task's status to a task-id number, which matches no column, so the card disappeared. This predates
+Sprint 5, but the old full-board refetch masked it by reloading correct statuses on every log;
+removing that refetch (F2) exposed it.
+
+Fix (`T5.5`): a pure `resolveDropColumn(overId, tasks)` in `src/lib/board.ts` maps either a column or
+a card drop target to the destination column; `handleDragEnd` uses it. Unit-tested in `board.test.ts`.
+`BOARD_COLUMNS` also moved into `board.ts` as the single source of columns (DRY).
+
+Watch items (recorded): (a) a `TaskMoved` echo arriving mid-drag jostling the sortable list — now
+resolved by the DragOverlay in F5 below; (b) the API binds `WorkflowStatus` from a numeric string
+without range-checking, so a malformed client could set an out-of-range status — a small DTO/enum
+guard belongs with Sprint 6 hardening.
+
+### Live-run finding F5 — the drag visual broke on cross-column drags (fixed as T5.6)
+
+The drop worked, but the card being dragged vanished mid-gesture and the grab was lost. Cause: cards
+move via in-place sortable transforms, but the board container has `overflow-x-auto`, so a card
+dragged toward another column was clipped out of view; dnd-kit still tracked the pointer, so the drop
+still landed. Fix (`T5.6`): render the dragged card in a `DragOverlay` (a portal above the board),
+which is not clipped by overflow and is unaffected by live re-renders during the drag (this also
+resolves watch item (a)). `TaskCard` was split into a presentational `TaskCardView` (no drag hooks, so
+it can render inside the overlay) and the sortable wrapper. Verified by the live run; `TaskCardView`
+has a standalone render test.
+
+### Definition of done (Sprint 5)
+
+`TaskMoved` broadcast on every executor transition and on human status updates (T5.4); the board
+patches single cards from the event; `refreshKey={logs.length}` is gone; one shared hub connection;
+drop-target resolution fixed (T5.5); `dotnet test` and `npm run test` green; F2 and F4 marked resolved.
+
+### Ship it — commit, push, PR, merge
+
+Assumes this work is on a `feature/sprint5` branch cut from `develop`, and Sprint 4 has already landed
+on `develop`.
+
+Commit and push:
+
+```bash
+git add -A
+git commit -m "Sprint 5: live board transitions
+
+- HubEvents.TaskMoved + IAgentNotifier.TaskMovedAsync + SignalR impl + ClaudeAgentBase helper
+- Executor broadcasts on claim/review/auto-finalize; TaskService broadcasts human status updates (T5.4)
+- Frontend: single shared SignalR connection (AgentHubProvider); useAgentFeed refactored onto it
+- useBoardTasks: initial load + TaskMoved single-card patches + optimistic moveTask; removed
+  refreshKey full-board refetch (resolves F2)
+- Fix F4: resolveDropColumn maps card/column drop targets so a drop onto a card can't blank it
+- Fix F5: DragOverlay + presentational TaskCardView so the dragged card isn't clipped mid-drag
+- 59 backend tests green; frontend green"
+git push -u origin feature/sprint5
+```
+
+PR description (`feature/sprint5` → `develop`):
+
+```markdown
+## Sprint 5 — Live board transitions
+
+Task status changes stream to every dashboard and update a single card, with no whole-board refetch.
+
+### What
+- New `HubEvents.TaskMoved` + `IAgentNotifier.TaskMovedAsync(taskId, status)`, broadcast by the
+  executor on claim (`InProgress`) and review / auto-finalize (`Review`), and by
+  `TaskService.UpdateStatusAsync` on human moves (T5.4).
+- One shared SignalR connection (`AgentHubProvider`); `useAgentFeed` refactored onto it.
+- `useBoardTasks` drives the board from an initial load + `TaskMoved` patches; `refreshKey={logs.length}`
+  removed (resolves F2).
+- `resolveDropColumn` maps card/column drop targets so dropping onto a card no longer blanks it (F4).
+- `DragOverlay` + presentational `TaskCardView` so the dragged card follows the cursor unclipped (F5).
+
+### Tests
+- Agent verifies `TaskMovedAsync(InProgress)` then `(Review)`; `TaskService` verifies the broadcast on
+  a move; `useBoardTasks` patches one card on a `TaskMoved` emit; `resolveDropColumn` and
+  `TaskCardView` unit-tested; `useAgentFeed` regression green.
+- `dotnet test` (59) and `npm run test` green.
+
+### Type of change
+- [x] Feature (backend + frontend) + tests
+```
+
+Merge once approved:
+
+```bash
+git checkout develop
+git pull
+git merge --no-ff feature/sprint5
+git push
+git branch -d feature/sprint5
+```
 
 ---
 
 ## Sprint 6 — Guardrails
 
-**Goal:** make autonomous execution safe: human approval gates, a spend ceiling, and rollback on
-failure, designed in rather than bolted on.
+> **This section is a self-contained guide.** A new chat with no prior context can execute it top to
+> bottom. It states the goal, the architecture decisions, the exact seams (with file paths), then each
+> task as RED → GREEN → principle. Follow the standing rules at the top of this doc (TDD, DRY, SOLID,
+> the AI writes code + tests, the user runs `dotnet`/`npm`/`git`).
 
-**Produces:** a human-approval checkpoint (approve each task, approve the batch, or fully
-autonomous with a kill switch, per the open question), a cost cap on Claude usage, and a
-rollback path when an executor step fails, all covered by tests.
+**Status: planned.**
 
-**Leans on:** everything above. This is the "give the agent an escape hatch and a leash"
-principle from the stale-task agent, scaled up to an agent that changes real state.
+**Goal.** Make autonomous execution safe before the executor is turned loose: the agent can never
+reach `Done` (a human approves), a spend cap stops runaway Claude usage, a failed or cancelled cycle
+rolls the task back instead of stranding it, and the executor is paused by default until a human
+enables it.
+
+**Why now.** After Sprint 5 the executor moves real cards live. Before it runs unattended it needs a
+leash. Finding F3 (the executor claimed the human's `Todo` cards uninvited) is closed here by the
+default-off kill switch.
+
+### Architecture decisions (read before writing code)
+
+1. **`Done` is human-only — enforced structurally, plus one explicit approve action.** The agent path
+   already cannot reach `Done`: the executor only does `Todo → InProgress → Review` through repository
+   methods (`TryClaimNextAsync`, `MarkForReviewAsync`) that never target `Done`. T6.1 adds an explicit
+   `ApproveAsync` (`Review → Done`, guarded) plus a `POST .../approve` endpoint so approval is
+   intentional and auditable, and a test that *pins* the invariant (a full executor cycle never yields
+   `Done`). We do **not** forbid a human dragging a card to `Done` (that is still a human approval); the
+   approve endpoint/button is the explicit affordance, and the invariant that matters is that *agents*
+   cannot reach `Done`.
+
+2. **Guards are cheap, ordered pre-checks the executor runs before claiming, each behind its own
+   abstraction (SRP/DIP).** Order: enabled? (T6.5) → Claude configured? (exists) → within budget?
+   (T6.2) → claim. The executor reads like a policy list; each guard is independently mockable and
+   testable.
+
+3. **Rollback is the exception/cancel counterpart to T4.4's clean-end auto-finalize.** Wrap the work in
+   try/catch: a clean end (Claude finished, no `request_review`) auto-finalizes to `Review` (T4.4); an
+   exception or a cancelled cycle releases the claim back to `Todo` (T6.3). Same guarded-transition +
+   `TaskMoved` broadcast machinery; different cause, different terminal state. Together they complete
+   the invariant "a claimed task always ends a cycle in a terminal state, never orphaned `InProgress`."
+
+4. **The pause control is a runtime kill switch, default OFF.** T6.5 needs a frontend control, so the
+   enable/pause state is a thread-safe in-memory singleton (`IExecutorSwitch`) toggled via an endpoint,
+   seeded from `Agents:ExecutorEnabled` (default `false`). Default-off means the executor will not
+   touch the board until a human turns it on (closes F3). **Auto-pause (post-Sprint-6):** when a cycle
+   finds nothing to claim, the executor pauses *itself* if the board is clear (no tasks in Todo,
+   InProgress, or Review — `CountOpenAsync == 0`); it stays enabled while any open work remains, so it
+   powers down once there is nothing left to do and waits for a human to re-enable it. The dev cadence
+   is `Agents:ExecutorIntervalMinutes = 1` (in `appsettings.Development.json`).
+
+5. **Spend cap v1 counts executor tasks per day as a proxy, behind `ISpendGuard`.** A precise
+   dollar/token cap needs per-call token usage (`MessageResponse.Usage`) persisted, which is a schema
+   change. v1 caps `Agents:DailyExecutorTaskCap` claims per UTC day (one claim ≈ one Claude
+   conversation), counted from existing `AgentLog` rows, no migration. Token-based accounting is a
+   documented future refinement behind the same interface.
+
+### Grounded current state (the seams you will touch)
+
+Backend:
+
+- `TaskFlow.Api/Agents/GenericExecutorAgent.cs` — `RunAsync` currently: `ClaudeConfigured` check →
+  `TryClaimNextAsync` → record `Claimed` + broadcast `InProgress` → `RunToolConversationAsync` →
+  `MarkForReviewAsync` auto-finalize (T4.4) → cycle complete. Add the guards before the claim and the
+  try/catch around the work. Constructor gains `IExecutorSwitch` and `ISpendGuard`.
+- `TaskFlow.Api/Repositories/ITaskRepository.cs` + `TaskRepository.cs` — has `TryClaimNextAsync`,
+  `MarkForReviewAsync` (guarded `ExecuteUpdateAsync`). Add `ReleaseClaimAsync` (InProgress → Todo,
+  clear `ClaimedBy`) symmetrically.
+- `TaskFlow.Api/Services/TaskService.cs` + `ITaskService.cs` + `Controllers/TasksControllers.cs` — add
+  `ApproveAsync` and `POST api/Tasks/{id}/approve`. `TaskService` already has `IAgentNotifier` for the
+  `TaskMoved` broadcast (Sprint 5).
+- `TaskFlow.Api/Repositories/IAgentLogRepository.cs` — has `GetRecentAsync`, `GetTaskScopedSinceAsync`.
+  Add `CountByAgentActionSinceAsync(agentName, action, since)` for the spend guard.
+- `TaskFlow.Api/Agents/AgentConstants.cs` — add `RolledBack` (T6.3). Human approve does not need an
+  agent-log action.
+- `TaskFlow.Api/Services/IAgentNotifier.cs` — reuse `TaskMovedAsync` for the Done / Todo broadcasts.
+- `TaskFlow.Api/Program.cs` — DI block registers repositories/services/agents; `IAgentNotifier` is a
+  **singleton**. Add `IExecutorSwitch` (singleton) and `ISpendGuard` (scoped).
+- New: `IExecutorSwitch` + `ExecutorSwitch`, `ISpendGuard` + `DailyExecutorSpendGuard`, and an
+  `AgentsController` (or extend `AgentDiagnosticsController`) for the executor enable/disable/status.
+
+Frontend:
+
+- `TaskFlow.Web/src/api/tasks.ts` — `getTasks`, `updateTaskStatus`. Add `approveTask(id)`.
+- new `TaskFlow.Web/src/api/executor.ts` — `getExecutorState`, `enableExecutor`, `disableExecutor`.
+- `TaskFlow.Web/src/hooks/useBoardTasks.ts` — add `approve(id)` mirroring the optimistic `moveTask`.
+- `TaskFlow.Web/src/components/TaskCardView.tsx` — accept an optional `onApprove` and render an
+  "Approve" button when present; `TaskCard` threads it through; `KanbanColumn` passes it only for the
+  `Review` column.
+- `TaskFlow.Web/src/components/AgentStatus.tsx` — hardcodes two agents; add the executor with an
+  Enable/Pause toggle wired to `api/executor.ts`.
+
+### Backend
+
+**T6.1 — explicit human approval (`Review → Done`); agents can never reach `Done`.**
+
+- *Files:* `ITaskService`/`TaskService` add `ApproveAsync(int id, CancellationToken)`: load the task;
+  if status is not `Review` return `Result.Invalid` (only `Review → Done`); set `Done`; save; then
+  `await _notifier.TaskMovedAsync(id, WorkflowStatus.Done, ct)`; return the DTO. `TasksControllers`
+  add `[HttpPost("{id:int}/approve")] Approve(int id) => (await _tasks.ApproveAsync(id)).ToActionResult()`.
+- *RED:* `TaskServiceTests` — approve from `Review` → `Done` and broadcasts `TaskMovedAsync(id, Done)`;
+  approve from a non-`Review` status → `Invalid`, no broadcast, no save. Invariant test (extend the
+  executor tests): after a full cycle the task is `Review`, never `Done` — the executor has no path to
+  `Done`.
+- *Principle:* SRP — approval is its own service method with the `Review → Done` guard; the agent
+  invariant is test-pinned, not assumed.
+
+**T6.2 — spend cap around Claude usage.**
+
+- *Files:* new `ISpendGuard { Task<bool> CanRunAsync(CancellationToken ct); }`; new
+  `DailyExecutorSpendGuard` counting `AgentActions.Claimed` for `"GenericExecutor"` since UTC midnight
+  via a new `IAgentLogRepository.CountByAgentActionSinceAsync(agentName, action, since, ct)`, compared
+  to `Agents:DailyExecutorTaskCap` (default 25) — returns `false` at/over the cap. Executor: before the
+  claim, `if (!await _spendGuard.CanRunAsync(ct)) { log "daily cap reached"; return; }`. Register
+  `AddScoped<ISpendGuard, DailyExecutorSpendGuard>()`.
+- *RED:* executor test — inject `Mock<ISpendGuard>` returning `false`; assert nothing is claimed and
+  Claude is never called. Guard unit test (in-memory SQLite + `AgentLogRepository`) — seed N `Claimed`
+  logs today; cap N → `false`; cap N+1 → `true`.
+- *Principle:* DIP — the executor depends on `ISpendGuard`, not on how spend is measured; SRP — policy
+  in one class; the count-tasks-per-day proxy is swappable for token accounting later.
+
+**T6.3 — rollback on abnormal termination (exception or cancellation).**
+
+- *Files:* `ITaskRepository`/`TaskRepository` add `ReleaseClaimAsync(int taskId, CancellationToken)` —
+  guarded `ExecuteUpdateAsync` `WHERE Id = @id AND Status = InProgress` → set `Todo`, `ClaimedBy = null`,
+  `UpdatedAt`; returns `bool`. `AgentConstants` add `RolledBack`. Executor: wrap the work (record
+  `Claimed` through auto-finalize) in try/catch. On exception → `await _tasks.ReleaseClaimAsync(task.Id)`,
+  record a `RolledBack` log, `await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, ct)`, log the
+  error, and swallow (let the runner continue). Also: after the tool loop, `if
+  (cancellationToken.IsCancellationRequested)` roll back instead of auto-finalizing.
+- *RED:* repo test — `ReleaseClaimAsync` moves `InProgress → Todo` and clears `ClaimedBy`; no-ops
+  otherwise. Executor test — a Claude stub that throws (`StubClaude.ThatThrows()`); assert the task is
+  back in `Todo`, `ClaimedBy` is null, and a `RolledBack` log exists.
+- *Principle:* symmetric guarded transition (DRY with claim/review); completes the terminal-state
+  invariant across clean-end (Review, T4.4) and failure (Todo, T6.3).
+
+**T6.5 (BE) — executor kill switch, default OFF (finding F3).**
+
+- *Files:* new `IExecutorSwitch { bool IsEnabled { get; } void Enable(); void Disable(); }`; new
+  `ExecutorSwitch` (thread-safe, seeded from `Agents:ExecutorEnabled`, default `false`), registered
+  `AddSingleton<IExecutorSwitch, ExecutorSwitch>()`. Executor: first guard —
+  `if (!_switch.IsEnabled) { log "paused"; return; }`. New `AgentsController`:
+  `GET api/agents/executor` → `{ enabled }`, `POST api/agents/executor/enable`,
+  `POST api/agents/executor/disable`.
+- *RED:* executor test — switch disabled → nothing claimed, Claude never called. Switch unit test —
+  `Enable`/`Disable` flip `IsEnabled`. (Endpoint covered by an integration test if desired.)
+- *Principle:* SRP — one concern, one class; safe default OFF closes F3; runtime state (singleton) so
+  the toggle takes effect without a restart and the UI can drive it.
+
+### Frontend
+
+**T6.4 — approval control in the UI.**
+
+- *Files:* `api/tasks.ts` `approveTask(id)` → `POST /api/Tasks/{id}/approve`. `useBoardTasks` add
+  `approve(id)` mirroring the optimistic `moveTask` (optimistic `Done`, call `approveTask`, roll back on
+  failure). `TaskCardView` render an "Approve" button when given `onApprove`; `TaskCard` threads
+  `onApprove`; `KanbanColumn` passes it to its cards only when `status === 'Review'`; `KanbanBoard`
+  wires `approve` down to the `Review` column.
+- *RED:* RTL — a `Review` card shows "Approve"; clicking it calls the approve endpoint (MSW) and the
+  card lands in `Done`; a non-`Review` card shows no button.
+- *Principle:* presentational button in `TaskCardView` (SRP); the approve action lives in the hook like
+  `moveTask` (DRY).
+
+**T6.5 (FE) — executor enable/pause toggle.**
+
+- *Files:* new `api/executor.ts` (`getExecutorState`, `enableExecutor`, `disableExecutor`).
+  `AgentStatus.tsx` add the executor as a third agent card with an Enable/Pause toggle reading/writing
+  that API (seed state from `getExecutorState` on mount).
+- *RED:* RTL — the toggle shows the current state and calls enable/disable on click.
+- *Principle:* the UI drives the runtime switch; state comes from the server, not a guess.
+
+### Executor guard order (target `RunAsync`)
+
+```
+if (!_switch.IsEnabled)            -> log "paused"; return         (T6.5)
+if (!ClaudeConfigured)             -> log; return                  (existing)
+if (!await _spendGuard.CanRunAsync)-> log "daily cap"; return      (T6.2)
+task = await TryClaimNextAsync(); if (task is null) return
+try {
+    NotifyCycleStarted; record Claimed; broadcast InProgress
+    actions = await RunToolConversationAsync(...)
+    if (cancellationToken.IsCancellationRequested) { rollback -> Todo; return; }   (T6.3)
+    autoFinalize -> Review                                          (T4.4)
+    NotifyCycleCompleted
+}
+catch (Exception ex) {
+    await ReleaseClaimAsync(task.Id); record RolledBack; broadcast Todo; log ex   (T6.3)
+}
+```
+
+**Constructor-change note:** `GenericExecutorAgent` gains `IExecutorSwitch` and `ISpendGuard`. Its
+tests construct it directly, so update those constructions to pass an enabled switch and a permissive
+guard by default (e.g. `Mock` objects with `IsEnabled = true` and `CanRunAsync => true`); the guard-
+specific tests then override one of them. Consider a small test helper to build the executor with
+permissive defaults so the many existing call sites stay DRY.
+
+### Test strategy
+
+- Backend guards are tested at the agent's dependency seams (`Mock<IExecutorSwitch>`,
+  `Mock<ISpendGuard>`, `StubClaude.ThatThrows`), not through SignalR or the HTTP stack; the guarded
+  repository transitions get focused in-memory-SQLite tests; the approve service method is unit-tested.
+- Frontend runs offline against MSW + the signalr mock; the approve and toggle paths assert the API
+  calls.
+- Live check: turn the executor **on** from the UI, watch it claim/work/Review; approve a Review card
+  and see it reach Done; force an error (e.g. bad key) and see a card roll back to Todo.
+
+### Definition of done (Sprint 6)
+
+Agents cannot reach `Done` (test-pinned) and a human approve endpoint + button move `Review → Done`;
+the executor skips when the daily cap is hit; a thrown/cancelled cycle rolls the task back to `Todo`
+with a `RolledBack` log; the executor is OFF by default with a working UI toggle (F3 resolved);
+`dotnet test` and `npm run test` green.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 6 — Guardrails
+
+Makes autonomous execution safe before it runs unattended.
+
+### What
+- `ApproveAsync` + `POST /api/Tasks/{id}/approve` for `Review → Done` (human only); a test pins that
+  the agent path never reaches Done.
+- `ISpendGuard` (daily executor-task cap) — the executor skips when the cap is hit.
+- `ReleaseClaimAsync` + try/catch rollback: a thrown or cancelled cycle returns the task to Todo with a
+  `RolledBack` log (complements the T4.4 clean-end auto-finalize).
+- `IExecutorSwitch` (default OFF) + `api/agents/executor` endpoints and a UI toggle (resolves F3).
+- Frontend Approve button on Review cards.
+
+### Tests
+- Approve service tests; agent-never-Done invariant; spend-cap skip + guard unit; `ReleaseClaimAsync`
+  + executor rollback (`StubClaude.ThatThrows`); switch unit + executor-paused; RTL approve button and
+  executor toggle.
+- `dotnet test` and `npm run test` green.
+
+### Type of change
+- [x] Feature (backend + frontend) + tests
+```
+
+### Post-Sprint-6 — status, review-UX additions, and operational changes
+
+**Status.** Sprint 6 complete and green, including the review-UX additions below: 76 `dotnet test`
+and 30 `npm test` (17 files) passing.
+
+**Human review UX (extends the Sprint 6 approval flow).**
+
+- **Reject.** `ITaskService.RejectAsync` + `POST /api/Tasks/{id}/reject`: guarded `Review → Todo`,
+  clears `ClaimedBy` for rework, records the reviewer's reason as an `AgentActions.Rejected` log, and
+  broadcasts `TaskMoved(Todo)`. Frontend: `rejectTask`, `useBoardTasks.reject` (reuses the shared
+  optimistic path), and a red **Reject** button gated on a required reason text box — the
+  `ReviewActions` component owns the reason state; `TaskCardView` stays presentational.
+- **Executor output on the card.** `taskOutput(logs, taskId)` (pure helper in `lib/board.ts`) gathers
+  a task's `ProgressRecorded` / `ReviewRequested` / `AutoFinalized` log details oldest-first; the Review
+  card shows them in an "Executor output" box so the result is visible without hunting the feed. `logs`
+  are threaded Dashboard → KanbanBoard → the Review column (no board refetch, so F2 stays fixed). The
+  box is scoped to the current cycle (output at/after the most recent `Claimed`), so earlier runs and a
+  reused seed id do not pile up.
+- **Rejections feed back into rework.** The executor folds a task's outstanding `Rejected` reasons into
+  its prompt (`ExecutorPrompt.Build` + `IAgentLogRepository.GetByTaskAndActionAsync`), oldest-first, so
+  the feedback is not lost across reworks; multiple rejections accumulate as `Rejected` logs until the
+  task is approved. Prompt building was extracted into the pure, testable `ExecutorPrompt` (SRP).
+
+**Operational changes.**
+
+- **Seed swapped to executor-completable demo tasks** (migration `ReplaceSeedWithTrivialTasks`): the
+  five engineering seed tasks were replaced with trivial, self-contained ones (haiku, paperclip uses,
+  robot name, one-sentence description, number-7 fact), all in `Todo`, so the executor can genuinely
+  finish them Todo → Review and a human can approve to Done.
+- **Executor cadence 1 minute in dev** (`appsettings.Development.json`, `Agents:ExecutorIntervalMinutes = 1`).
+- **Auto-pause when the board is clear** (recorded in decision #4 above).
+- **ExecutorControl** moved full-width above the board and tinted faded green when enabled / faded red
+  when paused.
+- **Single-origin dev (Sprint 7 `T7.2`, pulled forward):** Vite now proxies `/api` and `/hubs` to the
+  API on `:5002`, `client.ts` `BASE_URL` defaults to `''` (same-origin), and a `dev:all` script
+  (`concurrently`) starts both. The whole app is one URL — `http://localhost:5173` — startable with one
+  command; the old `VITE_API_BASE_URL=:5002` override in `.env.local` was commented out. Routing/nav
+  (`T7.1`, done: react-router, `/board` `/ingest` `/login`, `NavBar`, `ProtectedLayout`) and login
+  polish (`T7.3`, done) shipped. **Sprint 7 complete.**
+- **Single front door (T7.3 re-scope decision).** The real disjointedness was that `dotnet run`
+  auto-launched Swagger, making it look like the entry point when the web app at `:5173` is already
+  self-sufficient (its own login hits `/api/Auth/*` through the proxy and stores the JWT — Swagger is
+  never needed to use the app). Fix: `launchSettings.json` `launchBrowser: false` (Swagger stays opt-in
+  at `/swagger`), and `dev:all` runs `vite --open` so one command opens the app at `:5173`. The login
+  screen was polished (card, brand, focus states, friendlier error) while preserving the `Email`/`Password`
+  placeholders and `Sign in`/`Create account` button names the tests rely on; a register/sign-in toggle
+  RTL test was added. **Deferred (own sprint): true single-origin build where the API serves the built
+  SPA (one URL / one deploy in prod, Vite still for dev HMR).**
+- **Test-coverage hardening.** Added HTTP integration tests (`TaskWorkflowIntegrationTests`, sharing an
+  `Integration` xUnit collection with `AuthFlowTests` so they run sequentially and don't race on the
+  factory's global env vars) covering approve / reject / executor toggle / ingest→commit through the
+  real routing + auth + Result-to-status stack. Coverage tooling wired up: backend
+  `dotnet test /p:CollectCoverage=true` (coverlet.msbuild console summary), frontend `npm run coverage`
+  (`@vitest/coverage-v8`, text + html reporters). `.\test` (test.cmd) at the repo root runs both suites
+  with coverage into `test-results.txt` (git-ignored) in one command; `.\run` (run.cmd) starts the app.
+
+**Where we are / building towards.** Epic 2 (generic, document-driven autonomous execution) is
+essentially built across Sprints 1-6: ingest → drafts → board tasks → an executor that claims, works,
+and hands to a gated human review, all live and guardrailed. Remaining planned work: **Sprint 7**
+(UX & integration — routing, single-origin dev, login polish) and **Sprint 8** (resilience — retry
+transient Claude errors). The north star beyond that is **Epic 3**, the resume / cover-letter builder,
+layered on the same pipeline via a new ingestion parser plus a domain executor, with no change to the
+core seams.
+
+---
+
+## Sprint 7 — UX & Integration (make it one usable app)
+
+**Context — why this sprint exists.** Running the app end to end surfaced three frustrations, none
+of which touch the autonomous-execution pipeline (Sprints 4-6), so they are collected here as an
+independent sprint: (1) the ingestion feature built in Sprints 2-3 is not reachable from the UI at
+all — `IngestDocument` is a tested component linked nowhere; (2) the frontend (`:5173`) and API
+(`:5002`) feel like two separate applications in dev — two commands to start, a CORS policy, and an
+env var pointing one at the other; (3) the login screen is a bare form that reads as dated. This
+sprint is independent of Sprints 4-6 and can be slotted whenever, but doing it now is recommended
+because it makes everything built so far actually usable.
+
+**Goal.** One coherent app: log in on a polished screen, move between the Board and the Ingest page
+from a shared nav bar, all served as a single origin in dev, started with one command.
+
+**Current state (grounded now, so the build is clean when we start):**
+- There is no client-side router. `App.tsx` wraps `AuthProvider` around a `Shell` that renders
+  `Login` when unauthenticated and `Dashboard` when authenticated. `Dashboard` is the only screen,
+  and it owns the header (TaskFlow title, user name, Sign out).
+- `IngestDocument` lives in `features/` and is imported nowhere.
+- `client.ts` builds URLs from `BASE_URL = import.meta.env.VITE_API_BASE_URL`; in dev that points at
+  `http://localhost:5002`. The API enables a CORS policy for `http://localhost:5173`. `useAgentFeed`
+  connects SignalR to `${BASE_URL}/hubs/agents`.
+- `Login.tsx` is one Tailwind form (email, password, a register toggle, an error box, a submit
+  button named "Sign in"/"Create account"). The Sprint L integration test (`Login.test.tsx`) drives
+  it via `getByPlaceholderText('Email')`, `('Password')`, and `getByRole('button', { name: /sign in/i })`,
+  then asserts the signed-in name renders. **Those handles must survive any polish.**
+
+### T7.1 — Navigation: make the Ingest page reachable
+
+**Decision (owned): introduce `react-router-dom`.** The app is about to grow past one screen
+(Board and Ingest now; executor/approval views in Sprints 5-6), so a router earns its place: real
+URLs (`/board`, `/ingest`), a single nav bar, and route-level auth, instead of a hand-rolled view
+toggle we would later rip out. The lighter alternative (a `useState` view switch in the shell) is
+noted and rejected only because more routes are imminent; if that changes, the toggle is the fallback.
+
+Steps:
+1. `npm install react-router-dom` in `TaskFlow.Web`.
+2. `main.tsx`: wrap `<App />` in `<BrowserRouter>`.
+3. Rewrite `App.tsx` from the `Shell` swap to routes, keeping `AuthProvider` at the top. Add a
+   `ProtectedRoute` that reads `useAuth` and redirects to `/login` when not authenticated. Routes:
+   `/login` -> `Login` (redirect to `/board` if already authenticated), `/board` -> `Dashboard`
+   (protected), `/ingest` -> `IngestDocument` (protected), `/` -> redirect to `/board`.
+4. New `components/NavBar.tsx` (presentational): TaskFlow title, `NavLink`s to Board and Ingest
+   (active styling), the signed-in user name, and Sign out. Move the header/sign-out that currently
+   lives in `Dashboard` into `NavBar` so every authenticated screen shares one header.
+5. `Login` calls `signIn`, then `useNavigate` to `/board`, rather than relying on the removed
+   `Shell` swap.
+
+TDD (RED first): rendering the app at `/ingest` while authenticated shows the "Ingest a document"
+heading; while unauthenticated it redirects to the login form; clicking the Ingest nav link from the
+board navigates to the Ingest page. RTL, the existing login MSW handler, and the shared
+`__mocks__/@microsoft/signalr.ts` stub (Dashboard opens SignalR).
+
+Files: `package.json` (+dep), `main.tsx`, `App.tsx`, new `components/NavBar.tsx`, `features/Login.tsx`,
+`features/Dashboard.tsx` (header moves out), plus tests.
+
+### T7.2 — Dev experience: one origin, one command
+
+**Part A — Vite proxy (single origin, no CORS in dev).** Configure `vite.config.ts` `server.proxy`
+to forward `/api` and `/hubs` to `http://localhost:5002`, with `ws: true` on `/hubs` for the SignalR
+websocket. The frontend then talks to its own origin and Vite relays to the API.
+- `client.ts`: default `BASE_URL` to `''` when `VITE_API_BASE_URL` is unset, so requests become
+  same-origin `/api/...` that the proxy handles; `useAgentFeed`'s hub URL becomes `/hubs/agents`.
+  Production can still set a real base URL via the env var.
+- Test impact: none. MSW handlers match `*/api/...` regardless of origin; `BASE_URL = ''` makes the
+  path `/api/...`, still matched.
+
+**Part B — one startup command.** Add `concurrently` as a dev dependency and a script in
+`TaskFlow.Web/package.json`: `"dev:all": "concurrently \"dotnet run --project ../TaskFlow.Api\" \"vite\""`.
+`npm run dev:all` then launches both processes together.
+
+TDD: config and tooling, not unit-testable. Acceptance check: run `npm run dev:all`, open
+`http://localhost:5173`, confirm the board and agent feed load through the proxy with no CORS error
+and SignalR connects.
+
+Files: `vite.config.ts`, `src/api/client.ts`, `package.json`.
+
+### T7.3 — Polish the login screen
+
+**Constraint (do not break the guard test):** keep the `Email`/`Password` placeholders and the
+"Sign in"/"Create account" button names, because `Login.test.tsx` and the login flow rely on them.
+Polish is presentational only.
+
+Steps: give the form a centered card with the TaskFlow brand and a subtitle, tidy input styling and
+focus states, a clearer primary button (keeping the existing loading text), a friendlier error
+banner, and a cleaner register/sign-in toggle. Optionally a show/hide password control (if added,
+it is new behavior, so cover it with a small RTL test).
+
+TDD: the existing `Login` flow integration test guards the behavior. Add one RTL test for the
+register/sign-in toggle if it is not already covered (clicking the toggle swaps the button label and
+reveals the Name field).
+
+Files: `features/Login.tsx` (and its test if the toggle test is added).
+
+### Sequencing
+
+Independent of Sprints 4-6. Order within the sprint: T7.1 (navigation) first, since it unlocks
+reaching the Ingest page; then T7.2 (dev experience); then T7.3 (login polish). Each is its own
+red/green where testable.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 7 — UX & Integration
+
+Makes TaskFlow feel like one app: reachable ingestion, single-origin dev, a polished login.
+
+### What
+- Routing with `react-router-dom`: `/board`, `/ingest`, `/login`, a shared `NavBar`, and
+  route-level auth. The ingestion page is now reachable.
+- Vite dev proxy for `/api` and `/hubs` (single origin, no CORS in dev); `BASE_URL` defaults to `''`.
+- `npm run dev:all` (concurrently) launches API + web together.
+- Polished login screen (placeholders and button names preserved for the guard tests).
+
+### Tests
+- RTL: nav to the Ingest page, unauthenticated redirect to login, register/sign-in toggle.
+- Existing login-flow integration test still green.
+- `npm run test` and `dotnet test` green.
+
+### Type of change
+- [x] Feature (frontend) + tooling + tests
+```
+
+---
+
+## Sprint 8 — Resilience (transient-error backoff)
+
+> **This section is a self-contained guide.** A new chat can execute it top to bottom. Follow the
+> standing rules at the top of this doc (TDD, DRY, SOLID; the AI writes code + tests, the user runs
+> `dotnet`/`git`).
+
+**Status: planned.**
+
+**Why this sprint exists (finding F6).** A live run hit `overloaded_error` (HTTP 529) from Anthropic:
+an `HttpRequestException` carrying `{"type":"overloaded_error","message":"Overloaded"}` propagated out
+of `ClaudeAgentBase.RunToolConversationAsync`. `AgentRunner` caught it and retried only after the full
+interval (30 min for the prioritizer), and for the executor the Sprint 6 rollback returned the task to
+`Todo`. Nothing was lost, but a one-second blip costs a full interval. Anthropic overloads (529) and
+rate limits (429) are transient and should be retried in place with backoff.
+
+**Goal.** A brief transient Claude failure is retried a few times over a few seconds before the cycle
+gives up. The retry lives in one place so all three agents benefit; the existing per-cycle fallbacks
+(executor rollback, prioritizer/stale skip) remain the last resort once retries are exhausted.
+
+### Architecture decisions
+
+1. **Decorate, don't modify.** Add `RetryingClaudeClient : IClaudeClient` that wraps the real
+   `ClaudeClient`, delegates `IsConfigured`, and retries `SendAsync` on transient errors. `ClaudeClient`
+   stays a thin SDK forwarder (SRP); resilience is added without touching it (OCP). DI registers the
+   concrete `ClaudeClient` and binds `IClaudeClient` to the decorator wrapping it (DIP). Agents are
+   unchanged — they still depend on `IClaudeClient`.
+2. **Transient = retryable.** Retry only `HttpRequestException` whose `StatusCode` is 429, 502, 503, or
+   529 (or whose message contains `overloaded`/`rate_limit` if the SDK does not surface a status).
+   Never retry a 4xx like 400/401 (a real error) or an `OperationCanceledException`.
+3. **Bounded + configurable.** `Anthropic:MaxRetries` (default 3) and `Anthropic:RetryBaseDelayMs`
+   (default 500). Delay = base × 2^attempt with a little jitter. (Honoring a `Retry-After` header is a
+   future nicety.)
+4. **Testable delay.** The backoff delay is injected as a `Func<int, TimeSpan>` (attempt → delay) with a
+   real default, so tests pass a zero-delay function and never actually sleep.
+
+### Grounded current state (seams you will touch)
+
+- `TaskFlow.Api/Services/IClaudeClient.cs` — `IsConfigured` + `SendAsync(MessageParameters, ct)`.
+- `TaskFlow.Api/Services/ClaudeClient.cs` — forwards to `AnthropicClient.Messages.GetClaudeMessageAsync`.
+  Unchanged by this sprint.
+- `TaskFlow.Api/Program.cs` — currently `AddScoped<IClaudeClient, ClaudeClient>()`. Change to register
+  the concrete `ClaudeClient` plus `IClaudeClient` → `RetryingClaudeClient` wrapping it.
+- `TaskFlow.Api/Agents/ClaudeAgentBase.cs` — calls `Claude.SendAsync`; benefits transparently, no change.
+
+### Task
+
+**T8.1 — `RetryingClaudeClient` decorator.**
+
+- *Files:* new `RetryingClaudeClient : IClaudeClient` — ctor `(IClaudeClient inner, IConfiguration config,
+  Func<int, TimeSpan>? delay = null)`; `IsConfigured => inner.IsConfigured`; a private
+  `static bool IsTransient(HttpRequestException ex)`; `SendAsync` loops up to `MaxRetries`, awaits the
+  inner, catches a transient `HttpRequestException`, delays `delay(attempt)`, and rethrows on the final
+  attempt or immediately for a non-transient error. `Program.cs` DI wiring (concrete `ClaudeClient` +
+  `IClaudeClient` → decorator).
+- *RED:* a controllable inner stub (throws a transient `HttpRequestException` N times, then returns a
+  response). Assert: retries and eventually succeeds (zero-delay); rethrows after exceeding `MaxRetries`;
+  does NOT retry a non-transient error (e.g. status 400) and rethrows immediately; does not retry an
+  `OperationCanceledException`.
+- *Principle:* OCP/DIP — resilience by decoration, `ClaudeClient` and every agent unchanged. SRP — the
+  retry policy is one class. DRY — one retry path serves all three agents.
+
+### Test strategy
+
+Unit-test the decorator against a small controllable inner `IClaudeClient` stub (counts calls; throws a
+transient or non-transient error, or returns a canned response) with a zero-delay function, so tests are
+instant and offline. `StubClaude` replays scripted responses; add a tiny throwing/counting stub for the
+retry tests rather than overloading `StubClaude`.
+
+### Definition of done (Sprint 8)
+
+Transient `429/502/503/529` errors from Claude are retried with backoff and succeed if the blip clears;
+non-transient errors and cancellations are not retried; `ClaudeClient` and the agents are unchanged;
+`dotnet test` green.
+
+**PR body (target — we work to make it true):**
+
+```markdown
+## Sprint 8 — Resilience: transient-error backoff
+
+Transient Claude API errors (overloaded / rate-limit) are retried with backoff instead of failing the cycle.
+
+### What
+- `RetryingClaudeClient : IClaudeClient` decorator retries `SendAsync` on 429/502/503/529 with
+  exponential backoff + jitter, bounded by `Anthropic:MaxRetries` (default 3). Non-transient errors and
+  cancellation are not retried. `ClaudeClient` and the agents are unchanged; DI wraps the concrete client.
+
+### Tests
+- Decorator retries a transient failure and succeeds; gives up after MaxRetries; does not retry a 4xx or
+  a cancellation (zero-delay, no network).
+- `dotnet test` green.
+
+### Type of change
+- [x] Feature (backend, resilience) + tests
+```
+
+---
+
+# Product Owner — Sprint Backlog (assigned, test-first)
+
+Every task is **RED first**: the developer writes the failing test, we confirm red, then the
+simplest green, then refactor with tests staying green. Owners: **BE** = backend developer,
+**FE** = frontend developer. The principle note names the SOLID/DRY idea each task is meant to
+exercise. Nothing merges without its tests.
+
+**Sprint 1 — Ingestion service (BE)**
+
+- `T1.1` — `TaskDraft` model + `IIngestionParser` interface. RED: a contract test pinning the
+  shape. *ISP: a small, focused interface.*
+- `T1.2` — `SpecDocumentParser : IIngestionParser` turning generic spec-doc text into drafts,
+  deterministic. RED: feed sample text, assert draft count and fields. *SRP: it only parses. DIP:
+  returns `Result<T>`, no HTTP or Claude.*
+- `T1.3` — stamp `TaskKind.Generic` and provenance on each draft. RED: assert kind + provenance on
+  the output.
+
+**Sprint 2 — Agent-capable ingestion + source-agnostic endpoint + preview (BE + FE)**
+
+- `T2.1` (BE) — `ClaudeIngestionParser : IIngestionParser`, agent parsing via `IClaudeClient`. RED:
+  `StubClaude` canned response, assert drafts. *DIP: depends on `IClaudeClient`. OCP: new parser
+  behind the seam, no change to the seam.*
+- `T2.2` (BE) — `TieredIngestionParser : IIngestionParser`, free rules first, escalate to Claude on
+  zero drafts, graceful with no key. RED: structured input does not call Claude; unstructured does.
+  *Composite behind the seam; SRP per parser.*
+- `T2.3` (BE) — `IngestDocumentDto` (content + source name) + `IngestionController`
+  `POST /api/Ingestion`, `.ToActionResult()`; register the tiered parser in DI. RED: controller
+  test with a mocked `IIngestionParser`. *SRP thin controller; DIP.*
+- `T2.4` (FE) — `TaskDraft` type, `api/ingestion.ts`, `useIngestion` hook, paste/file preview
+  container in `features/`. RED: MSW test of the call + RTL test rendering drafts.
+
+**Sprint 3 — Drafts become board tasks (BE + small FE)**
+
+- `T3.0` — adopt migrations: `Program.cs` startup `EnsureCreated()` → `Migrate()`; generate the new
+  migration with `dotnet ef` after `T3.1`; delete the dev `taskflow.db` once. The `Migrate()` path
+  is exercised by the existing `WebApplicationFactory` integration test.
+- `T3.1` — add `Kind` (default `Generic`, `HasConversion<string>()`) plus nullable `SourceName`
+  and `SourceSection` to `TaskItem`. Schema applies per the Sprint 3 analysis decision (migrations
+  via `dotnet ef`, or a fresh `EnsureCreated`). RED: repository round-trips kind + provenance.
+- `T3.2` — `CommitDraftsDto { SourceName, Drafts[] }` + a service mapping drafts to `TaskItem`
+  (`Todo`, kind, provenance) via `ITaskRepository.AddAsync` + thin `POST /api/Ingestion/commit`.
+  RED: in-memory SQLite asserts the tasks land; controller test with a mocked service. *DIP; SRP.*
+- `T3.3` (FE) — the preview gains an Approve action that POSTs the drafts to the commit endpoint.
+  RED: MSW + RTL.
+
+**Sprint 4 — Executor agent (BE)**
+
+- `T4.0` — add nullable `ClaimedBy` to `TaskItem`; `dotnet ef migrations add AddTaskClaimedBy`. RED:
+  repo round-trips `ClaimedBy` (extend the provenance round-trip test).
+- `T4.1` — `ITaskRepository.TryClaimNextAsync(kind, agentName)` via a guarded `ExecuteUpdateAsync`.
+  RED: claim once returns the task as `InProgress` with `ClaimedBy` set; a second claim returns null
+  (no double-claim). *SRP: concurrency lives in the repository.*
+- `T4.2` — `GenericExecutorAgent : ClaudeAgentBase` for `TaskKind.Generic`: claim, run the tool
+  conversation (`record_progress`, `request_review`), and on `request_review` move `InProgress ->
+  Review` with a `ReviewRequested` log. RED: `StubClaude` scripts `request_review`; assert the card
+  reached `Review` with the log. *OCP/LSP: extends the base, no base change. DIP: `IClaudeClient`.*
+- `T4.3` — register the agent in DI (`AddScoped<ITaskFlowAgent, GenericExecutorAgent>()`) so
+  `AgentRunner` discovers it. RED: covered by the executor test exercising the runner path.
+- `T4.4` — end-of-cycle terminal guarantee (resolves finding F1). After the tool loop, if the claimed
+  task is still `InProgress`, `MarkForReviewAsync` it and log a new `AgentActions.AutoFinalized`; also
+  tighten the executor prompt (it cannot write files; summarize then request review). RED: `StubClaude`
+  ends its turn WITHOUT `request_review`; assert the card still reaches `Review` with an `AutoFinalized`
+  log (not `ReviewRequested`). *Invariant: the executor never leaves a claimed task orphaned InProgress.*
+
+**Sprint 5 — Live transitions (BE + FE)** — full guide in the Sprint 5 section above.
+
+- `T5.1` (BE) — `HubEvents.TaskMoved` + `IAgentNotifier.TaskMovedAsync(taskId, status)` +
+  `SignalRAgentNotifier` impl + `ClaudeAgentBase.NotifyTaskMovedAsync`; executor broadcasts on claim
+  (`InProgress`) and on review / auto-finalize (`Review`). RED: `Mock<IAgentNotifier>` verifies both
+  moves in the executor test. *DIP + SRP: agent broadcasts, repository stays SignalR-free.*
+- `T5.2` (FE) — extract one shared connection (`AgentHubProvider` / `useAgentHub`) and refactor
+  `useAgentFeed` onto it. RED: existing `useAgentFeed` seed test stays green (behavior-preserving).
+  *SRP/DRY: one connection, many subscribers.*
+- `T5.3` (FE) — `useBoardTasks` (initial load + `TaskMoved` single-card patch + optimistic
+  `moveTask`); `KanbanBoard` consumes it; delete `refreshKey={logs.length}` from `Dashboard` (resolves
+  finding F2). Upgrade the signalr mock to record handlers + `emit`. RED: emit `TaskMoved` moves only
+  the target card and leaves others (and an in-flight drag) intact. *SRP: board state in one hook.*
+- `T5.4` (BE, optional/recommended) — `TaskService.UpdateStatusAsync` also broadcasts `TaskMoved` so a
+  human drag shows live on other clients. RED: `TaskService` test with `Mock<IAgentNotifier>`. Decide
+  with the user before starting.
+- `T5.5` (FE) — fix finding F4: pure `resolveDropColumn(overId, tasks)` maps a card or column drop
+  target to the destination column so a drop onto a card can't blank the moved card; `handleDragEnd`
+  uses it; `BOARD_COLUMNS` centralized in `lib/board.ts`. RED: `board.test.ts` unit tests. *SRP/DRY:
+  pure drop-resolution helper, one source of columns.*
+- `T5.6` (FE) — fix finding F5: `DragOverlay` renders the dragged card in a portal so it is not
+  clipped by the board's `overflow-x-auto` and survives live re-renders mid-drag; `TaskCard` split into
+  a presentational `TaskCardView` (renders in the overlay) plus the sortable wrapper. Standalone
+  `TaskCardView` render test. *SRP: presentation vs drag behavior.*
+
+**Sprint 6 — Guardrails (BE + FE)** — full guide in the Sprint 6 section above.
+
+- `T6.1` (BE) — `ITaskService.ApproveAsync` (`Review → Done`, guarded) + `POST api/Tasks/{id}/approve`;
+  broadcasts `TaskMoved(Done)`. RED: approve from Review → Done + broadcast; approve from non-Review →
+  Invalid; a full executor cycle never yields `Done` (invariant). *SRP + test-pinned invariant.*
+- `T6.2` (BE) — `ISpendGuard` (`DailyExecutorSpendGuard` counts `Claimed` since UTC midnight via
+  `IAgentLogRepository.CountByAgentActionSinceAsync` vs `Agents:DailyExecutorTaskCap`); executor checks
+  it before claiming. RED: `Mock<ISpendGuard>` false → executor claims nothing / no Claude; guard unit
+  test at the cap. *DIP: executor depends on the policy, not the measurement.*
+- `T6.3` (BE) — `ITaskRepository.ReleaseClaimAsync` (`InProgress → Todo`, clear `ClaimedBy`) +
+  `AgentActions.RolledBack`; wrap the executor work in try/catch (exception → rollback; also roll back
+  on cancellation) — complements Sprint 4 `T4.4` (clean end → Review). RED: `ReleaseClaimAsync` repo
+  test; `StubClaude.ThatThrows` → task back in `Todo`, `ClaimedBy` null, `RolledBack` log.
+- `T6.4` (FE) — `approveTask` + `useBoardTasks.approve`; an "Approve" button on `Review` cards
+  (`TaskCardView`/`TaskCard`/`KanbanColumn`). RED: RTL — Review card approves to Done, others show no
+  button. *SRP: presentational button; approve action in the hook like `moveTask`.*
+- `T6.5` (BE + FE) — `IExecutorSwitch`/`ExecutorSwitch` (singleton, default OFF via
+  `Agents:ExecutorEnabled`) + `api/agents/executor` enable/disable/status + a UI toggle in
+  `AgentStatus`; executor's first guard is `IsEnabled` (resolves finding F3). RED: disabled executor
+  claims nothing; switch unit test; RTL toggle. *Safe default OFF; runtime state drives the UI.*
+
+**Sprint 7 — UX & Integration (FE)**
+
+- `T7.1` — routing with `react-router-dom`: `/board`, `/ingest`, `/login`, a shared `NavBar`, and a
+  route-level auth guard; `Login` navigates after `signIn`. RED: RTL nav-to-Ingest and
+  unauthenticated-redirect tests. *SRP: NavBar presentational; the auth guard has one job.*
+- `T7.2` — dev experience: Vite proxy for `/api` and `/hubs`, `BASE_URL` defaults to `''`, and a
+  `dev:all` `concurrently` script. Verified by running (config, not unit-tested).
+- `T7.3` — polish the login screen, preserving the `Email`/`Password` placeholders and button names
+  the tests rely on. RED: a register/sign-in toggle RTL test if not already covered.
+
+**Sprint 8 — Resilience (BE)** — full guide in the Sprint 8 section above.
+
+- `T8.1` (BE) — `RetryingClaudeClient : IClaudeClient` decorator retrying transient Claude errors
+  (429/502/503/529 / overloaded / rate-limit) with exponential backoff (config `Anthropic:MaxRetries`
+  default 3, `Anthropic:RetryBaseDelayMs` default 500); DI wraps the concrete `ClaudeClient`. RED: an
+  inner stub throws a transient error N times then succeeds → retried; exceeds the cap → rethrows; a 4xx
+  or `OperationCanceledException` → not retried (zero-delay in tests). *OCP/DIP: decorate, don't modify.*
 
 ---
 
@@ -262,12 +1755,13 @@ principle from the stale-task agent, scaled up to an agent that changes real sta
 
 Recorded now so they are not forgotten; answered when we reach the relevant sprint, not before:
 
-- How granular should document parsing be: one task per heading, per checklist item, or Claude's
-  judgment?
+- **RESOLVED (Sprint 1):** granularity is one draft per markdown heading and per top-level
+  checklist item, rules-based.
 - Do executor agents write code/files, or only orchestrate and report? (Scope and safety.)
 - What is the human-in-the-loop checkpoint: approve each task, approve the batch, or fully
   autonomous with a kill switch?
-- Is parsing rules-based, Claude-assisted, or a hybrid? (Determines how Sprint 1 is tested.)
+- **RESOLVED:** parsing is rules-based and deterministic first; a `ClaudeIngestionParser` is added
+  later behind the same interface.
 
 ---
 

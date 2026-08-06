@@ -10,6 +10,32 @@ public interface ITaskRepository
     Task<List<TaskItem>> GetOpenAsync(CancellationToken ct = default);
     Task<List<TaskItem>> GetStaleAsync(DateTime cutoff, CancellationToken ct = default);
     Task<Dictionary<int, int>> GetOpenCountsByUserAsync(CancellationToken ct = default);
+
+    /// <summary>Counts tasks that are not Done (Todo + InProgress + Review) — the board's open work.</summary>
+    Task<int> CountOpenAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically claims the oldest <see cref="WorkflowStatus.Todo"/> task of <paramref name="kind"/>
+    /// for <paramref name="agentName"/>, moving it to <see cref="WorkflowStatus.InProgress"/> and
+    /// stamping the owner. Returns the claimed task, or null if none is available. Safe under
+    /// concurrent callers: only one wins any given task.
+    /// </summary>
+    Task<TaskItem?> TryClaimNextAsync(TaskKind kind, string agentName, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically moves a task from <see cref="WorkflowStatus.InProgress"/> to
+    /// <see cref="WorkflowStatus.Review"/>. Returns true if a row moved (the task was InProgress),
+    /// false otherwise. Executors stop at Review; only a human sets Done.
+    /// </summary>
+    Task<bool> MarkForReviewAsync(int taskId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Rolls back a claim: moves a task from <see cref="WorkflowStatus.InProgress"/> back to
+    /// <see cref="WorkflowStatus.Todo"/> and clears the owner. Returns true if a row moved. Used when
+    /// an executor cycle fails or is cancelled, so the task is never orphaned InProgress.
+    /// </summary>
+    Task<bool> ReleaseClaimAsync(int taskId, CancellationToken ct = default);
+
     Task AddAsync(TaskItem task, CancellationToken ct = default);
     void Remove(TaskItem task);
     Task SaveChangesAsync(CancellationToken ct = default);

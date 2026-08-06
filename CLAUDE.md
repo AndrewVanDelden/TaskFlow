@@ -15,6 +15,17 @@
   does not run `dotnet`. So: Claude writes the code and tests into the repo; YOU run every
   `git` and `dotnet test`/`dotnet build` command on your machine and report the result.
   This matches the TDD loop (you run, Claude writes).
+- **Root convenience commands:** `.\run` (run.cmd) starts the whole app — API + web with the browser
+  opening on `:5173` — and `.\test` (test.cmd) runs the full test suite with coverage into
+  `test-results.txt`. Both live at the repo root so no folder-changing is needed.
+- **Test workflow (how Claude checks results):** the user runs `.\test` from the repo root. It runs the full backend (`dotnet test /p:CollectCoverage=true`) and frontend
+  (`vitest run --coverage`) suites and writes ALL output — pass/fail, coverage tables, and errors
+  (it captures `stdout` **and** `stderr` via `2>&1`, so failing tests, assertion messages, stack
+  traces, and build errors are all in there) — to `test-results.txt` at the repo root. That file is
+  git-ignored, overwritten each run, and color-free (`NO_COLOR`). Claude READS `test-results.txt`
+  (its mount path is `/sessions/.../mnt/TaskFlow/test-results.txt`) to confirm results instead of
+  asking the user to paste terminal output. Loop: Claude writes code+tests → user runs
+  `.\coverage.cmd` → Claude reads `test-results.txt`.
 - **Standing rules that were violated once and must not be again:** domain types never
   reuse .NET BCL names (see Naming Conventions); fix collisions by renaming at the source,
   not aliasing; result types live in `Common/`.
@@ -47,6 +58,14 @@
 - **Do not attempt `git` or `dotnet` from the AI sandbox.** It cannot write `.git` and has
   no `dotnet`; a failed attempt left a stale `.git/index.lock` the user had to remove by
   hand. Hand every git/build/test command to the user (see Tooling boundary above).
+- **Do not invent scope, and never slip unspecified work into a "next step."** If something is
+  missing and should be added, say so explicitly and record it in the active doc as a labeled
+  decision before acting. (Violated: dropped "thread a source name into provenance" as if it were
+  a task that existed.)
+- **Refer to a task by exactly what the doc says it is;** do not silently relabel or re-scope a
+  numbered task in passing.
+- **Own architect/developer decisions; do not punt "your call" on a choice that is yours to make.**
+  Decide, record it in the doc, and commit. Reserve "your call" for genuine product decisions.
 
 **Findings from the long setup/refactor session (apply these too):**
 
@@ -72,7 +91,7 @@
   source recovery point after the reset is commit `6ca203d`.
 - **Source of truth is the active working document.** `TaskFlow_Refactor_Architecture_and_TDD.md`
   is COMPLETE (Slices A–L shipped, 39 backend + 14 frontend tests green) and is now the historical
-  record. Ongoing work lives in **`TaskFlow_NorthStar_Epic.md`** (the North Star epic, Sprints 1–6).
+  record. Ongoing work lives in **`TaskFlow_NorthStar_Epic.md`** (the North Star epic, Sprints 1–8).
   On any new chat, read the active epic doc first; do not re-derive context from chat history and
   do not use a "RESUME HERE" block. Record every bug fix and decision back into the active doc so
   the chat stays disposable.

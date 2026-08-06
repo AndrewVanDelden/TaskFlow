@@ -1,72 +1,43 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core'
-import type { TaskItem, TaskStatus } from '../types'
-import { getTasks, updateTaskStatus } from '../api/tasks'
+import type { AgentLog } from '../types'
+import { useBoardTasks } from '../hooks/useBoardTasks'
 import { KanbanColumn } from '../components/KanbanColumn'
+import { TaskCardView } from '../components/TaskCardView'
+import { BOARD_COLUMNS, resolveDropColumn, taskOutput } from '../lib/board'
 
-const COLUMNS: { status: TaskStatus; label: string }[] = [
-  { status: 'Todo', label: 'To Do' },
-  { status: 'InProgress', label: 'In Progress' },
-  { status: 'Review', label: 'Review' },
-  { status: 'Done', label: 'Done' },
-]
-
-export function KanbanBoard({ refreshKey }: { refreshKey: number }) {
-  const [tasks, setTasks] = useState<TaskItem[]>([])
-  const [error, setError] = useState<string | null>(null)
+export function KanbanBoard({ logs = [] }: { logs?: AgentLog[] }) {
+  const { tasks, error, moveTask, approve, reject } = useBoardTasks()
+  const [activeId, setActiveId] = useState<number | null>(null)
+  const outputFor = (id: number) => taskOutput(logs, id)
 
   // Require a small drag distance before starting, so clicks still work.
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   )
 
-  useEffect(() => {
-    let cancelled = false
+  const handleDragStart = (event: DragStartEvent) => setActiveId(Number(event.active.id))
 
-    getTasks()
-      .then((data) => {
-        if (cancelled) return
-        setTasks(data)
-        setError(null)
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Failed to load tasks.')
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [refreshKey])
-
-  const handleDragEnd = async (event: DragEndEvent) => {
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveId(null)
     const { active, over } = event
     if (!over) return
-
-    const taskId = Number(active.id)
-    const newStatus = over.id as TaskStatus
-    const task = tasks.find((t) => t.id === taskId)
-
-    if (!task || task.status === newStatus) return
-
-    // Optimistic update: change the UI immediately, reconcile with the server after.
-    const previous = tasks
-    setTasks(tasks.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)))
-
-    try {
-      await updateTaskStatus(taskId, newStatus)
-    } catch (err) {
-      // Roll back if the server rejected it.
-      setTasks(previous)
-      setError(err instanceof Error ? err.message : 'Failed to move task.')
-    }
+    // over.id may be a column (status) or a card (task id). Resolve to the destination column so a
+    // drop onto a card moves the card to that column instead of blanking its status with a task id.
+    const destination = resolveDropColumn(over.id, tasks)
+    if (!destination) return
+    moveTask(Number(active.id), destination)
   }
+
+  const activeTask = activeId != null ? tasks.find((t) => t.id === activeId) ?? null : null
 
   return (
     <div>
@@ -76,17 +47,30 @@ export function KanbanBoard({ refreshKey }: { refreshKey: number }) {
         </div>
       )}
 
-      <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setActiveId(null)}
+      >
         <div className="flex gap-3 overflow-x-auto pb-2">
-          {COLUMNS.map((col) => (
+          {BOARD_COLUMNS.map((col) => (
             <KanbanColumn
               key={col.status}
               status={col.status}
               label={col.label}
               tasks={tasks.filter((t) => t.status === col.status)}
+              // Approve/Reject and the executor output are Review-column affordances only.
+              onApprove={col.status === 'Review' ? approve : undefined}
+              onReject={col.status === 'Review' ? reject : undefined}
+              outputFor={col.status === 'Review' ? outputFor : undefined}
             />
           ))}
         </div>
+
+        {/* The dragged card rides in a portal above the board, so it is not clipped by the
+            columns' overflow and is unaffected by live re-renders during the drag. */}
+        <DragOverlay>{activeTask ? <TaskCardView task={activeTask} /> : null}</DragOverlay>
       </DndContext>
     </div>
   )

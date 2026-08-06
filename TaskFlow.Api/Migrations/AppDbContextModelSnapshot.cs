@@ -60,6 +60,10 @@ namespace TaskFlow.Api.Migrations
                     b.Property<int?>("AssignedToId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("ClaimedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -70,8 +74,20 @@ namespace TaskFlow.Api.Migrations
                     b.Property<DateTime?>("DueDate")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Priority")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceSection")
+                        .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
@@ -96,61 +112,57 @@ namespace TaskFlow.Api.Migrations
                         new
                         {
                             Id = 1,
-                            AssignedToId = 1,
-                            CreatedAt = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Configure GitHub Actions to run tests and deploy to Azure on push to main.",
-                            DueDate = new DateTime(2026, 5, 20, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Priority = "High",
+                            CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Compose a three-line haiku (5-7-5 syllables) about the fall season.",
+                            Kind = "Generic",
+                            Priority = "Low",
                             Status = "Todo",
-                            Title = "Set up CI/CD pipeline",
-                            UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc)
+                            Title = "Write a haiku about autumn",
+                            UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc)
                         },
                         new
                         {
                             Id = 2,
-                            AssignedToId = 1,
-                            CreatedAt = new DateTime(2026, 5, 13, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Finalize the entity relationships and run migrations.",
-                            DueDate = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Priority = "High",
-                            Status = "Done",
-                            Title = "Design database schema",
-                            UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc)
+                            CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Give three short, creative uses for a paperclip.",
+                            Kind = "Generic",
+                            Priority = "Low",
+                            Status = "Todo",
+                            Title = "List three uses for a paperclip",
+                            UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc)
                         },
                         new
                         {
                             Id = 3,
-                            AssignedToId = 2,
-                            CreatedAt = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Cover CRUD endpoints and auth flows with xUnit.",
-                            DueDate = new DateTime(2026, 5, 18, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Priority = "Medium",
-                            Status = "InProgress",
-                            Title = "Write API integration tests",
-                            UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc)
+                            CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Suggest one name for a friendly helper robot, with a one-line reason.",
+                            Kind = "Generic",
+                            Priority = "Low",
+                            Status = "Todo",
+                            Title = "Name a friendly robot",
+                            UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc)
                         },
                         new
                         {
                             Id = 4,
-                            CreatedAt = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "React drag-and-drop board with columns for each workflow state.",
-                            DueDate = new DateTime(2026, 5, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Priority = "Medium",
+                            CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Write a single clear sentence explaining what a to-do app does.",
+                            Kind = "Generic",
+                            Priority = "Low",
                             Status = "Todo",
-                            Title = "Build Kanban board UI",
-                            UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc)
+                            Title = "Describe a to-do app in one sentence",
+                            UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc)
                         },
                         new
                         {
                             Id = 5,
-                            AssignedToId = 1,
-                            CreatedAt = new DateTime(2026, 5, 13, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Register and login endpoints, protect all task routes.",
-                            DueDate = new DateTime(2026, 5, 17, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Priority = "High",
-                            Status = "Review",
-                            Title = "Add JWT authentication",
-                            UpdatedAt = new DateTime(2026, 5, 14, 0, 0, 0, 0, DateTimeKind.Utc)
+                            CreatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Provide one interesting fact about the number seven.",
+                            Kind = "Generic",
+                            Priority = "Low",
+                            Status = "Todo",
+                            Title = "Share a fun fact about the number 7",
+                            UpdatedAt = new DateTime(2026, 7, 27, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
                 });
 

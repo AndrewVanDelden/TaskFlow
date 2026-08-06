@@ -13,8 +13,10 @@ public class TaskServiceTests
 {
     private readonly Mock<ITaskRepository> _tasks = new();
     private readonly Mock<IUserRepository> _users = new();
+    private readonly Mock<IAgentNotifier> _notifier = new();
+    private readonly Mock<IAgentLogRepository> _logs = new();
 
-    private TaskService CreateSut() => new(_tasks.Object, _users.Object);
+    private TaskService CreateSut() => new(_tasks.Object, _users.Object, _notifier.Object, _logs.Object);
 
     private static TaskItem SampleTask(int id = 1) => new()
     {
@@ -107,6 +109,10 @@ public class TaskServiceTests
         var result = await CreateSut().UpdateStatusAsync(9, new UpdateTaskStatusDto { Status = WorkflowStatus.Done });
 
         result.Status.Should().Be(ResultStatus.NotFound);
+        // No move happened, so nothing is broadcast.
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -119,6 +125,108 @@ public class TaskServiceTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Status.Should().Be(nameof(WorkflowStatus.Done));
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_broadcasts_the_move_so_boards_update_live()
+    {
+        SetupGetById(SampleTask());
+
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.InProgress });
+
+        result.IsSuccess.Should().BeTrue();
+        _notifier.Verify(
+            n => n.TaskMovedAsync(1, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // ── Approve (Review -> Done, human only) ──────────────────────────────────
+    [Fact]
+    public async Task Approve_moves_a_Review_task_to_Done_and_broadcasts()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Review;
+        SetupGetById(task);
+
+        var result = await CreateSut().ApproveAsync(1);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Status.Should().Be(nameof(WorkflowStatus.Done));
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _notifier.Verify(n => n.TaskMovedAsync(1, WorkflowStatus.Done, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Approve_rejects_a_task_that_is_not_in_Review()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Todo;
+        SetupGetById(task);
+
+        var result = await CreateSut().ApproveAsync(1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Approve_returns_NotFound_when_task_missing()
+    {
+        SetupGetById(null);
+
+        var result = await CreateSut().ApproveAsync(9);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
+    // ── Reject (Review -> Todo with a reason) ─────────────────────────────────
+    [Fact]
+    public async Task Reject_sends_a_Review_task_back_to_Todo_with_the_reason()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Review;
+        task.ClaimedBy = "GenericExecutor";
+        SetupGetById(task);
+
+        var result = await CreateSut().RejectAsync(1, "Needs a better haiku.");
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Status.Should().Be(nameof(WorkflowStatus.Todo));
+        task.ClaimedBy.Should().BeNull();   // claim dropped so it can be re-picked
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        _logs.Verify(l => l.AddAsync(
+            It.Is<AgentLog>(a => a.Action == "Rejected" && a.TaskId == 1 && a.Details == "Needs a better haiku."),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _notifier.Verify(n => n.TaskMovedAsync(1, WorkflowStatus.Todo, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Reject_rejects_a_task_that_is_not_in_Review()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Todo;
+        SetupGetById(task);
+
+        var result = await CreateSut().RejectAsync(1, "reason");
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Reject_returns_NotFound_when_task_missing()
+    {
+        SetupGetById(null);
+
+        var result = await CreateSut().RejectAsync(9, "reason");
+
+        result.Status.Should().Be(ResultStatus.NotFound);
     }
 
     // ── GetById ───────────────────────────────────────────────────────────────

@@ -29,4 +29,19 @@ public class TaskItem
 
     [ForeignKey(nameof(AssignedToId))]
     public User? AssignedTo { get; set; }
+
+    // Which executor works this task. Defaults to Generic; ingestion stamps it.
+    public TaskKind Kind { get; set; } = TaskKind.Generic;
+
+    // Provenance for agent/ingested tasks (null for hand-created ones): which document and
+    // which section within it the task came from. No Document entity exists, so these are strings.
+    [MaxLength(200)]
+    public string? SourceName { get; set; }
+
+    [MaxLength(200)]
+    public string? SourceSection { get; set; }
+
+    // The agent currently working this task; null when unclaimed. Stamped atomically at claim time.
+    [MaxLength(200)]
+    public string? ClaimedBy { get; set; }
 }

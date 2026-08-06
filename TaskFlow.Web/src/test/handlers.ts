@@ -7,4 +7,22 @@ export const handlers = [
     HttpResponse.json({ token: 'fake.jwt.token', name: 'Ada', email: 'ada@x.dev', expiresAt: '' })),
   http.get('*/api/Tasks', () => HttpResponse.json([])),
   http.get('*/api/AgentLogs', () => HttpResponse.json([])),
+  http.post('*/api/Ingestion', () =>
+    HttpResponse.json([
+      { title: 'Draft from server', description: null, kind: 'Generic', section: 'Doc' },
+    ])),
+  http.post('*/api/Ingestion/commit', () => HttpResponse.json(1)),
+  http.get('*/api/agents/executor', () => HttpResponse.json({ enabled: false })),
+  http.post('*/api/agents/executor/enable', () => HttpResponse.json({ enabled: true })),
+  http.post('*/api/agents/executor/disable', () => HttpResponse.json({ enabled: false })),
+  http.post('*/api/Tasks/:id/approve', () =>
+    HttpResponse.json({
+      id: 1, title: 'Approved', description: null, status: 'Done', priority: 'High',
+      dueDate: null, createdAt: '', updatedAt: '', assignedToId: null, assignedToName: null,
+    })),
+  http.post('*/api/Tasks/:id/reject', () =>
+    HttpResponse.json({
+      id: 1, title: 'Rework', description: null, status: 'Todo', priority: 'High',
+      dueDate: null, createdAt: '', updatedAt: '', assignedToId: null, assignedToName: null,
+    })),
 ]

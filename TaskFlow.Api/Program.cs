@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using TaskFlow.Api.Agents;
 using TaskFlow.Api.Data;
+using TaskFlow.Api.Ingestion;
 using TaskFlow.Api.Services;
 using TaskFlow.Api.Hubs;
 using TaskFlow.Api.Repositories;
@@ -106,15 +107,29 @@ builder.Services.AddScoped<IAgentLogRepository, AgentLogRepository>();
 builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IClaudeClient, ClaudeClient>();
+// ── Ingestion (free-first: rules, escalate to Claude) ──────────────────────────
+builder.Services.AddScoped<SpecDocumentParser>();
+builder.Services.AddScoped<ClaudeIngestionParser>();
+builder.Services.AddScoped<IIngestionParser>(sp => new TieredIngestionParser(
+    free: sp.GetRequiredService<SpecDocumentParser>(),
+    paid: sp.GetRequiredService<ClaudeIngestionParser>()));
+builder.Services.AddScoped<IDraftCommitService, DraftCommitService>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();
+
+// ── Guardrails (Sprint 6) ──────────────────────────────────────────────────────
+// Executor kill switch is a singleton so its runtime state is shared app-wide; the spend guard is
+// scoped because it reads the request-scoped log repository.
+builder.Services.AddSingleton<IExecutorSwitch, ExecutorSwitch>();
+builder.Services.AddScoped<ISpendGuard, DailyExecutorSpendGuard>();
 
 // ── Agent Infrastructure ──────────────────────────────────────────────────────
 // Register each agent as a scoped service implementing ITaskFlowAgent
 // The AgentRunner discovers these automatically via GetServices<ITaskFlowAgent>()
 builder.Services.AddScoped<ITaskFlowAgent, TaskPrioritizerAgent>();
 builder.Services.AddScoped<ITaskFlowAgent, StaleTaskAgent>();
+builder.Services.AddScoped<ITaskFlowAgent, GenericExecutorAgent>();
 
 // Register the AgentRunner as a hosted background service
 // This starts automatically when the app starts
@@ -139,7 +154,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.Migrate();
 }
 
 if (app.Environment.IsDevelopment())

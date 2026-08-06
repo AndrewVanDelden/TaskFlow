@@ -1,7 +1,9 @@
 // Transport client: base URL, token storage, the shared request() that attaches the JWT,
 // and the ApiError type. The endpoint modules (auth, tasks, agentLogs) build on request().
 
-export const BASE_URL = import.meta.env.VITE_API_BASE_URL as string
+// Empty by default so the app is same-origin: the Vite dev proxy (and a prod host) serve /api and
+// /hubs. Set VITE_API_BASE_URL only to point the frontend at a different API origin.
+export const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
 
 const TOKEN_KEY = 'taskflow_token'
 

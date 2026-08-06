@@ -34,6 +34,16 @@ public class TasksController : ControllerBase
     public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateTaskStatusDto dto) =>
         (await _tasks.UpdateStatusAsync(id, dto)).ToActionResult();
 
+    // Human sign-off: Review -> Done. The agent path can never reach Done.
+    [HttpPost("{id:int}/approve")]
+    public async Task<IActionResult> Approve(int id) =>
+        (await _tasks.ApproveAsync(id)).ToActionResult();
+
+    // Human rejection: Review -> Todo with a reason (rework).
+    [HttpPost("{id:int}/reject")]
+    public async Task<IActionResult> Reject(int id, [FromBody] RejectTaskDto dto) =>
+        (await _tasks.RejectAsync(id, dto.Reason)).ToActionResult();
+
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id) =>
         (await _tasks.DeleteAsync(id)).ToActionResult();
