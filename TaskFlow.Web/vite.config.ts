@@ -8,11 +8,24 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
+    // Single-origin dev: the browser talks only to :5173, and Vite forwards API calls and the SignalR
+    // hub to the API on :5002. This removes the CORS/env dance and gives one URL for the whole app.
+    proxy: {
+      '/api': 'http://localhost:5002',
+      '/hubs': { target: 'http://localhost:5002', ws: true },
+    },
   },
   test: {
     globals: true,                      // use describe/it/expect without importing them
     environment: 'jsdom',               // fake browser DOM so components render in Node
     setupFiles: './src/test/setup.ts',  // runs once before each test file
     css: true,                          // process CSS imports instead of erroring on them
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.{ts,tsx}'],
+      // Exclude tests, the entry point, test scaffolding, and type-only files from the denominator.
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/main.tsx', 'src/test/**', 'src/**/*.d.ts'],
+    },
   },
 })

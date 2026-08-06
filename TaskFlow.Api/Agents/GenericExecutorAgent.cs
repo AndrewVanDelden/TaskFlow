@@ -1,6 +1,5 @@
 using Anthropic.SDK.Common;
 using Anthropic.SDK.Messaging;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TaskFlow.Api.Models;
@@ -109,9 +108,13 @@ public class GenericExecutorAgent : ClaudeAgentBase
             await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, cancellationToken);
 
             // ── REASON + ACT ───────────────────────────────────────────────────────────
+            // Fold any outstanding review feedback into the prompt so a rejection reason is not lost
+            // across reworks (it may take several rejections before a human approves).
+            var reasons = await OutstandingRejectionReasonsAsync(task.Id, cancellationToken);
+
             // Bind the claimed task to the dispatcher so the tools act on exactly this task.
             var actions = await RunToolConversationAsync(
-                prompt: BuildPrompt(task),
+                prompt: ExecutorPrompt.Build(task, reasons),
                 tools: BuildTools(),
                 dispatch: (toolUse, ct) => ExecuteToolAsync(task, toolUse, ct),
                 cancellationToken);
@@ -287,24 +290,17 @@ public class GenericExecutorAgent : ClaudeAgentBase
         return ToolResult(toolUse, $"Task {task.Id} moved to Review.");
     }
 
-    // ── PROMPT BUILDER ─────────────────────────────────────────────────────────────
-    private static string BuildPrompt(TaskItem task)
+    // ── REVIEW FEEDBACK ────────────────────────────────────────────────────────────
+    // Prior rejection reasons for the task, oldest first, so the model can address all of them.
+    // They persist as `Rejected` logs until the task is approved, so multiple rejections accumulate.
+    private async Task<IReadOnlyList<string>> OutstandingRejectionReasonsAsync(int taskId, CancellationToken ct)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine("You are an autonomous task-execution agent for a software team.");
-        sb.AppendLine("You cannot write files or change the codebase yourself. Your job is to reason about the");
-        sb.AppendLine("task, record a brief plan and any progress, then hand the task to a human for review.");
-        sb.AppendLine();
-        sb.AppendLine($"Task {task.Id}: {task.Title}");
-        if (!string.IsNullOrWhiteSpace(task.Description))
-            sb.AppendLine($"Description: {task.Description}");
-        sb.AppendLine();
-        sb.AppendLine("How to proceed:");
-        sb.AppendLine("  1. Think through what completing this task requires.");
-        sb.AppendLine("  2. Call record_progress with a short note on your plan (one or two sentences; do NOT paste code or file contents).");
-        sb.AppendLine("  3. Call request_review with a one-paragraph summary. This hands the task to a human.");
-        sb.AppendLine("Finish by calling request_review exactly once. Keep messages short and do not output code or file contents.");
-        return sb.ToString();
+        var rejections = await Logs.GetByTaskAndActionAsync(taskId, AgentActions.Rejected, 20, ct);
+        return rejections
+            .Where(r => !string.IsNullOrWhiteSpace(r.Details))
+            .Select(r => r.Details!)
+            .Reverse() // repository returns newest-first; present oldest-first
+            .ToList();
     }
 
     // ── ARGUMENT RECORDS ───────────────────────────────────────────────────────────

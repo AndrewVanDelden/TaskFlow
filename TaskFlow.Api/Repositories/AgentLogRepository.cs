@@ -29,6 +29,13 @@ public class AgentLogRepository : IAgentLogRepository
         _db.AgentLogs.CountAsync(
             l => l.AgentName == agentName && l.Action == action && l.CreatedAt >= since, ct);
 
+    public Task<List<AgentLog>> GetByTaskAndActionAsync(int taskId, string action, int limit, CancellationToken ct = default) =>
+        _db.AgentLogs
+            .Where(l => l.TaskId == taskId && l.Action == action)
+            .OrderByDescending(l => l.CreatedAt)
+            .Take(Math.Clamp(limit, 1, 100))
+            .ToListAsync(ct);
+
     public async Task AddAsync(AgentLog log, CancellationToken ct = default) =>
         await _db.AgentLogs.AddAsync(log, ct);
 

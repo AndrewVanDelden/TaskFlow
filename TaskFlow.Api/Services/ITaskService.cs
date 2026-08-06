@@ -12,6 +12,9 @@ public interface ITaskService
 
     /// <summary>Human sign-off: moves a task from <c>Review</c> to <c>Done</c>. Only valid from Review.</summary>
     Task<Result<TaskResponseDto>> ApproveAsync(int id, CancellationToken ct = default);
+
+    /// <summary>Human rejection: sends a <c>Review</c> task back to <c>Todo</c> with a reason. Only valid from Review.</summary>
+    Task<Result<TaskResponseDto>> RejectAsync(int id, string reason, CancellationToken ct = default);
     Task<Result<TaskResponseDto>> GetByIdAsync(int id, CancellationToken ct = default);
     Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, CancellationToken ct = default);
     Task<Result<bool>> DeleteAsync(int id, CancellationToken ct = default);

@@ -8,14 +8,16 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
+import type { AgentLog } from '../types'
 import { useBoardTasks } from '../hooks/useBoardTasks'
 import { KanbanColumn } from '../components/KanbanColumn'
 import { TaskCardView } from '../components/TaskCardView'
-import { BOARD_COLUMNS, resolveDropColumn } from '../lib/board'
+import { BOARD_COLUMNS, resolveDropColumn, taskOutput } from '../lib/board'
 
-export function KanbanBoard() {
-  const { tasks, error, moveTask, approve } = useBoardTasks()
+export function KanbanBoard({ logs = [] }: { logs?: AgentLog[] }) {
+  const { tasks, error, moveTask, approve, reject } = useBoardTasks()
   const [activeId, setActiveId] = useState<number | null>(null)
+  const outputFor = (id: number) => taskOutput(logs, id)
 
   // Require a small drag distance before starting, so clicks still work.
   const sensors = useSensors(
@@ -58,8 +60,10 @@ export function KanbanBoard() {
               status={col.status}
               label={col.label}
               tasks={tasks.filter((t) => t.status === col.status)}
-              // Approval is the Review-column affordance only.
+              // Approve/Reject and the executor output are Review-column affordances only.
               onApprove={col.status === 'Review' ? approve : undefined}
+              onReject={col.status === 'Review' ? reject : undefined}
+              outputFor={col.status === 'Review' ? outputFor : undefined}
             />
           ))}
         </div>

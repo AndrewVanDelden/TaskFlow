@@ -1,26 +1,45 @@
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { AuthProvider } from './hooks/AuthProvider'
 import { useAuth } from './hooks/AuthContext'
+import { AgentHubProvider } from './lib/agentHub'
+import { NavBar } from './components/NavBar'
 import { Login } from './features/Login'
 import { Dashboard } from './features/Dashboard'
-import { AgentHubProvider } from './lib/agentHub'
+import { IngestDocument } from './features/IngestDocument'
 
-function Shell() {
+// Keep authenticated users off the login screen.
+function LoginRoute() {
   const { isAuthenticated } = useAuth()
-  // The single SignalR connection lives here, wrapping the whole authenticated app so the
-  // agent feed and the board share it.
-  return isAuthenticated ? (
+  return isAuthenticated ? <Navigate to="/board" replace /> : <Login />
+}
+
+// Guards the authenticated area and provides the shared shell: one SignalR connection and the nav bar
+// around every authenticated screen. Board and Ingest render into the <Outlet/>.
+function ProtectedLayout() {
+  const { isAuthenticated } = useAuth()
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+
+  return (
     <AgentHubProvider>
-      <Dashboard />
+      <div className="min-h-screen bg-slate-950 text-white">
+        <NavBar />
+        <Outlet />
+      </div>
     </AgentHubProvider>
-  ) : (
-    <Login />
   )
 }
 
 export default function App() {
   return (
     <AuthProvider>
-      <Shell />
+      <Routes>
+        <Route path="/login" element={<LoginRoute />} />
+        <Route element={<ProtectedLayout />}>
+          <Route path="/board" element={<Dashboard />} />
+          <Route path="/ingest" element={<IngestDocument />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/board" replace />} />
+      </Routes>
     </AuthProvider>
   )
 }

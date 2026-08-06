@@ -20,4 +20,9 @@ export const handlers = [
       id: 1, title: 'Approved', description: null, status: 'Done', priority: 'High',
       dueDate: null, createdAt: '', updatedAt: '', assignedToId: null, assignedToName: null,
     })),
+  http.post('*/api/Tasks/:id/reject', () =>
+    HttpResponse.json({
+      id: 1, title: 'Rework', description: null, status: 'Todo', priority: 'High',
+      dueDate: null, createdAt: '', updatedAt: '', assignedToId: null, assignedToName: null,
+    })),
 ]

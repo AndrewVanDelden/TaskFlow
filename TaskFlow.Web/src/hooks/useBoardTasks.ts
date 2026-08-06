@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { TaskItem, TaskStatus } from '../types'
-import { getTasks, updateTaskStatus, approveTask } from '../api/tasks'
+import { getTasks, updateTaskStatus, approveTask, rejectTask } from '../api/tasks'
 import { HubEvents } from '../lib/hubEvents'
 import { useAgentHub } from '../lib/agentHub'
 
@@ -74,5 +74,9 @@ export function useBoardTasks() {
   const approve = (id: number) =>
     applyOptimistic(id, 'Done', () => approveTask(id), 'Failed to approve task.')
 
-  return { tasks, error, moveTask, approve }
+  // Human rejection: Review -> Todo (rework) with a reason.
+  const reject = (id: number, reason: string) =>
+    applyOptimistic(id, 'Todo', () => rejectTask(id, reason), 'Failed to reject task.')
+
+  return { tasks, error, moveTask, approve, reject }
 }
