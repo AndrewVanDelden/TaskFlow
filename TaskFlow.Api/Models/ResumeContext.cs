@@ -10,6 +10,9 @@ public class ResumeContext
 {
     public int Id { get; set; }
 
+    // Identifier-like string, used (with OwnerId) in the compound lookup index — capped like
+    // TaskItem.Title/SourceName/ClaimedBy rather than left unbounded in an indexed column.
+    [MaxLength(200)]
     public string IngestionSessionId { get; set; } = string.Empty;
 
     public int OwnerId { get; set; }
@@ -19,6 +22,9 @@ public class ResumeContext
     [MaxLength(20000)]
     public string Content { get; set; } = string.Empty;
 
+    // Enum-like discriminator ("text", "markdown") — capped the same as AgentLog.Action, another
+    // short discriminator string, rather than left unbounded.
+    [MaxLength(50)]
     public string ContentFormat { get; set; } = "text";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
