@@ -30,6 +30,13 @@ public class ToolOutputValidatorTests
     }
 
     [Fact]
+    public void Rejects_non_positive_max_length()
+    {
+        ToolOutputValidator.Validate("ok", maxLength: 0).Status.Should().Be(ResultStatus.Validation);
+        ToolOutputValidator.Validate("ok", maxLength: -1).Status.Should().Be(ResultStatus.Validation);
+    }
+
+    [Fact]
     public void Rejects_empty_or_whitespace_only_content()
     {
         ToolOutputValidator.Validate("", maxLength: 100).Status.Should().Be(ResultStatus.Validation);

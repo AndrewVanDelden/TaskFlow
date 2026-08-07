@@ -34,7 +34,7 @@ public class StaleClaimReaperService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var interval = TimeSpan.FromMinutes(_config.GetValue("Agents:StaleClaimSweepIntervalMinutes", 5));
+        var interval = TimeSpan.FromMinutes(Math.Max(1, _config.GetValue("Agents:StaleClaimSweepIntervalMinutes", 5)));
 
         _logger.LogInformation("StaleClaimReaperService started. Interval: {Interval}", interval);
 
@@ -71,7 +71,7 @@ public class StaleClaimReaperService : BackgroundService
 
     private async Task SweepAsync(CancellationToken ct)
     {
-        var thresholdMinutes = _config.GetValue("Agents:StaleClaimThresholdMinutes", 30);
+        var thresholdMinutes = Math.Max(1, _config.GetValue("Agents:StaleClaimThresholdMinutes", 30));
         var staleAfter = TimeSpan.FromMinutes(thresholdMinutes);
 
         using var scope = _scopeFactory.CreateScope();

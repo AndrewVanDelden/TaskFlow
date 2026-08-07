@@ -117,8 +117,7 @@ the repo before writing this doc:
 ## Sprint 0 — Security and Hardening Foundations
 
 **Status: COMPLETE (2026-08-07).** T0.1–T0.7 shipped on `feature/epic3-sprint0-security-hardening`
-(6 commits, not yet pushed/PR'd — pending user confirmation). Full suite green: 103/103 backend,
-38/38 frontend. Built by four delegated engineers (two run in parallel with zero file overlap,
+(6 commits). Full suite green: 103/103 backend, 38/38 frontend. Built by four delegated engineers (two run in parallel with zero file overlap,
 two sequenced because both touched `Program.cs`), each independently re-verified against the diff
 and a fresh `dotnet test`/`npm test` run rather than taken on the subagent's word. This section is
 now the historical record for Sprint 0.
