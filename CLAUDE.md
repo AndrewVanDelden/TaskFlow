@@ -66,6 +66,17 @@
   numbered task in passing.
 - **Own architect/developer decisions; do not punt "your call" on a choice that is yours to make.**
   Decide, record it in the doc, and commit. Reserve "your call" for genuine product decisions.
+- **Never run `git reset --hard` (or any other command that rewrites the working tree) without
+  first checking `git status` for uncommitted changes to tracked files, and committing or stashing
+  them first.** `reset --hard` discards uncommitted edits to tracked files silently; it does not
+  touch untracked files, which makes partial data loss easy to miss. (Violated, 2026-08-07, during
+  Epic 3 Sprint 1: fixed an unrelated branch-hygiene mistake by running `git reset --hard` on
+  `develop` while a subagent's uncommitted edits to five existing files were still in the working
+  tree. The edits were silently wiped; only the subagent's new, untracked files survived. Caught by
+  independently re-verifying the subagent's diff instead of trusting its self-report, then recovered
+  by having the same subagent redo just the lost edits. Lesson: commit each verified slice of work
+  immediately, before starting the next one — don't let verified-but-uncommitted work sit exposed
+  while doing anything else.)
 
 **Findings from the long setup/refactor session (apply these too):**
 
