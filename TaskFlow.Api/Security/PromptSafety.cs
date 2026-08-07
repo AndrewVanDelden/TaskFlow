@@ -20,20 +20,24 @@ public static class PromptSafety
     /// <param name="content">The untrusted content to embed (e.g. pasted job-posting text).</param>
     /// <param name="label">The tag name used for the delimiters. Defaults to "untrusted_input".</param>
     /// <returns>The framing sentence followed by the labeled block containing the escaped content.</returns>
-public static string WrapUntrusted(string content, string label = "untrusted_input")
-{
-    if (string.IsNullOrWhiteSpace(label))
-        throw new System.ArgumentException("Label must not be null or whitespace.", nameof(label));
-
-    for (var i = 0; i < label.Length; i++)
+    public static string WrapUntrusted(string content, string label = "untrusted_input")
     {
-        var c = label[i];
-        if (char.IsWhiteSpace(c) || c is '<' or '>' or '/' or '"' or '\'')
-            throw new System.ArgumentException("Label must be a simple tag name (no whitespace or tag-breaking characters).", nameof(label));
-    }
+        // The label becomes part of the delimiter tags themselves, so a caller passing one
+        // containing whitespace or tag-breaking characters could undermine the whole escaping
+        // scheme below. Reject that up front rather than emit a malformed or forgeable boundary.
+        if (string.IsNullOrWhiteSpace(label))
+            throw new ArgumentException("Label must not be null or whitespace.", nameof(label));
 
-    var openTag = $"<{label}>";
-    var closeTag = $"</{label}>";
+        foreach (var c in label)
+        {
+            if (char.IsWhiteSpace(c) || c is '<' or '>' or '/' or '"' or '\'')
+                throw new ArgumentException(
+                    "Label must be a simple tag name (no whitespace or tag-breaking characters).", nameof(label));
+        }
+
+        var openTag = $"<{label}>";
+        var closeTag = $"</{label}>";
+
         // Escape any literal copy of our own delimiter tags found inside the content. This is the
         // simplest reliable defense against boundary forgery: since the tags themselves are the only
         // thing that could be used to fake an early close, neutralizing their angle brackets (HTML
