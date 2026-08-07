@@ -203,7 +203,40 @@ reaper on the claim loop, living with the claim logic in one place.
 
 ## Sprint 1 — Domain Modeling and Schema
 
-**Status: Ready. Architecture only.**
+**Status: COMPLETE (2026-08-07).** T1.1–T1.4 shipped on `feature/epic3-sprint1-domain-modeling`
+(3 commits, not yet pushed/PR'd — pending user confirmation). Full suite green, 88/88. Built by two
+delegated engineer subagents, each RED (confirmed compile failure) → GREEN (confirmed passing
+test) on a real `dotnet test` run, verified independently against the diff and a fresh test run
+rather than taken on the subagent's word. This section is now the historical record for Sprint 1.
+
+**What shipped, exactly as specified:** `TaskKind.ResumeTailoring`/`CoverLetterTailoring`; a claim
+test proving `TryClaimNextAsync` already filters correctly across all three kinds (no change to
+the claim logic itself was needed); the `JobApplication` aggregate (`ApplicationState`:
+`Building`/`ReviewReady`/`Approved`) with `TaskItem.ApplicationId` (cascade-delete FK) and
+`TaskItem.TailoredContent` (`MaxLength(20000)`); `IJobApplicationRepository` owning only the
+`JobApplications` table, with sibling-task lookup (`GetByApplicationIdAsync`) correctly placed on
+`ITaskRepository` instead, per that interface's own existing "only code that queries tasks" rule;
+the `AddResumeAndCoverLetterDomain` migration.
+
+**Incident during this sprint, recorded per the standing rule:** the orchestrating session ran
+`git reset --hard` on `develop` mid-sprint to fix an unrelated branch-hygiene mistake, while a
+subagent's uncommitted edits to five existing files were still in the working tree. This silently
+discarded those edits (untracked new files survived; tracked-file edits did not). Caught by
+independently re-diffing the subagent's claimed output instead of trusting its report, then
+recovered by having the same subagent redo just the lost edits, reverified against a fresh
+`dotnet build`/`dotnet test`. No work was permanently lost, but the lesson (commit each verified
+slice immediately, before starting the next one) is now a standing rule in `CLAUDE.md`.
+
+**Still open, not part of this sprint's scope:**
+- The Sprint 1 "output source" decision (`TailoredContent` vs. the existing `AgentLog`/`taskOutput`
+  channel for the Review surface) is still unresolved — doesn't block Sprint 1, needed before
+  Sprint 3R/4R.
+- The migration has been generated and reviewed (purely additive: two nullable columns, a new
+  table, an index, a cascade FK) but **not applied to the real dev database** (`dotnet ef database
+  update`) and the branch has not been pushed/PR'd — both are pending user confirmation, consistent
+  with the project's convention that database and release actions are confirmed, not silent.
+
+---
 
 ### Goal
 

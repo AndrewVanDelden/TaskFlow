@@ -6,5 +6,7 @@ namespace TaskFlow.Api.Models;
 /// </summary>
 public enum TaskKind
 {
-    Generic
+    Generic,
+    ResumeTailoring,
+    CoverLetterTailoring
 }

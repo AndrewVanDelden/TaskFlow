@@ -11,6 +11,9 @@ public interface ITaskRepository
     Task<List<TaskItem>> GetStaleAsync(DateTime cutoff, CancellationToken ct = default);
     Task<Dictionary<int, int>> GetOpenCountsByUserAsync(CancellationToken ct = default);
 
+    /// <summary>Returns the sibling tasks (e.g. resume + cover letter) belonging to a JobApplication, ordered by Id.</summary>
+    Task<List<TaskItem>> GetByApplicationIdAsync(int applicationId, CancellationToken ct = default);
+
     /// <summary>Counts tasks that are not Done (Todo + InProgress + Review) — the board's open work.</summary>
     Task<int> CountOpenAsync(CancellationToken ct = default);
 
