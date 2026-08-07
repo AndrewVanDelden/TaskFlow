@@ -13,6 +13,7 @@ public class AppDbContext : DbContext
     public DbSet<TaskItem> Tasks => Set<TaskItem>();
     public DbSet<AgentLog> AgentLogs => Set<AgentLog>();
     public DbSet<JobApplication> JobApplications => Set<JobApplication>();
+    public DbSet<ResumeContext> ResumeContexts => Set<ResumeContext>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -57,6 +58,13 @@ public class AppDbContext : DbContext
             // Store enum as string so the DB is human-readable
             entity.Property(a => a.State)
                   .HasConversion<string>();
+        });
+
+        // ── ResumeContext configuration ─────────────────────────────────────────
+        modelBuilder.Entity<ResumeContext>(entity =>
+        {
+            // Every read/delete queries by this pair together (ownership scoping), so index it.
+            entity.HasIndex(r => new { r.IngestionSessionId, r.OwnerId });
         });
 
         // ── Seed data ─────────────────────────────────────────────────────────

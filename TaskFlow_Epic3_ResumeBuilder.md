@@ -116,7 +116,48 @@ the repo before writing this doc:
 
 ## Sprint 0 — Security and Hardening Foundations
 
-**Status: Ready. Architecture only. Prerequisite for everything else in Epic 3.**
+**Status: COMPLETE (2026-08-07).** T0.1–T0.7 shipped on `feature/epic3-sprint0-security-hardening`
+(6 commits). Full suite green: 103/103 backend, 38/38 frontend. Built by four delegated engineers (two run in parallel with zero file overlap,
+two sequenced because both touched `Program.cs`), each independently re-verified against the diff
+and a fresh `dotnet test`/`npm test` run rather than taken on the subagent's word. This section is
+now the historical record for Sprint 0.
+
+**Scope decisions made before dispatching work, since three of the seven tasks (`T0.2`, `T0.5`,
+`T0.6`) reference consumers — the job-posting parser, the "read base context" tool, the "save
+output" tool — that don't exist until Sprint 2/3R:** each was built as a standalone,
+independently-testable unit (a prompt-composition helper, ownership-scoped repository reads, an
+output-validation helper) that later sprints wire into their actual consumers, rather than
+building those future consumers early or leaving the task under-scoped. Also decided: `T0.3` uses
+`react-markdown` + `rehype-sanitize` (real React elements, no `dangerouslySetInnerHTML`); `T0.7`
+uses a periodic background sweep reusing the existing `UpdatedAt` field rather than a new
+lease-expiry column (no schema change needed, matches the DRY principle already applied elsewhere
+in this sprint).
+
+**What shipped, exactly as specified:**
+- `T0.1`/`T0.4`/`T0.5` — `ResumeContext` entity, `IResumeContextRepository`/`ResumeContextRepository`.
+  `GetForOwnerAsync`/`DeleteForOwnerAsync` query by `IngestionSessionId` **and** `OwnerId` together in
+  one predicate, so a caller with the right session id but the wrong owner id gets null/false —
+  never the data, never a distinguishable error. Verified for real: the ownership predicate was
+  deliberately narrowed to session-only first, confirming the test actually catches the IDOR leak,
+  before restoring the correct compound predicate.
+- `T0.2` — `PromptSafety.WrapUntrusted` fences untrusted content in a labeled block with explicit
+  "this is data, not instructions" framing, and escapes any literal copy of its own delimiter tags
+  found inside the content so untrusted input can't forge a fake block boundary.
+- `T0.6` — `ToolOutputValidator.Validate` rejects null/empty/oversized content, returning the shared
+  `Result<T>` type.
+- `T0.3` — `MarkdownPreview` component (`TaskFlow.Web/src/components/`), sanitizing via
+  `rehype-sanitize`'s default schema. 100% covered (confirmed in the actual HTML coverage report —
+  it's dropped from the vitest `text`-reporter's console table by a display quirk, not a real gap).
+- `T0.7` — `ITaskRepository.RecoverStaleInProgressAsync` (guarded bulk `ExecuteUpdateAsync`) +
+  `StaleClaimReaperService`, a plain `BackgroundService` (deliberately NOT an `ITaskFlowAgent` — it
+  does no reasoning and is never scheduled by `AgentRunner`), sweeping on startup and on an interval.
+- `AddResumeContext` migration — purely additive, no data-loss warning this time.
+
+**Still open, not part of this sprint's scope:**
+- The migration has been generated and reviewed but **not applied to the real dev database**, and
+  the branch has not been pushed/PR'd — both pending user confirmation.
+
+---
 
 ### Why this sprint exists
 

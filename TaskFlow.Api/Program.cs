@@ -103,6 +103,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<ITaskRepository, TaskRepository>();
 builder.Services.AddScoped<IJobApplicationRepository, JobApplicationRepository>();
+builder.Services.AddScoped<IResumeContextRepository, ResumeContextRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IAgentLogRepository, AgentLogRepository>();
 builder.Services.AddScoped<ITaskService, TaskService>();
@@ -135,6 +136,11 @@ builder.Services.AddScoped<ITaskFlowAgent, GenericExecutorAgent>();
 // Register the AgentRunner as a hosted background service
 // This starts automatically when the app starts
 builder.Services.AddHostedService<AgentRunner>();
+
+// Plain sweep (not an ITaskFlowAgent) that recovers tasks orphaned InProgress by a crashed/killed
+// agent process — a hard crash mid-cycle leaves no in-process code path to notice, unlike a graceful
+// failure which GenericExecutorAgent's own try/catch already rolls back.
+builder.Services.AddHostedService<StaleClaimReaperService>();
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
