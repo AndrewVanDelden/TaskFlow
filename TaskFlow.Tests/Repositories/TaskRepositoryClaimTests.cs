@@ -54,6 +54,34 @@ public class TaskRepositoryClaimTests
         second.Should().BeNull();
     }
 
+    [Fact]
+    public async Task TryClaimNext_filters_by_kind_across_generic_resume_and_cover_letter_tasks()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        var repo = new TaskRepository(db.Context);
+        db.Context.Tasks.Add(new TaskItem { Title = "Generic work", Status = WorkflowStatus.Todo, Kind = TaskKind.Generic });
+        db.Context.Tasks.Add(new TaskItem { Title = "Tailor resume", Status = WorkflowStatus.Todo, Kind = TaskKind.ResumeTailoring });
+        db.Context.Tasks.Add(new TaskItem { Title = "Tailor cover letter", Status = WorkflowStatus.Todo, Kind = TaskKind.CoverLetterTailoring });
+        await db.Context.SaveChangesAsync();
+
+        var claimedGeneric = await repo.TryClaimNextAsync(TaskKind.Generic, "GenericExecutor");
+        var claimedResume = await repo.TryClaimNextAsync(TaskKind.ResumeTailoring, "ResumeExecutor");
+        var claimedCoverLetter = await repo.TryClaimNextAsync(TaskKind.CoverLetterTailoring, "CoverLetterExecutor");
+        var claimedCoverLetterAgain = await repo.TryClaimNextAsync(TaskKind.CoverLetterTailoring, "CoverLetterExecutor");
+
+        claimedGeneric.Should().NotBeNull();
+        claimedGeneric!.Title.Should().Be("Generic work");
+
+        claimedResume.Should().NotBeNull();
+        claimedResume!.Title.Should().Be("Tailor resume");
+
+        claimedCoverLetter.Should().NotBeNull();
+        claimedCoverLetter!.Title.Should().Be("Tailor cover letter");
+
+        claimedCoverLetterAgain.Should().BeNull();
+    }
+
     // The seeded board has Todo tasks; clear it so each test controls exactly which tasks exist.
     private static Task StartFromEmptyBoard(AppDbContext db) => db.Tasks.ExecuteDeleteAsync();
 }
