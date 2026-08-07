@@ -37,6 +37,12 @@ public class TaskRepository : ITaskRepository
             .OrderBy(t => t.UpdatedAt)
             .ToListAsync(ct);
 
+    public Task<List<TaskItem>> GetByApplicationIdAsync(int applicationId, CancellationToken ct = default) =>
+        _db.Tasks
+            .Where(t => t.ApplicationId == applicationId)
+            .OrderBy(t => t.Id)
+            .ToListAsync(ct);
+
     public Task<int> CountOpenAsync(CancellationToken ct = default) =>
         _db.Tasks.CountAsync(t => t.Status != WorkflowStatus.Done, ct);
 

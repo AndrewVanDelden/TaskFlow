@@ -44,4 +44,16 @@ public class TaskItem
     // The agent currently working this task; null when unclaimed. Stamped atomically at claim time.
     [MaxLength(200)]
     public string? ClaimedBy { get; set; }
+
+    // Foreign key — nullable so ordinary tasks can exist without a JobApplication parent. Only
+    // resume/cover-letter sibling tasks (Epic 3) set this.
+    public int? ApplicationId { get; set; }
+
+    [ForeignKey(nameof(ApplicationId))]
+    public JobApplication? Application { get; set; }
+
+    // Generated/edited resume or cover-letter body text for Epic 3 tasks. Large free text, so a
+    // generous cap rather than the short MaxLength used for other string fields on this entity.
+    [MaxLength(20000)]
+    public string? TailoredContent { get; set; }
 }

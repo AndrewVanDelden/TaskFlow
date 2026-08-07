@@ -12,6 +12,7 @@ public class AppDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<TaskItem> Tasks => Set<TaskItem>();
     public DbSet<AgentLog> AgentLogs => Set<AgentLog>();
+    public DbSet<JobApplication> JobApplications => Set<JobApplication>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,6 +42,21 @@ public class AppDbContext : DbContext
                   .WithMany(u => u.Tasks)
                   .HasForeignKey(t => t.AssignedToId)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            // Relationship: Task -> JobApplication (optional; resume/cover-letter siblings only).
+            // Cascade so deleting a JobApplication removes its sibling tasks rather than orphaning them.
+            entity.HasOne(t => t.Application)
+                  .WithMany(a => a.Tasks)
+                  .HasForeignKey(t => t.ApplicationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── JobApplication configuration ────────────────────────────────────────
+        modelBuilder.Entity<JobApplication>(entity =>
+        {
+            // Store enum as string so the DB is human-readable
+            entity.Property(a => a.State)
+                  .HasConversion<string>();
         });
 
         // ── Seed data ─────────────────────────────────────────────────────────
