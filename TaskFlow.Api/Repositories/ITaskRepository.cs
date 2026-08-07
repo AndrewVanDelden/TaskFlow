@@ -39,6 +39,14 @@ public interface ITaskRepository
     /// </summary>
     Task<bool> ReleaseClaimAsync(int taskId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Returns every task stuck in InProgress for longer than <paramref name="staleAfter"/> (based on
+    /// UpdatedAt, which is stamped at claim time) back to Todo, clearing ClaimedBy. Recovers work
+    /// orphaned by a process crash or kill mid-cycle, which the agent's own try/catch cannot handle
+    /// since it never runs. Returns the number of tasks recovered.
+    /// </summary>
+    Task<int> RecoverStaleInProgressAsync(TimeSpan staleAfter, CancellationToken ct = default);
+
     Task AddAsync(TaskItem task, CancellationToken ct = default);
     void Remove(TaskItem task);
     Task SaveChangesAsync(CancellationToken ct = default);

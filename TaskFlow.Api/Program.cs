@@ -137,6 +137,11 @@ builder.Services.AddScoped<ITaskFlowAgent, GenericExecutorAgent>();
 // This starts automatically when the app starts
 builder.Services.AddHostedService<AgentRunner>();
 
+// Plain sweep (not an ITaskFlowAgent) that recovers tasks orphaned InProgress by a crashed/killed
+// agent process — a hard crash mid-cycle leaves no in-process code path to notice, unlike a graceful
+// failure which GenericExecutorAgent's own try/catch already rolls back.
+builder.Services.AddHostedService<StaleClaimReaperService>();
+
 // ── CORS ─────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
 {

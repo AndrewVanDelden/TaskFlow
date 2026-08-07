@@ -108,6 +108,20 @@ public class TaskRepository : ITaskRepository
         return moved == 1;
     }
 
+    public async Task<int> RecoverStaleInProgressAsync(TimeSpan staleAfter, CancellationToken ct = default)
+    {
+        // Guarded bulk UPDATE (InProgress -> Todo, owner cleared) for every row whose UpdatedAt is
+        // older than the cutoff. Unlike ReleaseClaimAsync (single task, matched by id) this recovers
+        // work orphaned by a crash or kill mid-cycle, where no in-process code path is left to notice.
+        var cutoff = DateTime.UtcNow - staleAfter;
+        return await _db.Tasks
+            .Where(t => t.Status == WorkflowStatus.InProgress && t.UpdatedAt < cutoff)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, WorkflowStatus.Todo)
+                .SetProperty(t => t.ClaimedBy, (string?)null)
+                .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+    }
+
     public async Task AddAsync(TaskItem task, CancellationToken ct = default) =>
         await _db.Tasks.AddAsync(task, ct);
 
