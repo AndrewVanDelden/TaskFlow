@@ -17,6 +17,11 @@ public static class ToolOutputValidator
     /// <param name="maxLength">The maximum allowed length of <paramref name="content"/>.</param>
     public static Result<string> Validate(string? content, int maxLength)
     {
+        if (maxLength <= 0)
+        {
+            return Result<string>.Invalid("Max length must be greater than zero.");
+        }
+
         if (string.IsNullOrWhiteSpace(content))
         {
             return Result<string>.Invalid("Content must not be null, empty, or whitespace-only.");
