@@ -71,7 +71,7 @@ public class StaleClaimReaperService : BackgroundService
 
     private async Task SweepAsync(CancellationToken ct)
     {
-        var thresholdMinutes = _config.GetValue("Agents:StaleClaimThresholdMinutes", 30);
+        var thresholdMinutes = Math.Max(1, _config.GetValue("Agents:StaleClaimThresholdMinutes", 30));
         var staleAfter = TimeSpan.FromMinutes(thresholdMinutes);
 
         using var scope = _scopeFactory.CreateScope();
