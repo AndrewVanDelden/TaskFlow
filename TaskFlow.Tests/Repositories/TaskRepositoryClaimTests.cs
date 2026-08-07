@@ -65,21 +65,18 @@ public class TaskRepositoryClaimTests
         db.Context.Tasks.Add(new TaskItem { Title = "Tailor cover letter", Status = WorkflowStatus.Todo, Kind = TaskKind.CoverLetterTailoring });
         await db.Context.SaveChangesAsync();
 
-        var claimedGeneric = await repo.TryClaimNextAsync(TaskKind.Generic, "GenericExecutor");
         var claimedResume = await repo.TryClaimNextAsync(TaskKind.ResumeTailoring, "ResumeExecutor");
         var claimedCoverLetter = await repo.TryClaimNextAsync(TaskKind.CoverLetterTailoring, "CoverLetterExecutor");
-        var claimedCoverLetterAgain = await repo.TryClaimNextAsync(TaskKind.CoverLetterTailoring, "CoverLetterExecutor");
-
-        claimedGeneric.Should().NotBeNull();
-        claimedGeneric!.Title.Should().Be("Generic work");
+        var claimedResumeAgain = await repo.TryClaimNextAsync(TaskKind.ResumeTailoring, "ResumeExecutor");
+        var claimedGeneric = await repo.TryClaimNextAsync(TaskKind.Generic, "GenericExecutor");
 
         claimedResume.Should().NotBeNull();
         claimedResume!.Title.Should().Be("Tailor resume");
-
         claimedCoverLetter.Should().NotBeNull();
         claimedCoverLetter!.Title.Should().Be("Tailor cover letter");
-
-        claimedCoverLetterAgain.Should().BeNull();
+        claimedResumeAgain.Should().BeNull();
+        claimedGeneric.Should().NotBeNull();
+        claimedGeneric!.Title.Should().Be("Generic work");
     }
 
     // The seeded board has Todo tasks; clear it so each test controls exactly which tasks exist.
