@@ -103,6 +103,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<ITaskRepository, TaskRepository>();
 builder.Services.AddScoped<IJobApplicationRepository, JobApplicationRepository>();
+builder.Services.AddScoped<IResumeContextRepository, ResumeContextRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IAgentLogRepository, AgentLogRepository>();
 builder.Services.AddScoped<ITaskService, TaskService>();
