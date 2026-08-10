@@ -64,7 +64,7 @@ describe('IngestDocument', () => {
     expect(capturedBodies[0].ingestionSessionId).toBeTruthy()
   })
 
-  it('never writes the base resume text or session id to localStorage', async () => {
+  it('never writes to localStorage while saving the base resume', async () => {
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
 
     render(<IngestDocument />)
@@ -73,9 +73,7 @@ describe('IngestDocument', () => {
     await userEvent.click(screen.getByRole('button', { name: /save base resume/i }))
     await screen.findByText(/base resume saved/i)
 
-    for (const call of setItemSpy.mock.calls) {
-      expect(call[1]).not.toContain('Secret resume contents')
-    }
+    expect(setItemSpy).not.toHaveBeenCalled()
 
     setItemSpy.mockRestore()
   })

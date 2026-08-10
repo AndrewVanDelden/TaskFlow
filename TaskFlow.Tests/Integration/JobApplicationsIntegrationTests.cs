@@ -55,7 +55,7 @@ public class JobApplicationsIntegrationTests
             new
             {
                 ingestionSessionId = sessionId,
-                posting = new { title = "Backend Engineer", description = "Great role", kind = "ResumeTailoring", section = "Job Posting" }
+                posting = new { title = "Backend Engineer", description = "Great role", section = "Job Posting" }
             });
 
         assemble.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -74,7 +74,7 @@ public class JobApplicationsIntegrationTests
             new
             {
                 ingestionSessionId = sessionId,
-                posting = new { title = "Backend Engineer", description = "Great role", kind = "ResumeTailoring", section = "Job Posting" }
+                posting = new { title = "Backend Engineer", description = "Great role", section = "Job Posting" }
             });
 
         assemble.StatusCode.Should().Be(HttpStatusCode.NotFound);

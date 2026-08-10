@@ -69,7 +69,10 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<ResumeContext>(entity =>
         {
             // Every read/delete queries by this pair together (ownership scoping), so index it.
-            entity.HasIndex(r => new { r.IngestionSessionId, r.OwnerId });
+            // Unique because ResumeContextService.SaveAsync upserts by this same pair - without a
+            // DB-level constraint, a race between two concurrent saves for the same session could
+            // still land two rows even though the service checks-then-acts.
+            entity.HasIndex(r => new { r.IngestionSessionId, r.OwnerId }).IsUnique();
         });
 
         // ── Seed data ─────────────────────────────────────────────────────────

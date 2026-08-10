@@ -27,15 +27,28 @@ public sealed class ResumeContextService : IResumeContextService
             return Result<bool>.Invalid(validated.Error!);
         }
 
-        var resumeContext = new ResumeContext
+        // Update in place when a ResumeContext already exists for this (session, owner) rather
+        // than always inserting - the frontend deliberately reuses one session id across saves
+        // (T2.3), so always-insert would leave duplicate rows and GetForOwnerAsync's
+        // FirstOrDefaultAsync could return either one.
+        var existing = await _resumeContexts.GetForOwnerAsync(ingestionSessionId, ownerId, ct);
+        if (existing is not null)
         {
-            IngestionSessionId = ingestionSessionId,
-            OwnerId = ownerId,
-            Content = validated.Value!,
-            ContentFormat = contentFormat ?? "text"
-        };
+            existing.Content = validated.Value!;
+            existing.ContentFormat = contentFormat ?? "text";
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+        else
+        {
+            await _resumeContexts.AddAsync(new ResumeContext
+            {
+                IngestionSessionId = ingestionSessionId,
+                OwnerId = ownerId,
+                Content = validated.Value!,
+                ContentFormat = contentFormat ?? "text"
+            }, ct);
+        }
 
-        await _resumeContexts.AddAsync(resumeContext, ct);
         await _resumeContexts.SaveChangesAsync(ct);
 
         return Result<bool>.Ok(true);

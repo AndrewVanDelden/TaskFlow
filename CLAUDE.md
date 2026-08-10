@@ -1,6 +1,6 @@
 # Rules to follow for AI who are reading this:
 
-- TDD is How we will build everything
+- Strict TDD, clean code, SOLID, and DRY is How we will build everything.
 - **When adding code, add its test coverage in the same change — up front, not later.**
   If asked to add a method/class/file, deliver the tests that cover it alongside it. Do not
   hand over new implementation code with "tests can come later."
@@ -113,3 +113,23 @@
   to change and where, and let them apply it. Always keep the guide doc updated yourself.
   Edit source directly only on explicit request, and do not overstep a "where does this go?"
   question by silently creating or moving files.
+
+**Findings from the PR #40 code-review session (2026-08-10):**
+
+- **Code review findings live in the active epic doc, not a standalone review file.** Never
+  create a one-off `PR-<n>-CODE-REVIEW.md` (or similar) file for a review. Record findings as
+  a dated subsection under the sprint the PR belongs to, in the active epic doc (e.g.
+  `TaskFlow_Epic3_ResumeBuilder.md`), matching that doc's own decision-record style (numbered
+  findings, file:line anchors, why + fix, RED-test-first note, open/fixed status). One source
+  of truth per project, not a review file per PR. (Corrected in this session: created
+  `PR-40-CODE-REVIEW.md` unprompted; user asked for it folded into the epic doc and the
+  standalone file deleted.)
+- **Cross-check a manual PR review against any automated reviewer already on the PR** (e.g.
+  GitHub Copilot's review comments, fetched via
+  `gh api repos/<owner>/<repo>/pulls/<n>/comments`) before treating the review as final.
+  Convergence between an independent automated review and a manual one is corroborating
+  evidence a finding is real, not noise; and the automated pass can catch things a manual
+  pass missed. (Applied in this session: manual review and Copilot's review independently
+  converged on the same idempotency bug and the same unguarded-`int.Parse` issue; Copilot also
+  caught a test-quality gap — a `.not.toContain(...)` assertion that doesn't actually prove
+  `localStorage.setItem` was never called — that the manual review missed.)

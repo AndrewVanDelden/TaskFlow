@@ -583,6 +583,126 @@ posting creates one `JobApplication` and exactly two sibling tasks with the corr
   `ApplicationId`).
 - Unblocks: the Sprint 3R agents have two `Todo` tasks and a readable base resume.
 
+### Code review findings (2026-08-10) — PR #40
+
+Full review of PR #40 (`feature/epic3-sprint2-job-posting-ingestion` → `develop`), structured against
+Google's Engineering Practices code-review guidelines (correctness, design, complexity, tests,
+naming), then cross-checked against GitHub Copilot's automated PR review. Recorded here, in this
+doc, rather than as a standalone review file, so the sprint's own history carries its review outcome
+the same way it carries its bug-found-during-implementation note above.
+
+**Status: FIXED (2026-08-10).** Items 1, 2, 4, 4a, 5, and 6 addressed below, each with a RED test
+confirmed failing against the pre-fix code before the GREEN change, per this doc's standing TDD
+rule. Full suite green afterward: 152/152 backend, 44/44 frontend. Items 7 and 8 are left open by
+design (see their own entries below — neither is fixable in isolation right now). The out-of-scope
+item (`ClaudeIngestionParser` prompt-safety gap) was spun off as its own follow-up task, not folded
+in here, exactly as this section originally said it should be.
+
+- **#1 (critical):** `ResumeContextService.SaveAsync` now upserts (`GetForOwnerAsync` first, mutate
+  if found) instead of always inserting, **and** `ResumeContext`'s `(IngestionSessionId, OwnerId)`
+  index is now `.IsUnique()` (migration `MakeResumeContextSessionOwnerUnique`, applied to the dev
+  DB — confirmed zero existing rows before applying, so no backfill conflict). Two RED tests: one at
+  the service level (`ResumeContextServiceTests.SaveAsync_called_twice_for_the_same_session_and_owner_updates_instead_of_duplicating`,
+  real SQLite) and one at the repository/schema level proving the DB itself refuses a bypassed
+  duplicate insert (`ResumeContextRepositoryTests.Adding_a_second_row_for_the_same_session_and_owner_violates_the_unique_index`).
+- **#2:** Extracted `ClaudeJsonExtractionParserBase<TJson>` (new,
+  `TaskFlow.Api/Ingestion/ClaudeJsonExtractionParserBase.cs`); `ClaudeIngestionParser` and
+  `ClaudeJobPostingParser` are now thin subclasses supplying only their prompt, JSON delimiter pair,
+  and drafts-mapping step. Pure refactor — both parsers' existing test suites (10 tests total) verified
+  unchanged as the regression safety net, no new tests needed for the extraction itself.
+- **#4:** Added `Parse_returns_400_when_the_parser_reports_invalid` to
+  `JobApplicationsControllerTests.cs`.
+- **#4a:** Tightened the `IngestDocument.test.tsx` localStorage test from "no stored value contains
+  the resume text" to `expect(setItemSpy).not.toHaveBeenCalled()`.
+- **#5:** `JobApplicationsController` now has `TryGetCurrentUserId(out int)` (uses `int.TryParse`)
+  instead of `int.Parse(...)!`; `SaveResumeContext`/`Assemble` return 401 via a new
+  `UnauthenticatedIdentity()` helper when the claim is missing or non-numeric, instead of throwing.
+  Two RED tests confirmed the prior code threw `ArgumentNullException`/`FormatException` (would
+  surface as an unhandled 500) before the fix.
+- **#6:** New `JobPostingSummaryDto` (no `Kind` field) replaces `TaskDraft` as
+  `AssembleJobApplicationDto.Posting`'s type — the client can no longer send a `kind` that gets
+  silently ignored, because the wire shape doesn't have the field at all. The controller constructs
+  the internal `TaskDraft` with a fixed `Kind = ResumeTailoring` before calling the assembly service
+  (unchanged — still takes `TaskDraft`, so `JobApplicationAssemblyServiceTests.cs` needed no changes).
+- **#7 (not fixed, by design):** the ingestion session id lives in `IngestDocument.tsx` component
+  state and doesn't survive an unmount/remount. Not a bug today — wiring `assemble` into the UI is
+  still Sprint 6 scope — but Sprint 6's guided-flow design needs to give the session id a home that
+  outlives this component (e.g. a route param).
+- **#8 (not fixed, by design):** the `AddJobApplicationSessionOwnership` migration's backfill
+  defaults (`OwnerId = 0`, `IngestionSessionId = ""`) are placeholders. Harmless today — no database
+  has real `JobApplication` rows yet — but will need a real backfill strategy before this ever runs
+  against one that does.
+
+**Critical — real correctness bug, not a style nit:**
+
+1. **`ResumeContextService.SaveAsync` is not idempotent** (`TaskFlow.Api/Services/ResumeContextService.cs`,
+   line 38). It unconditionally `AddAsync`s a new `ResumeContext` row on every save. There is no
+   unique constraint on `(IngestionSessionId, OwnerId)` — only the non-unique index this sprint
+   already added — so saving the same session twice (which `IngestDocument.tsx`'s "Save base resume"
+   button explicitly allows and T2.3's own test exercises) creates **two rows**. The read path,
+   `ResumeContextRepository.GetForOwnerAsync` (Sprint 0/1, unchanged here), is `FirstOrDefaultAsync`
+   with no `OrderBy`, so which row a later read returns is undefined — in practice, likely the
+   first-inserted (oldest) one. **Concrete failure:** a user pastes a resume, saves, fixes a typo,
+   saves again — `JobApplicationAssemblyService.AssembleAsync` can silently hand Sprint 3R's agents
+   the stale, pre-edit resume, with no error anywhere. **Independently flagged by Copilot's automated
+   PR review on the same line**, which is corroborating, not redundant — two independent reviewers
+   converging on the same root cause raises confidence this is real.
+   **Fix:** make `SaveAsync` an upsert (look up via `GetForOwnerAsync` first; update `Content`,
+   `ContentFormat`, `UpdatedAt` if found, insert only if not), and change the
+   `(IngestionSessionId, OwnerId)` index to `.IsUnique()` in `AppDbContext.cs` so the invariant is
+   structural, not just a convention — this needs its own additive migration. **RED test first:**
+   seed two saves to the same session, assert exactly one row exists afterward and its content is the
+   second save's.
+
+**Suggestions — fix in this PR or as an immediate fast-follow, not blocking on their own:**
+
+2. **DRY violation: `ClaudeJobPostingParser` duplicates ~80% of the existing `ClaudeIngestionParser`**
+   (`TaskFlow.Api/Ingestion/ClaudeJobPostingParser.cs` vs. `ClaudeIngestionParser.cs`, Sprint 1).
+   Identical constructor shape, identical `IsConfigured` early-return, identical
+   `_config["Anthropic:Model"] ?? AnthropicDefaults.Model` / `MaxTokens` lookup, identical
+   send-Claude → extract-text → extract-JSON-substring → deserialize → map-to-`TaskDraft` skeleton.
+   The only load-bearing differences are the prompt text, array-vs-object JSON extraction, and that
+   the new parser wraps input via `PromptSafety.WrapUntrusted` while the old one doesn't (see #3).
+   This repo's standing rule is strict DRY — extract a shared
+   `ClaudeJsonExtractionParserBase(IClaudeClient, IConfiguration)` with `BuildPrompt`/`ExtractJson`/
+   `MapJson` as the per-parser hooks, the same move already made for agents via `ClaudeAgentBase`.
+   Cheap now, with only two implementations; a third copy will make this worse.
+4. **`JobApplicationsControllerTests` has no failure-path test for `Parse`.** `SaveResumeContext` and
+   `Assemble` both got a success test and a mapped-error-status test; `Parse` only got the happy path.
+   Add the missing case: `_parser.ParseAsync` returning `Result.Invalid(...)` → `Parse` returns 400.
+4a. **The "never writes to localStorage" test doesn't prove `setItem` was never called**
+   (`TaskFlow.Web/src/features/IngestDocument.test.tsx`, line 77 — **flagged by Copilot's automated
+   review**). It only asserts stored *values* don't contain the literal resume text
+   (`expect(call[1]).not.toContain('Secret resume contents')`), which would still pass if the
+   component wrote the session id, or the resume text wrapped/transformed some other way, to
+   `localStorage`. Tighten to `expect(setItemSpy).not.toHaveBeenCalled()`.
+5. **`JobApplicationsController.CurrentUserId()` uses an unguarded `int.Parse(...)!`** on the JWT
+   `NameIdentifier` claim (line 45 — **independently flagged by Copilot's automated review, same
+   line**). If the claim is ever missing or non-numeric, this throws inside the action, surfacing as
+   an unhandled 500 instead of a controlled 401. Low severity today (`[Authorize]` guards every
+   action here), but worth fixing before a second controller copies this helper: use
+   `int.TryParse(...)` and return/throw toward a 401 when it fails.
+6. **`AssembleJobApplicationDto.Posting.Kind` is accepted from the client but silently discarded** —
+   `JobApplicationAssemblyService` hardcodes `ResumeTailoring`/`CoverLetterTailoring` for the two
+   created tasks regardless of what's sent. Not a security issue, but a footgun for the next caller
+   of this endpoint. Either narrow the DTO to not accept `Kind`, or comment that it's ignored.
+7. **`ingestionSessionId` lives in `IngestDocument.tsx` component state**, generated once per
+   component instance via `crypto.randomUUID()`. Correct for "never `localStorage`," but it does not
+   survive an unmount/remount (nav away and back). Not a bug yet — wiring `assemble` into the UI is
+   explicitly deferred to Sprint 6 — but Sprint 6's guided-flow design needs to account for this
+   (the session id needs to live somewhere that outlives this component, e.g. a route param).
+8. **Migration `AddJobApplicationSessionOwnership`'s backfill defaults** (`OwnerId = 0`,
+   `IngestionSessionId = ""`) are placeholder-only. Harmless now — the migration hasn't been applied
+   to any database with real `JobApplication` rows — but will need a real backfill strategy the
+   moment this runs against a database that isn't disposable dev state.
+
+**Out of scope for this PR, spun off separately — found while reviewing, not introduced by this
+sprint:** `ClaudeIngestionParser` (Sprint 1, unchanged here) still concatenates raw user-pasted text
+into its Claude prompt with **no** `PromptSafety.WrapUntrusted` — the exact injection vector this
+sprint just hardened against on the job-posting path, left open on the original generic-ingestion
+path. Not folded into this sprint's fix list per this doc's rule against silently expanding scope;
+tracked as its own follow-up task instead.
+
 ---
 
 ## Sprint 3R — Multi-Agent Generation (Resume and Cover Letter)

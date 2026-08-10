@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Repositories;
 using TaskFlow.Tests.TestSupport;
@@ -8,6 +9,25 @@ namespace TaskFlow.Tests.Repositories;
 
 public class ResumeContextRepositoryTests
 {
+    // The (IngestionSessionId, OwnerId) uniqueness is enforced structurally at the DB level, not
+    // just by ResumeContextService's upsert - a concurrent request racing the service's
+    // check-then-act could still land two inserts without this. Written directly against the
+    // repository, bypassing the service, so it proves the schema itself refuses the duplicate.
+    [Fact]
+    public async Task Adding_a_second_row_for_the_same_session_and_owner_violates_the_unique_index()
+    {
+        using var db = new SqliteInMemoryContext();
+        var repo = new ResumeContextRepository(db.Context);
+
+        await repo.AddAsync(new ResumeContext { IngestionSessionId = "session-A", OwnerId = 1, Content = "First." });
+        await repo.SaveChangesAsync();
+
+        await repo.AddAsync(new ResumeContext { IngestionSessionId = "session-A", OwnerId = 1, Content = "Second." });
+        var act = () => repo.SaveChangesAsync();
+
+        await act.Should().ThrowAsync<DbUpdateException>();
+    }
+
     [Fact]
     public async Task Persisted_resume_context_round_trips_via_GetForOwnerAsync()
     {
