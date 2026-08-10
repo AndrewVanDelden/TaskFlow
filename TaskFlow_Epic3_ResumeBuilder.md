@@ -334,11 +334,43 @@ migrate-on-boot integration tests apply the schema.
 
 ### Open decision to settle here, not carry silently
 
-The board currently surfaces agent output through `AgentLog` via `taskOutput(logs, id)` (confirmed
-— `lib/board.ts`, used by `KanbanBoard.tsx`). This sprint stores each task's own output in
-`TailoredContent` instead. **Decide whether the Review surface reads `TailoredContent` or continues
-through the log channel, and align the Sprint 3R save path and the Sprint 4R read path to the one
-chosen source.** Not yet decided; record the answer here before Sprint 3R starts.
+**Settled 2026-08-10.** The board currently surfaces agent output through `AgentLog` via
+`taskOutput(logs, id)` (confirmed — `lib/board.ts`, used by `KanbanBoard.tsx`). This sprint stores
+each task's own output in `TailoredContent` instead. The question was whether the Review surface
+reads `TailoredContent` or continues through the log channel.
+
+**Decision: the Epic 3 Review surface (`ApplicationReviewCard`, Sprint 4R) reads `TaskItem.TailoredContent`.
+The `AgentLog`/`taskOutput(logs, id)` channel is untouched and keeps serving exactly what it serves
+today — `TaskKind.Generic` tasks on the existing board's Review column via `KanbanColumn`'s
+`outputFor`.** Two channels for two different kinds, not a forced unification — same pattern as
+Sprint 2's `IJobPostingIngestionParser` sitting alongside `IIngestionParser` without replacing it.
+
+**Why, not just what:**
+- `taskOutput` reconstructs an ordered array of narrative log strings (`record_progress` notes, then
+  a `request_review` summary) for the *current claim cycle* of a `GenericExecutorAgent`-style task —
+  it is built for "what did the agent do, in order," not "here is the one clean artifact." A tailored
+  resume or cover letter is a single cohesive markdown document, not a log entry, and forcing it
+  through `details` (an untyped log string with no size/format guarantee) to reconstruct a document
+  would be more fragile than reading the purpose-built field that already exists for exactly this.
+- The later sprints' own task text, written before this decision was explicitly closed out, already
+  assumed the `TailoredContent` answer without saying so out loud — re-reading them settles this
+  rather than requiring a fresh design: **T3R.2** already says `ResumeTailoringAgent` "produces a
+  tailored resume to its own `TailoredContent` ... with a completion log" — the log and the
+  deliverable are already two separate things in that sentence. **T4R.2**'s `ApplicationReviewCard`
+  renders "base resume, tailored resume, and cover letter" as three documents, not three log arrays.
+  **T5.1** is the deciding evidence: `IExportService` explicitly "renders a `TailoredContent`
+  markdown document to PDF and to a Markdown file" — export was already specified to read
+  `TailoredContent`, and Review must read the same source Export does, or the two surfaces could
+  show different content for the same task.
+- Agents still call `RecordActionAsync` (existing `ClaudeAgentBase` mechanism, used by every agent
+  today) to log a completion entry — that stays as the audit trail visible via the existing agent
+  feed/diagnostics surfaces, it just is not what `ApplicationReviewCard` reads for the deliverable
+  itself.
+
+**Not done here, deliberately — this is a decision, not an implementation pass:** no agent writes to
+`TailoredContent` yet (Sprint 3R's `T3R.1`/`T3R.2`), and `ApplicationReviewCard` does not exist yet
+(Sprint 4R's `T4R.2`). Closing this decision only unblocks those sprints; it does not pull their
+work forward.
 
 ---
 
@@ -649,8 +681,10 @@ approve the pair in one action, preserving the human gate.
   a single task (`ITaskService.ApproveAsync(int id)` / `RejectAsync(int id, reason)` — confirmed).
 - The frontend `TaskItem` type (`types.ts`) currently has **no `kind` or `applicationId`** —
   confirmed. This sprint adds both.
-- Agent output currently reaches the board through `AgentLog` via `taskOutput` — see the Sprint 1
-  open decision on whether this sprint reads `TailoredContent` instead.
+- Agent output currently reaches the *generic* board (`TaskKind.Generic`, via `KanbanColumn`'s
+  `outputFor`) through `AgentLog`/`taskOutput`, and stays on that path — untouched by this sprint.
+  **Settled 2026-08-10 (Sprint 1's open decision):** `ApplicationReviewCard` (`T4R.2` below) reads
+  `TaskItem.TailoredContent` instead, not the log channel.
 
 ### Files involved
 
@@ -797,8 +831,10 @@ empty/error states render. GREEN: accessibility and state handling.
 Recorded so nothing is silently assumed. Each needs an answer before the sprint that depends on it
 starts:
 
-1. **Sprint 1 / 3R / 4R — where does agent output live for the Review surface?** `TailoredContent`
-   on `TaskItem`, or continue through `AgentLog`/`taskOutput`? Not yet decided.
+1. **Sprint 1 / 3R / 4R — where does agent output live for the Review surface?** ~~Not yet
+   decided.~~ **Settled 2026-08-10** — see Sprint 1's "Open decision to settle here" subsection:
+   `TailoredContent` for the Epic 3 Review surface; `AgentLog`/`taskOutput` untouched, still serves
+   `TaskKind.Generic` tasks exactly as it does today.
 2. **Sprint 0, T0.3 — which markdown-sanitization library?** No candidate installed yet
    (`react-markdown` + `rehype-sanitize`, or `marked` + `dompurify`). Not yet decided.
 3. **Sprint 5, T5.1 — which PDF library?** QuestPDF vs. an HTML-to-PDF path. Not yet decided, and
