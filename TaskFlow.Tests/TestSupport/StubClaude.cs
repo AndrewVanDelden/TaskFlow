@@ -30,8 +30,13 @@ public sealed class StubClaude : IClaudeClient
 
     public bool IsConfigured => true;
 
+    /// <summary>The most recent request passed to <see cref="SendAsync"/>, for tests that need to
+    /// assert on exactly what was sent (e.g. that untrusted content was wrapped before it left).</summary>
+    public MessageParameters? LastRequest { get; private set; }
+
     public Task<MessageResponse> SendAsync(MessageParameters parameters, CancellationToken ct = default)
     {
+        LastRequest = parameters;
         if (_throws)
             throw new InvalidOperationException("Claude call failed (test).");
         return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : EndTurn());

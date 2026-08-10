@@ -115,6 +115,11 @@ builder.Services.AddScoped<ClaudeIngestionParser>();
 builder.Services.AddScoped<IIngestionParser>(sp => new TieredIngestionParser(
     free: sp.GetRequiredService<SpecDocumentParser>(),
     paid: sp.GetRequiredService<ClaudeIngestionParser>()));
+builder.Services.AddScoped<JobPostingParser>();
+builder.Services.AddScoped<ClaudeJobPostingParser>();
+builder.Services.AddScoped<IJobPostingIngestionParser>(sp => new JobPostingIngestionParser(
+    free: sp.GetRequiredService<JobPostingParser>(),
+    paid: sp.GetRequiredService<ClaudeJobPostingParser>()));
 builder.Services.AddScoped<IDraftCommitService, DraftCommitService>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
