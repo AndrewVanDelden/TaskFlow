@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { http, HttpResponse } from 'msw'
+import { server } from '../test/server'
 import { IngestDocument } from './IngestDocument'
 
 describe('IngestDocument', () => {
@@ -23,5 +25,58 @@ describe('IngestDocument', () => {
     await userEvent.click(screen.getByRole('button', { name: /approve/i }))
 
     expect(await screen.findByText(/added 1 task to the board/i)).toBeInTheDocument()
+  })
+
+  it('saves the base resume and shows a confirmation message', async () => {
+    render(<IngestDocument />)
+
+    await userEvent.type(screen.getByLabelText(/base resume/i), 'My resume text')
+    await userEvent.click(screen.getByRole('button', { name: /save base resume/i }))
+
+    expect(await screen.findByText(/base resume saved/i)).toBeInTheDocument()
+  })
+
+  it('reuses the same ingestion session id across multiple base-resume saves', async () => {
+    const capturedBodies: Array<{ ingestionSessionId: string; content: string }> = []
+    server.use(
+      http.post('*/api/JobApplications/resume-context', async ({ request }) => {
+        const body = (await request.json()) as { ingestionSessionId: string; content: string }
+        capturedBodies.push(body)
+        return HttpResponse.json(true)
+      }),
+    )
+
+    render(<IngestDocument />)
+
+    const field = screen.getByLabelText(/base resume/i)
+    const saveBtn = screen.getByRole('button', { name: /save base resume/i })
+
+    await userEvent.type(field, 'First draft')
+    await userEvent.click(saveBtn)
+    await screen.findByText(/base resume saved/i)
+
+    await userEvent.type(field, ' plus more')
+    await userEvent.click(saveBtn)
+    await screen.findByText(/base resume saved/i)
+
+    expect(capturedBodies).toHaveLength(2)
+    expect(capturedBodies[0].ingestionSessionId).toBe(capturedBodies[1].ingestionSessionId)
+    expect(capturedBodies[0].ingestionSessionId).toBeTruthy()
+  })
+
+  it('never writes the base resume text or session id to localStorage', async () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    render(<IngestDocument />)
+
+    await userEvent.type(screen.getByLabelText(/base resume/i), 'Secret resume contents')
+    await userEvent.click(screen.getByRole('button', { name: /save base resume/i }))
+    await screen.findByText(/base resume saved/i)
+
+    for (const call of setItemSpy.mock.calls) {
+      expect(call[1]).not.toContain('Secret resume contents')
+    }
+
+    setItemSpy.mockRestore()
   })
 })

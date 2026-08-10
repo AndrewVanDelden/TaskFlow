@@ -1,5 +1,6 @@
 import { useState, type ChangeEvent } from 'react'
 import { useIngestion } from '../hooks/useIngestion'
+import { useBaseResumeCapture } from '../hooks/useBaseResumeCapture'
 
 // Source-agnostic input: paste into the textarea or pick a file (read to text here). Both feed
 // the same content to the parser. Approve commits the previewed drafts to the board.
@@ -7,6 +8,14 @@ export function IngestDocument() {
   const [text, setText] = useState('')
   const [sourceName, setSourceName] = useState('')
   const { drafts, loading, error, committedCount, submit, approve } = useIngestion()
+
+  // Separate, independent capture: a base resume saved server-side (never localStorage) and
+  // scoped to one ingestion session id, generated once per component instance and reused on
+  // every save so a later save updates the same session's resume context instead of creating a
+  // new one.
+  const [ingestionSessionId] = useState(() => crypto.randomUUID())
+  const [baseResumeText, setBaseResumeText] = useState('')
+  const baseResumeCapture = useBaseResumeCapture()
 
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -43,6 +52,36 @@ export function IngestDocument() {
           {error}
         </div>
       )}
+
+      <div className="mt-6 pt-6 border-t border-slate-800">
+        <label htmlFor="base-resume" className="block text-sm font-semibold mb-2">
+          Base resume
+        </label>
+        <textarea
+          id="base-resume"
+          value={baseResumeText}
+          onChange={(e) => setBaseResumeText(e.target.value)}
+          placeholder="Paste your base resume"
+          className="w-full h-48 p-3 rounded bg-slate-900 border border-slate-700 text-sm"
+        />
+        <button
+          onClick={() => baseResumeCapture.save(ingestionSessionId, baseResumeText)}
+          disabled={baseResumeCapture.loading || !baseResumeText}
+          className="mt-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded"
+        >
+          {baseResumeCapture.loading ? 'Saving...' : 'Save base resume'}
+        </button>
+
+        {baseResumeCapture.error && (
+          <div className="mt-3 text-sm text-red-400 bg-red-950 border border-red-900 rounded px-3 py-2">
+            {baseResumeCapture.error}
+          </div>
+        )}
+
+        {baseResumeCapture.saved && (
+          <p className="mt-3 text-sm text-emerald-400">Base resume saved.</p>
+        )}
+      </div>
 
       {drafts.length > 0 && (
         <>
