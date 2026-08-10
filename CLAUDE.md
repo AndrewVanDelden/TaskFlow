@@ -15,6 +15,14 @@
   does not run `dotnet`. So: Claude writes the code and tests into the repo; YOU run every
   `git` and `dotnet test`/`dotnet build` command on your machine and report the result.
   This matches the TDD loop (you run, Claude writes).
+  **Exception (confirmed working, 2026-08-10): Claude may run `.\test` itself** to confirm a
+  fix before reporting it done — it only writes the git-ignored `test-results.txt` and
+  coverage files, touches no git state, and this session's sandbox ran it cleanly.
+  **Second exception (2026-08-10): Claude may run a `git` or `dotnet` command — including
+  `git commit`/`git push`, `dotnet build`, `dotnet ef` — when the user explicitly asks for
+  that specific command/action in the moment.** This is not standing/autonomous permission;
+  it does not cover Claude deciding on its own to run one. Absent that explicit in-the-moment
+  ask, git/build/test commands still go to the user by default.
 - **Root convenience commands:** `.\run` (run.cmd) starts the whole app — API + web with the browser
   opening on `:5173` — and `.\test` (test.cmd) runs the full test suite with coverage into
   `test-results.txt`. Both live at the repo root so no folder-changing is needed.
@@ -55,9 +63,12 @@
 - **Hold the whole map, not just the slice in front of you.** Read the entire document
   before advising so guidance fits the overall scope, not one local step. (Violated:
   advised for several turns having only read part of the doc.)
-- **Do not attempt `git` or `dotnet` from the AI sandbox.** It cannot write `.git` and has
-  no `dotnet`; a failed attempt left a stale `.git/index.lock` the user had to remove by
-  hand. Hand every git/build/test command to the user (see Tooling boundary above).
+- **Do not attempt `git` or `dotnet` from the AI sandbox on your own initiative.** It cannot
+  write `.git` and has no `dotnet`; a failed attempt left a stale `.git/index.lock` the user
+  had to remove by hand. Hand every git/build/test command to the user by default (see
+  Tooling boundary above) — **except `.\test`, which Claude may always run itself, and except
+  any specific `git`/`dotnet` command the user explicitly asks Claude to run in the moment
+  (e.g. "commit this," "push it") — both are confirmed exceptions, see Tooling boundary.**
 - **Do not invent scope, and never slip unspecified work into a "next step."** If something is
   missing and should be added, say so explicitly and record it in the active doc as a labeled
   decision before acting. (Violated: dropped "thread a source name into provenance" as if it were

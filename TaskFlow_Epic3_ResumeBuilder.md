@@ -594,9 +594,14 @@ the same way it carries its bug-found-during-implementation note above.
 **Status: FIXED (2026-08-10).** Items 1, 2, 4, 4a, 5, and 6 addressed below, each with a RED test
 confirmed failing against the pre-fix code before the GREEN change, per this doc's standing TDD
 rule. Full suite green afterward: 152/152 backend, 44/44 frontend. Items 7 and 8 are left open by
-design (see their own entries below — neither is fixable in isolation right now). The out-of-scope
-item (`ClaudeIngestionParser` prompt-safety gap) was spun off as its own follow-up task, not folded
-in here, exactly as this section originally said it should be.
+design (see their own entries below — neither is fixable in isolation right now).
+
+Item 3 was initially spun off as a separate background follow-up task instead of fixed here — then
+reconsidered the same day: this project's standing preference is to fix a found, scoped, fixable
+issue now rather than pass it forward, even one found outside the original ask (recorded in
+`CLAUDE.md`, since deferring it was itself the process mistake). The fix (below, under item 3) is
+**confirmed GREEN** via a fresh `.\test` run: 153/153 backend (152 + the one new wrapping test), 44/44
+frontend. The background task chip tracking it has been dismissed.
 
 - **#1 (critical):** `ResumeContextService.SaveAsync` now upserts (`GetForOwnerAsync` first, mutate
   if found) instead of always inserting, **and** `ResumeContext`'s `(IngestionSessionId, OwnerId)`
@@ -624,6 +629,13 @@ in here, exactly as this section originally said it should be.
   silently ignored, because the wire shape doesn't have the field at all. The controller constructs
   the internal `TaskDraft` with a fixed `Kind = ResumeTailoring` before calling the assembly service
   (unchanged — still takes `TaskDraft`, so `JobApplicationAssemblyServiceTests.cs` needed no changes).
+- **#3 (fixed 2026-08-10, confirmed GREEN):** `ClaudeIngestionParser.BuildPrompt` now wraps
+  `documentText` with `PromptSafety.WrapUntrusted` before it reaches the prompt, matching
+  `ClaudeJobPostingParser`. RED test added:
+  `ClaudeIngestionParserTests.Document_text_is_wrapped_as_untrusted_before_being_sent_to_claude`
+  (mirrors `ClaudeJobPostingParserTests`'s equivalent, asserting on `StubClaude.LastRequest`'s actual
+  wrapped text, not just that `PromptSafety` is imported). Confirmed via a fresh `.\test` run:
+  153/153 backend, 44/44 frontend.
 - **#7 (not fixed, by design):** the ingestion session id lives in `IngestDocument.tsx` component
   state and doesn't survive an unmount/remount. Not a bug today — wiring `assemble` into the UI is
   still Sprint 6 scope — but Sprint 6's guided-flow design needs to give the session id a home that
@@ -696,12 +708,12 @@ in here, exactly as this section originally said it should be.
    to any database with real `JobApplication` rows — but will need a real backfill strategy the
    moment this runs against a database that isn't disposable dev state.
 
-**Out of scope for this PR, spun off separately — found while reviewing, not introduced by this
-sprint:** `ClaudeIngestionParser` (Sprint 1, unchanged here) still concatenates raw user-pasted text
-into its Claude prompt with **no** `PromptSafety.WrapUntrusted` — the exact injection vector this
-sprint just hardened against on the job-posting path, left open on the original generic-ingestion
-path. Not folded into this sprint's fix list per this doc's rule against silently expanding scope;
-tracked as its own follow-up task instead.
+**Originally recorded here as "out of scope, spun off separately":** the initial pass on this
+finding (`ClaudeIngestionParser` sending raw user-pasted text into its Claude prompt with no
+`PromptSafety.WrapUntrusted`) deferred the fix to a background task rather than making it. That
+deferral is now item #3 above — fixed the same day, once the deferral itself was recognized as the
+wrong call. Left here as the historical record of the initial (corrected) decision, not as an open
+item.
 
 ---
 
