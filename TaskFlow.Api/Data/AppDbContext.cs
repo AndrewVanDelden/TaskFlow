@@ -58,6 +58,11 @@ public class AppDbContext : DbContext
             // Store enum as string so the DB is human-readable
             entity.Property(a => a.State)
                   .HasConversion<string>();
+
+            // Sprint 3R's agents will query JobApplication by this pair to resolve the
+            // ResumeContext (task.ApplicationId -> this row -> ResumeContext lookup), mirroring
+            // ResumeContext's own index on the same pair.
+            entity.HasIndex(a => new { a.IngestionSessionId, a.OwnerId });
         });
 
         // ── ResumeContext configuration ─────────────────────────────────────────

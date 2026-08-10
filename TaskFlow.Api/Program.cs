@@ -121,6 +121,8 @@ builder.Services.AddScoped<IJobPostingIngestionParser>(sp => new JobPostingInges
     free: sp.GetRequiredService<JobPostingParser>(),
     paid: sp.GetRequiredService<ClaudeJobPostingParser>()));
 builder.Services.AddScoped<IDraftCommitService, DraftCommitService>();
+builder.Services.AddScoped<IResumeContextService, ResumeContextService>();
+builder.Services.AddScoped<IJobApplicationAssemblyService, JobApplicationAssemblyService>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();

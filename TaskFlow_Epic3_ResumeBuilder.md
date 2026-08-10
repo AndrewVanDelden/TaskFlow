@@ -444,6 +444,15 @@ Settles open decision #4 and one gap the source docs didn't address:
   this (`TasksController`/`IngestionController` don't scope by owner). `JobApplicationsController`
   adds a small `CurrentUserId()` helper reading `ClaimTypes.NameIdentifier`, matching how
   `JwtService` already stamps that claim.
+- **Found during implementation, not in the original spec: `AssembleAsync` cannot return the raw
+  `JobApplication` entity.** EF Core's relationship fixup sets each sibling `TaskItem.Application`
+  back to the same in-memory `JobApplication`, and with no reference-cycle handling configured,
+  `System.Text.Json` throws on serializing that cycle — confirmed via a real HTTP-level integration
+  test failing with `A possible object cycle was detected`, not assumed. Fixed the same way this
+  codebase already avoids the same problem for `TaskItem` (`TaskResponseDto`/`TaskService`): added
+  `JobApplicationResponseDto`/`JobApplicationTaskDto` with a `FromEntity` factory, and
+  `IJobApplicationAssemblyService.AssembleAsync` returns `Result<JobApplicationResponseDto>`, not
+  `Result<JobApplication>`.
 
 ### Tasks
 
