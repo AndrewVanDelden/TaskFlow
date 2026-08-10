@@ -406,6 +406,45 @@ Sprint 2 must not do.
 - `TaskFlow.Web/src/features/IngestDocument.tsx` (edit)
 - Tests: `JobPostingParserTests.cs`, `ClaudeJobPostingParserTests.cs`, `IngestDocument.test.tsx`
 
+### Decisions owned here, before dispatching any engineer (2026-08-10)
+
+Settles open decision #4 and one gap the source docs didn't address:
+
+- **Controller/route shape:** a new `JobApplicationsController` (`api/JobApplications`, `[Authorize]`),
+  separate from `IngestionController`, with three actions: `POST parse` (job-posting text →
+  drafts), `POST resume-context` (base resume → `ResumeContext`), `POST` (assemble → creates the
+  `JobApplication` + two siblings). `IngestionController`/`/api/Ingestion` is untouched, matching
+  the standing decision above.
+- **DI seam without touching the existing `IIngestionParser` registration:** a marker interface
+  `IJobPostingIngestionParser : IIngestionParser`, implemented by a thin `JobPostingIngestionParser`
+  that composes `JobPostingParser` (free) + `ClaudeJobPostingParser` (paid) via
+  `TieredIngestionParser` internally. `JobApplicationsController` depends on
+  `IJobPostingIngestionParser`, never the bare `IIngestionParser` — so the container keeps
+  resolving the existing generic registration for `IngestionController` unchanged. Avoids relying
+  on keyed DI (version-sensitive); one new interface is simpler and safer.
+- **Real gap found while designing T2.4, not addressed by any source doc: nothing links a
+  `JobApplication` back to the `ResumeContext` it needs.** `JobApplication` (Sprint 1) has no
+  session or owner field, and Sprint 3R's agents run outside any HTTP request — they cannot resolve
+  "which `ResumeContext`" from a JWT the way a controller can. **Decision: add `IngestionSessionId`
+  (`MaxLength(200)`, matches `ResumeContext`) and `OwnerId` (`int`) to `JobApplication`, stamped at
+  assembly time from the authenticated caller.** A Sprint 3R agent then resolves its base resume as
+  `task.ApplicationId → JobApplication.{IngestionSessionId, OwnerId} → ResumeContextRepository.GetForOwnerAsync`,
+  reusing the Sprint 0 ownership-scoped repository as-is. This is new migration scope on top of what
+  Sprint 1 shipped, but it is required to satisfy this sprint's own Definition of Done line ("both
+  linked to the `ResumeContext`"), not unrelated work — recorded here rather than left implicit.
+  `JobApplicationAssemblyService.AssembleAsync` refuses to assemble (`Result.NotFound`) if no
+  `ResumeContext` exists yet for the given session+owner, since a resume-less application would have
+  nothing for Sprint 3R to read.
+- **Session id origin:** the frontend generates one `crypto.randomUUID()` per intake attempt (not
+  persisted anywhere, so it cannot become a `localStorage` violation) and threads it through the
+  resume-context save call. T2.4's assemble call is backend-only in this sprint's frontend scope
+  (`IngestDocument.tsx` only grows a base-resume input per T2.3's RED test — wiring the parse/assemble
+  calls into the UI is Sprint 6's guided-flow redesign, not duplicated here).
+- **First controller to read the caller's own identity from the JWT.** No existing controller does
+  this (`TasksController`/`IngestionController` don't scope by owner). `JobApplicationsController`
+  adds a small `CurrentUserId()` helper reading `ClaimTypes.NameIdentifier`, matching how
+  `JwtService` already stamps that claim.
+
 ### Tasks
 
 **T2.1 — Deterministic job posting parser.** RED: `JobPostingParserTests` feeds a markdown string
@@ -704,10 +743,10 @@ starts:
    (`react-markdown` + `rehype-sanitize`, or `marked` + `dompurify`). Not yet decided.
 3. **Sprint 5, T5.1 — which PDF library?** QuestPDF vs. an HTML-to-PDF path. Not yet decided, and
    licensing hasn't been checked.
-4. **Sprint 2, T2.1/T2.4 — exact controller/endpoint shape for the job-posting flow.** Decided in
-   principle (new service, new registration, existing generic `/api/Ingestion` untouched — see
-   Sprint 2's architecture notes) but the concrete controller/route name is not chosen; settle it
-   when writing `T2.1`'s RED test.
+4. **Sprint 2, T2.1/T2.4 — exact controller/endpoint shape for the job-posting flow.** ~~Decided in
+   principle~~ **Settled 2026-08-10** — see Sprint 2's "Decisions owned here" subsection:
+   `JobApplicationsController` (`api/JobApplications`), `IJobPostingIngestionParser` DI seam,
+   `JobApplication.IngestionSessionId`/`OwnerId` added for the Sprint 3R handoff.
 
 ---
 
