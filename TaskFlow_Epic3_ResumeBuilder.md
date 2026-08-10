@@ -344,7 +344,58 @@ chosen source.** Not yet decided; record the answer here before Sprint 3R starts
 
 ## Sprint 2 — Job Posting Ingestion
 
-**Status: Ready. Architecture only.**
+**Status: COMPLETE (2026-08-10).** T2.1–T2.4 shipped on
+`feature/epic3-sprint2-job-posting-ingestion` (4 commits: architect decisions, T2.1/T2.2 parsers,
+T2.3 frontend capture, T2.3-backend/T2.4 assembly+controller). Full suite green via `.\test`:
+146/146 backend, 44/44 frontend, both with coverage. Built by three delegated engineers — two run
+in parallel with zero file overlap (backend parsers; frontend base-resume capture), one sequenced
+after because it depends on the parallel parser slice's `IJobPostingIngestionParser` interface —
+each independently re-verified against the actual diff and a fresh `dotnet build`/`dotnet test`/
+`npx vitest run`/`npx tsc -b` run rather than taken on the subagent's self-report. This section is
+now the historical record for Sprint 2.
+
+**Decisions made before dispatching work** (full detail in the "Decisions owned here" subsection
+below, kept in place as the record): `JobApplicationsController` (`api/JobApplications`) as a new
+controller, not a change to `IngestionController`; `IJobPostingIngestionParser` marker-interface DI
+seam so the existing default `IIngestionParser` registration is untouched;
+`JobApplication.IngestionSessionId`/`OwnerId` added (new migration) so a Sprint 3R agent — running
+outside any HTTP request — can resolve which `ResumeContext` to read without a JWT of its own.
+
+**What shipped, exactly as specified, plus one real bug found and fixed during implementation:**
+- `T2.1` — `JobPostingParser` (free): first level-1 heading is title, first level-2 heading is
+  company, found independently of ordering; returns an empty list when no title heading exists so
+  the tiered composer escalates to Claude.
+- `T2.2` — `ClaudeJobPostingParser` (paid): fixed prompt extracts title/company/top-5 requirements;
+  the posting is wrapped via `PromptSafety.WrapUntrusted` before it reaches Claude — proved by a
+  test asserting on `StubClaude`'s new `LastRequest` capture, not just declared in a comment. Every
+  field of the response is validated (missing/blank title, missing/malformed JSON, no JSON object
+  at all), not just the happy path.
+- `IJobPostingIngestionParser`/`JobPostingIngestionParser` compose both via the existing
+  `TieredIngestionParser` (reused, not reimplemented) behind the marker interface.
+- `T2.3` — base resume capture: `IngestDocument.tsx` gained a labeled base-resume textarea and
+  "Save base resume" button, independent of the existing generic paste/parse/approve flow. A
+  session id is generated once per component instance (`crypto.randomUUID()`) and reused across
+  saves — proved never written to `localStorage` via a `Storage.prototype.setItem` spy, not just
+  asserted. Backend: `IResumeContextService` validates and persists via the Sprint 0
+  `ToolOutputValidator` guardrail (reused, not reimplemented).
+- `T2.4` — `IJobApplicationAssemblyService`/`JobApplicationAssemblyService`: creates one
+  `JobApplication` (`Building`) plus two `Todo` sibling tasks sharing `ApplicationId`, refusing
+  (`NotFound`) when no `ResumeContext` exists yet for the caller's session+owner — and proved to
+  persist nothing on every failure path (blank session id, blank title, missing resume context,
+  wrong-owner resume context) by querying the DB afterward, not just checking the return value.
+- **Bug found and fixed, not in the original spec:** `AssembleAsync` originally returned the raw
+  `JobApplication` entity; EF Core's relationship fixup makes each sibling task's `Application`
+  navigation point back at the same instance, and `System.Text.Json` throws on that cycle with no
+  reference-handling configured — caught by a real HTTP-level integration test failing with `A
+  possible object cycle was detected`, not assumed. Fixed with
+  `JobApplicationResponseDto`/`JobApplicationTaskDto`, the same pattern `TaskResponseDto` already
+  uses for `TaskItem` elsewhere in this codebase.
+
+**Still open, not part of this sprint's scope:**
+- The migration (`AddJobApplicationSessionOwnership`, purely additive: two columns + one index) has
+  been generated and reviewed but **not applied to the real dev database**, and the branch has not
+  been pushed/PR'd — both pending user confirmation, consistent with the project's convention that
+  database and release actions are confirmed, not silent.
 
 ### Goal
 
