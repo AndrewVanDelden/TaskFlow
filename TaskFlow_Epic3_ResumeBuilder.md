@@ -908,6 +908,79 @@ looks at the pattern across the whole cycle, not any one finding already logged 
 **Status: Ready. Architecture only. Fully specifies both agents; does not depend on any
 single-agent Sprint 3.**
 
+### Decisions owned here, before dispatching any engineer (2026-08-11)
+
+Confirmed against the repo first (`ClaudeAgentBase`, `GenericExecutorAgent`, `TaskPrioritizerAgent`,
+`AgentRunner`, `ITaskRepository`, `IJobApplicationRepository`, `TaskRepositoryClaimTests.cs`) rather
+than designed from scratch:
+
+- **`ResumeTailoringAgent` and `CoverLetterAgent` share a new abstract `TailoringAgentBase :
+  ClaudeAgentBase`.** They are structurally near-identical (claim by kind, fetch the base resume via
+  a tool, produce one markdown artifact, save-and-move-to-Review, attempt the atomic join) — building
+  them as two independent siblings would repeat the exact DRY failure Sprint 2's review cycle already
+  found once (`ClaudeJobPostingParser`/`ClaudeIngestionParser`) and is exactly what the Sprint 2
+  retrospective asked to avoid doing reactively. `TailoringAgentBase` owns the claim/rollback/promote
+  flow and — critically — **owns the `PromptSafety.WrapUntrusted` call itself**, so a subclass cannot
+  structurally forget to wrap untrusted content (a concrete agent only supplies `Kind`, its save
+  tool's name, and its own instructional framing text, never the wrapping itself).
+- **No `IExecutorSwitch`/`ISpendGuard` for these two agents.** Confirmed those are specific to
+  `GenericExecutorAgent`'s standing kill-switch/spend-cap policy (`TaskPrioritizerAgent` doesn't use
+  them either) — not a shared `ClaudeAgentBase` requirement. Not adding governance the spec doesn't
+  ask for.
+- **`AgentRunner` already runs every registered `ITaskFlowAgent` concurrently** (`Task.WhenAll` over
+  each agent's own polling loop), and `TryClaimNextAsync` already filters by kind (confirmed —
+  `TaskRepositoryClaimTests.TryClaimNext_filters_by_kind_across_generic_resume_and_cover_letter_tasks`
+  already exists from Sprint 1). **T3R.3 needs no new coordination code** — registering both agents
+  is what makes them parallel; the RED test proves the *outcome* (two independent claim loops, no
+  shared write target), not new plumbing.
+- **The "job requirements" T3R references are already on the claimed `TaskItem`, not a separate
+  fetch.** `JobApplicationAssemblyService` (Sprint 2) already stamps `Title`/`Description`/
+  `SourceSection` from the parsed posting onto both sibling tasks at assembly time. No new
+  repository call is needed to read "the job requirements" — and per the doc's own instruction
+  ("wrap the base resume **and requirements** as untrusted input"), this task-derived text gets
+  `PromptSafety.WrapUntrusted`ed too, not just the resume — it is still user-pasted-posting-derived
+  text re-entering a second Claude call, so it is not "trusted" just because it already passed
+  through `ClaudeJobPostingParser` once.
+- **`read_base_context()` is a real tool call, not pre-embedded in the initial prompt** — matches the
+  doc's own tool list literally. The base resume is fetched via `IResumeContextRepository
+  .GetForOwnerAsync(application.IngestionSessionId, application.OwnerId)` (resolved from the claimed
+  task's `ApplicationId` → `JobApplication`, reusing the exact ownership-scoped lookup Sprint 0 built
+  and Sprint 2 already threaded `IngestionSessionId`/`OwnerId` onto `JobApplication` for), and the
+  tool result text is the wrapped content. The job-posting text, by contrast, is small and already on
+  the claimed task, so it goes directly into the initial prompt (wrapped) — no tool round-trip needed
+  for it.
+- **Two new atomic repository methods, both single guarded `ExecuteUpdateAsync` calls — no
+  check-then-act, applying the Sprint 2 retrospective's standing rules from the first RED test:**
+  - `ITaskRepository.SaveTailoredContentAndMarkForReviewAsync(taskId, content)` — one guarded UPDATE
+    (`WHERE Status == InProgress`) that sets `TailoredContent` **and** `Status = Review` together, so
+    there is no window where content is saved but the status transition could fail separately (or
+    vice versa). Mirrors `MarkForReviewAsync`'s existing atomicity, extended by one `SetProperty`.
+  - `IJobApplicationRepository.TryPromoteToReviewReadyAsync(applicationId)` — one guarded UPDATE
+    (`WHERE State == Building AND Tasks.Count(t => t.Status == Review) == 2`) that flips `State` to
+    `ReviewReady`. The sibling-status check is a correlated subquery *inside* the same `WHERE`, not a
+    separate `SELECT` before the `UPDATE` — this is the actual mechanism that makes T3R.4's
+    "simulated near-simultaneous completion does not double-promote and does not miss the promotion"
+    true: only one caller's guarded update can ever affect a row, and both callers attempting it is
+    exactly the near-simultaneous case. EF Core 10 (confirmed the installed version) translates
+    `.Count(predicate)` on a navigation collection inside `Where()` for `ExecuteUpdateAsync` into a
+    single correlated-subquery `UPDATE`, so this is genuinely one SQL statement, not two.
+- **`TaskItem.TailoredContentMaxLength` constant added** (mirrors the `TitleMaxLength`/
+  `DescriptionMaxLength`/`SourceSectionMaxLength` constants Sprint 2's review round 2 already added),
+  so the save tool's `ToolOutputValidator.Validate(content, maxLength)` call references the same cap
+  as the column instead of a second `20000` literal — applying the Sprint 2 retrospective's DTO/domain
+  parity rule to a tool-call boundary, not just a DTO.
+- **Failure isolation (T3R.5) needs no special-casing.** Each agent's own rollback (already the
+  existing `ReleaseClaimAsync` + `RolledBack` log pattern, reused verbatim from
+  `GenericExecutorAgent`) only ever touches the task it claimed. The atomic-join guard
+  (`Tasks.Count(... Review) == 2`) naturally never fires when one sibling is back in `Todo` — no
+  extra "don't promote if the other failed" logic needed, it falls out of the same guard that
+  prevents double-promotion.
+- **Sequencing, not full parallel delegation this time.** Two engineers, sequential: repository
+  methods first (the highest-risk, atomicity-critical piece per the retrospective), independently
+  verified and committed; then the agents, built on top of the already-verified repository layer.
+  Splitting the tightly-coupled agent-pair work itself across two parallel engineers would risk
+  reintroducing the exact divergence the shared base class exists to prevent.
+
 ### Goal
 
 From one `JobApplication` with two `Todo` sibling tasks and a session base resume, generate a
