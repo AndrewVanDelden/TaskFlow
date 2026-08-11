@@ -139,6 +139,8 @@ builder.Services.AddScoped<ISpendGuard, DailyExecutorSpendGuard>();
 builder.Services.AddScoped<ITaskFlowAgent, TaskPrioritizerAgent>();
 builder.Services.AddScoped<ITaskFlowAgent, StaleTaskAgent>();
 builder.Services.AddScoped<ITaskFlowAgent, GenericExecutorAgent>();
+builder.Services.AddScoped<ITaskFlowAgent, ResumeTailoringAgent>();
+builder.Services.AddScoped<ITaskFlowAgent, CoverLetterAgent>();
 
 // Register the AgentRunner as a hosted background service
 // This starts automatically when the app starts
