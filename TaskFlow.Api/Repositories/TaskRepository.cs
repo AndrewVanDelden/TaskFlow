@@ -122,6 +122,21 @@ public class TaskRepository : ITaskRepository
                 .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
     }
 
+    public async Task<bool> SaveTailoredContentAndMarkForReviewAsync(int taskId, string content, CancellationToken ct = default)
+    {
+        // Guarded UPDATE (InProgress -> Review), extended from MarkForReviewAsync by one more
+        // SetProperty so the content save and the status transition happen in a single atomic
+        // statement — no window where one could succeed without the other.
+        var moved = await _db.Tasks
+            .Where(t => t.Id == taskId && t.Status == WorkflowStatus.InProgress)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.TailoredContent, content)
+                .SetProperty(t => t.Status, WorkflowStatus.Review)
+                .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+
+        return moved == 1;
+    }
+
     public async Task AddAsync(TaskItem task, CancellationToken ct = default) =>
         await _db.Tasks.AddAsync(task, ct);
 

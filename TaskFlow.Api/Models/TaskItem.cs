@@ -10,6 +10,7 @@ public class TaskItem
     public const int TitleMaxLength = 200;
     public const int DescriptionMaxLength = 2000;
     public const int SourceSectionMaxLength = 200;
+    public const int TailoredContentMaxLength = 20000;
 
     public int Id { get; set; }
 
@@ -60,6 +61,6 @@ public class TaskItem
 
     // Generated/edited resume or cover-letter body text for Epic 3 tasks. Large free text, so a
     // generous cap rather than the short MaxLength used for other string fields on this entity.
-    [MaxLength(20000)]
+    [MaxLength(TailoredContentMaxLength)]
     public string? TailoredContent { get; set; }
 }
