@@ -86,6 +86,29 @@ the repo before writing this doc:
 - Single tenant by design — ownership checks bind to the existing authenticated identity, not a
   new multi-user concept.
 
+**Added after Sprint 2's four-round review cycle (2026-08-11) — see that sprint's post-sprint
+retrospective for the full reasoning. Each maps to a real, confirmed bug, not a hypothetical:**
+
+- **Every new DTO's `[MaxLength]`/`[Required]` must be checked against the domain field(s) it
+  ultimately feeds, at the time the DTO is written** — not left for a review round to catch. Check
+  both directions: does the DTO cap match the entity's cap, and is a non-nullable string actually
+  `[Required]` (an explicit JSON `null` bypasses the C# type system during model binding otherwise)?
+- **A value derived from a length-capped field (prefix, suffix, concatenation) needs its own
+  length check at its own destination.** Capping the input does not cap what gets built from it.
+- **A commit that adds a DB-level uniqueness/FK/check constraint must, in the same commit, audit
+  and handle every write path's violation case.** Adding the constraint and handling what it
+  throws are one unit of work, not two commits apart.
+- **Catching a broad exception type to infer one specific condition must re-verify that condition
+  (query business state) before acting on it — never infer cause from exception type alone.** A
+  broad `catch` block will eventually catch something else too.
+- **An enum-like discriminator string field (`"text"`/`"markdown"`, etc.) must normalize
+  null/empty/whitespace the same way** — `value ?? "default"` only catches `null`. Use
+  `string.IsNullOrWhiteSpace(value) ? "default" : value`.
+- **Before writing a new DTO, a new Claude-backed parser, or new check-then-act persistence
+  logic, read `.github/skills/code-review/SKILL.md` first** — it encodes every concrete failure
+  pattern found in this project so far. It exists to be read during implementation, not only
+  during review.
+
 ---
 
 # Roadmap
@@ -811,6 +834,72 @@ finding (`ClaudeIngestionParser` sending raw user-pasted text into its Claude pr
 deferral is now item #3 above — fixed the same day, once the deferral itself was recognized as the
 wrong call. Left here as the historical record of the initial (corrected) decision, not as an open
 item.
+
+### Post-sprint retrospective (2026-08-11)
+
+Sprint 2 shipped correct and the process caught everything before it reached `develop` — but it
+took the initial implementation plus **four** review rounds to get there. The round count, not any
+individual bug, is the main signal worth acting on for Sprint 3R. `PR-40` is merged; this section
+looks at the pattern across the whole cycle, not any one finding already logged above.
+
+**What went well:**
+
+- **TDD held with no exceptions across five passes** (the initial build and all four review
+  rounds) — every fix, including every review-round fix, had a RED test confirmed failing against
+  the pre-fix code before the GREEN change. Not one fix landed test-first only when it was
+  convenient.
+- **Parallel delegation with zero file overlap worked cleanly.** The job-posting parser and the
+  frontend base-resume capture were built by two engineers at the same time, verified
+  independently, no rework needed to reconcile them.
+- **Architecture decisions were made and recorded before implementation** (the DI seam, the
+  controller shape, the `JobApplication` schema gap), not discovered mid-build. None of the four
+  review rounds found an architectural problem — every finding was a correctness/robustness gap in
+  already-sound design, which is a meaningfully cheaper class of bug to fix.
+- **Manual review and Copilot's automated review were cross-checked against each other every
+  round, not run in isolation.** This repeatedly paid off: Copilot caught a sharper version of a
+  manual finding the manual pass missed (the cover-letter title overflow), and one Copilot finding
+  was checked and correctly rejected as a false positive (an "unused" using directive that wasn't)
+  instead of being applied blind.
+- **A process mistake was caught and corrected the same day it was made**, not carried forward:
+  the `ClaudeIngestionParser` prompt-safety gap was initially deferred to a background task, then
+  recognized as wrong to defer — a scoped, fixable finding — and fixed directly instead. The
+  correction is recorded in `CLAUDE.md`, not just fixed silently.
+- **The repo now has a standing artifact from this sprint that should pay for itself in Sprint 3R:**
+  `.github/skills/code-review/SKILL.md`, encoding every concrete failure pattern found across all
+  four rounds. Applying it as a fresh self-check before round 4's commit found zero new issues —
+  proof it actually works when used, not just theory.
+
+**What to improve:**
+
+- **The same class of bug — an unvalidated or under-normalized parameter not named in the primary
+  RED test — recurred in this sprint despite already being a recorded standing lesson**
+  (`feedback_engineer_subagent_misses` memory, from Sprint 0: `PromptSafety.WrapUntrusted`'s
+  `label` and `ToolOutputValidator`'s `maxLength` were both left unvalidated the same way).
+  `JobPostingSummaryDto`'s missing `MaxLength`/`Required`, and `ContentFormat`'s null-only
+  normalization, are the same failure shape months later. **The lesson existing in memory didn't
+  stop it from recurring** — it wasn't being actively consulted during implementation, only
+  rediscovered during review. This is why the standing-rules additions above point at *when* to
+  check (writing the DTO, not reviewing it) rather than just restating *what* to check.
+- **Two fixes introduced the next round's bug.** Round 1 added a unique index without handling the
+  exception it causes under a race (round 2 fixed it); round 2's fix then caught that exception too
+  broadly (round 3 fixed it). A constraint and its violation-handling are one unit of work, and a
+  broad `catch` needs its specific condition re-verified — both now standing rules above, so this
+  shouldn't take two extra rounds next time.
+- **A "still open" status note in this doc went stale within the same day it was written** — it
+  claimed the branch wasn't pushed/PR'd after it already was, and stayed wrong for two more review
+  rounds until Copilot caught it. Prose status claims rot fast during active work; re-verify them
+  at the start of each session that touches the section, rather than trusting what was true when
+  written.
+- **A migration-state question was first answered by eyeballing the raw SQLite file, which gave a
+  contradictory signal** — resolved only once `dotnet ef migrations list --project TaskFlow.Api`
+  (the authoritative source) was actually run. For "is this migration applied" specifically, that
+  command is the check; a raw file read is not, even though it feels like a real verification.
+- **For Sprint 3R specifically:** it introduces two parallel agents, an atomic join, and
+  failure-isolation logic — all check-then-act and constraint-shaped by nature (T3R.4's atomic
+  promotion, T3R.5's per-child rollback). Given how much of this sprint's review cycle was exactly
+  that pattern (check-then-act races, constraint violations, broad exception handling), treat
+  T3R.4/T3R.5 as the highest-risk tasks for a repeat of this sprint's review cycle and apply the
+  new standing rules to them from the first RED test, not after a review round finds the gap.
 
 ---
 
