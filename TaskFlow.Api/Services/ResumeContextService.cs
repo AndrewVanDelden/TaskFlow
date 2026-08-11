@@ -12,8 +12,13 @@ public sealed class ResumeContextService : IResumeContextService
     private const int MaxContentLength = 20000;
 
     private readonly IResumeContextRepository _resumeContexts;
+    private readonly IJobApplicationRepository _jobApplications;
 
-    public ResumeContextService(IResumeContextRepository resumeContexts) => _resumeContexts = resumeContexts;
+    public ResumeContextService(IResumeContextRepository resumeContexts, IJobApplicationRepository jobApplications)
+    {
+        _resumeContexts = resumeContexts;
+        _jobApplications = jobApplications;
+    }
 
     public async Task<Result<bool>> SaveAsync(string ingestionSessionId, int ownerId, string content, string? contentFormat, CancellationToken ct = default)
     {
@@ -73,6 +78,22 @@ public sealed class ResumeContextService : IResumeContextService
         }
 
         return Result<bool>.Ok(true);
+    }
+
+    public async Task<Result<string>> GetForApplicationAsync(int applicationId, int callerId, CancellationToken ct = default)
+    {
+        var application = await _jobApplications.GetByIdAsync(applicationId, ct);
+
+        // Same NotFound for missing and wrong-owner: a cross-owner probe must be indistinguishable
+        // from a genuine 404 - this project's established IDOR-safe convention.
+        if (application is null || application.OwnerId != callerId)
+            return Result<string>.NotFound($"JobApplication {applicationId} not found.");
+
+        var context = await _resumeContexts.GetForOwnerAsync(application.IngestionSessionId, application.OwnerId, ct);
+        if (context is null)
+            return Result<string>.NotFound("No base resume has been saved for this application's session.");
+
+        return Result<string>.Ok(context.Content);
     }
 
     // ContentFormat is an enum-like discriminator ("text"/"markdown"), not free text - null,

@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Api.Common;
@@ -17,15 +16,18 @@ public class JobApplicationsController : ControllerBase
     private readonly IJobPostingIngestionParser _parser;
     private readonly IResumeContextService _resumeContext;
     private readonly IJobApplicationAssemblyService _assembly;
+    private readonly IJobApplicationService _jobApplicationService;
 
     public JobApplicationsController(
         IJobPostingIngestionParser parser,
         IResumeContextService resumeContext,
-        IJobApplicationAssemblyService assembly)
+        IJobApplicationAssemblyService assembly,
+        IJobApplicationService jobApplicationService)
     {
         _parser = parser;
         _resumeContext = resumeContext;
         _assembly = assembly;
+        _jobApplicationService = jobApplicationService;
     }
 
     // Parse a pasted job posting into title/company/requirements (no persistence).
@@ -37,8 +39,8 @@ public class JobApplicationsController : ControllerBase
     [HttpPost("resume-context")]
     public async Task<IActionResult> SaveResumeContext([FromBody] SaveResumeContextDto dto)
     {
-        if (!TryGetCurrentUserId(out var ownerId))
-            return UnauthenticatedIdentity();
+        if (!this.TryGetCurrentUserId(out var ownerId))
+            return this.UnauthenticatedIdentity();
 
         return (await _resumeContext.SaveAsync(dto.IngestionSessionId, ownerId, dto.Content, dto.ContentFormat)).ToActionResult();
     }
@@ -51,19 +53,41 @@ public class JobApplicationsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Assemble([FromBody] AssembleJobApplicationDto dto)
     {
-        if (!TryGetCurrentUserId(out var ownerId))
-            return UnauthenticatedIdentity();
+        if (!this.TryGetCurrentUserId(out var ownerId))
+            return this.UnauthenticatedIdentity();
 
         var posting = new TaskDraft(dto.Posting.Title, dto.Posting.Description, TaskKind.ResumeTailoring, dto.Posting.Section);
         return (await _assembly.AssembleAsync(dto.IngestionSessionId, ownerId, posting)).ToActionResult();
     }
 
-    // A missing or non-numeric NameIdentifier claim (misconfigured auth, a token from a different
-    // issuer) must not throw - [Authorize] only proves a valid token was presented, not that its
-    // claims are shaped the way this controller expects.
-    private bool TryGetCurrentUserId(out int userId) =>
-        int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
+    // Read the caller's base resume back for a JobApplication (Sprint 4R: the paired review needs
+    // to render base resume, tailored resume, and cover letter together).
+    [HttpGet("{id:int}/resume-context")]
+    public async Task<IActionResult> GetResumeContext(int id)
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
 
-    private UnauthorizedObjectResult UnauthenticatedIdentity() =>
-        Unauthorized(new { message = "The request's identity claim is missing or invalid." });
+        return (await _resumeContext.GetForApplicationAsync(id, callerId)).ToActionResult();
+    }
+
+    // Human sign-off on the pair: moves both sibling tasks to Done and the application to Approved.
+    [HttpPost("{id:int}/approve")]
+    public async Task<IActionResult> Approve(int id)
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        return (await _jobApplicationService.ApproveAsync(id, callerId)).ToActionResult();
+    }
+
+    // Human rejection of the pair: returns both sibling tasks to Todo and the application to Building.
+    [HttpPost("{id:int}/reject")]
+    public async Task<IActionResult> Reject(int id, [FromBody] RejectTaskDto dto)
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        return (await _jobApplicationService.RejectAsync(id, callerId, dto.Reason)).ToActionResult();
+    }
 }

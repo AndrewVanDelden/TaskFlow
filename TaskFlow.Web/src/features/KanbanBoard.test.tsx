@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { KanbanBoard } from './KanbanBoard'
 
-const card = (id: number, title: string, status: string) => ({
+const card = (id: number, title: string, status: string, kind = 'Generic', applicationId: number | null = null) => ({
   id,
   title,
   description: null,
@@ -16,6 +16,9 @@ const card = (id: number, title: string, status: string) => ({
   updatedAt: '',
   assignedToId: null,
   assignedToName: null,
+  kind,
+  applicationId,
+  tailoredContent: null,
 })
 
 describe('KanbanBoard integration', () => {
@@ -47,5 +50,59 @@ describe('KanbanBoard integration', () => {
 
     // Optimistic move to Done leaves no Approve button (the card left Review; Todo never had one).
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull())
+  })
+
+  it('renders a ready pair (both siblings Review) as one combined review card, not two task cards', async () => {
+    server.use(
+      http.get('*/api/Tasks', () =>
+        HttpResponse.json([
+          card(1, 'Tailor resume', 'Review', 'ResumeTailoring', 10),
+          card(2, 'Tailor cover letter', 'Review', 'CoverLetterTailoring', 10),
+        ]),
+      ),
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('Base resume text')),
+    )
+
+    render(<KanbanBoard />)
+
+    expect(await screen.findByText('Application review')).toBeInTheDocument()
+    // The paired tasks must not ALSO render as individual TaskCards.
+    expect(screen.queryByText('Tailor resume')).toBeNull()
+    expect(screen.queryByText('Tailor cover letter')).toBeNull()
+    // Only one combined Approve/Reject pair for the application, not two individual ones.
+    expect(await screen.findAllByRole('button', { name: 'Approve' })).toHaveLength(1)
+  })
+
+  it('renders a single un-paired Review task as a normal TaskCard with its own approve/reject', async () => {
+    server.use(
+      http.get('*/api/Tasks', () =>
+        HttpResponse.json([card(1, 'Solo generic review', 'Review', 'Generic', null)]),
+      ),
+    )
+
+    render(<KanbanBoard />)
+
+    expect(await screen.findByText('Solo generic review')).toBeInTheDocument()
+    expect(await screen.findAllByRole('button', { name: 'Approve' })).toHaveLength(1)
+  })
+
+  it('leaves Todo/InProgress/Done columns unaffected by pairing', async () => {
+    server.use(
+      http.get('*/api/Tasks', () =>
+        HttpResponse.json([
+          card(1, 'Todo task', 'Todo'),
+          card(2, 'In progress task', 'InProgress'),
+          card(3, 'Done task', 'Done'),
+        ]),
+      ),
+    )
+
+    render(<KanbanBoard />)
+
+    expect(await screen.findByText('Todo task')).toBeInTheDocument()
+    expect(screen.getByText('In progress task')).toBeInTheDocument()
+    expect(screen.getByText('Done task')).toBeInTheDocument()
+    // None of these columns show Approve/Reject controls.
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
   })
 })

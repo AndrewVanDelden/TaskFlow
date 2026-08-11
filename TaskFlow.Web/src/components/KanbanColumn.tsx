@@ -1,7 +1,9 @@
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type { TaskItem, TaskStatus } from '../types'
+import type { ApplicationPair } from '../lib/board'
 import { TaskCard } from './TaskCard'
+import { ApplicationReviewCard } from './ApplicationReviewCard'
 
 interface Props {
   status: TaskStatus
@@ -10,9 +12,12 @@ interface Props {
   onApprove?: (id: number) => void
   onReject?: (id: number, reason: string) => void
   outputFor?: (id: number) => string[]
+  // Review-column-only: ReviewReady application pairs, rendered as a combined review card instead
+  // of two individual TaskCards. Omitted (undefined) for every other column — unchanged behavior.
+  pairs?: ApplicationPair[]
 }
 
-export function KanbanColumn({ status, label, tasks, onApprove, onReject, outputFor }: Props) {
+export function KanbanColumn({ status, label, tasks, onApprove, onReject, outputFor, pairs }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: status })
 
   return (
@@ -29,6 +34,19 @@ export function KanbanColumn({ status, label, tasks, onApprove, onReject, output
         </span>
       </div>
 
+      {pairs && pairs.length > 0 && (
+        <div className="mb-2">
+          {pairs.map((pair) => (
+            <ApplicationReviewCard
+              key={pair.applicationId}
+              applicationId={pair.applicationId}
+              resumeTask={pair.resumeTask}
+              coverLetterTask={pair.coverLetterTask}
+            />
+          ))}
+        </div>
+      )}
+
       <SortableContext
         items={tasks.map((t) => t.id)}
         strategy={verticalListSortingStrategy}
@@ -44,7 +62,7 @@ export function KanbanColumn({ status, label, tasks, onApprove, onReject, output
         ))}
       </SortableContext>
 
-      {tasks.length === 0 && (
+      {tasks.length === 0 && (!pairs || pairs.length === 0) && (
         <p className="text-xs text-slate-600 text-center py-6">No tasks</p>
       )}
     </div>

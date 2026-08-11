@@ -14,9 +14,17 @@ public class TasksController : ControllerBase
     private readonly ITaskService _tasks;
     public TasksController(ITaskService tasks) => _tasks = tasks;
 
+    // Scoped by caller: Epic 3 sibling tasks (personal résumé/cover-letter content) are visible
+    // only to their owner; generic tasks stay visible to everyone (PR #45 review finding - see
+    // ITaskRepository.GetAllAsync).
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] string? status, [FromQuery] string? priority) =>
-        (await _tasks.GetAllAsync(status, priority)).ToActionResult();
+    public async Task<IActionResult> GetAll([FromQuery] string? status, [FromQuery] string? priority)
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        return (await _tasks.GetAllAsync(status, priority, callerId)).ToActionResult();
+    }
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetById(int id) =>

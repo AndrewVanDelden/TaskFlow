@@ -6,7 +6,16 @@ namespace TaskFlow.Api.Repositories;
 public interface ITaskRepository
 {
     Task<TaskItem?> GetByIdAsync(int id, bool includeAssignee = false, CancellationToken ct = default);
-    Task<List<TaskItem>> GetAllAsync(WorkflowStatus? status, TaskPriority? priority, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns every task the caller is allowed to see: generic tasks (no <c>ApplicationId</c>)
+    /// unconditionally — the shared board is visible to every authenticated user by design — plus
+    /// Epic 3 sibling tasks (<c>ApplicationId</c> set) only when the owning <see cref="JobApplication"/>'s
+    /// <c>OwnerId</c> matches <paramref name="callerId"/>. Without this, a tailored resume/cover letter
+    /// (<see cref="TaskItem.TailoredContent"/>) would be visible to any authenticated user via the
+    /// shared board response (PR #45 review finding).
+    /// </summary>
+    Task<List<TaskItem>> GetAllAsync(WorkflowStatus? status, TaskPriority? priority, int callerId, CancellationToken ct = default);
     Task<List<TaskItem>> GetOpenAsync(CancellationToken ct = default);
     Task<List<TaskItem>> GetStaleAsync(DateTime cutoff, CancellationToken ct = default);
     Task<Dictionary<int, int>> GetOpenCountsByUserAsync(CancellationToken ct = default);

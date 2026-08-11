@@ -124,6 +124,31 @@ public class TaskWorkflowIntegrationTests
         count.Should().Be(drafts!.Count);
     }
 
+    // PR #45 review finding: GET /api/Tasks was never scoped by owner, so TaskResponseDto's new
+    // TailoredContent field (Sprint 4R) leaked every user's tailored resume/cover letter to every
+    // other authenticated user through the shared board endpoint. Proves the real HTTP fix, not
+    // just the repository-level unit test: a second user's Epic 3 sibling task is completely
+    // absent from the response (not just redacted), while a generic task remains visible to all.
+    [Fact]
+    public async Task GetAll_hides_another_users_Epic3_sibling_task_but_shows_generic_tasks_to_everyone()
+    {
+        var owner = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await owner.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+        var assemble = await owner.PostAsJsonAsync("/api/JobApplications",
+            new { ingestionSessionId = sessionId, posting = new { title = "Backend Engineer", section = "Job Posting" } });
+        assemble.EnsureSuccessStatusCode();
+
+        var otherUser = await AuthedClientAsync();
+        var genericId = await CreateTaskAsync(otherUser, "Shared generic task");
+
+        var tasksAsOtherUser = await otherUser.GetFromJsonAsync<List<TaskResponseDto>>("/api/Tasks");
+
+        tasksAsOtherUser!.Should().Contain(t => t.Id == genericId);
+        tasksAsOtherUser.Should().NotContain(t => t.ApplicationId != null);
+    }
+
     // Local shapes: read the switch state, and read drafts with Kind as a plain string so the test's
     // default (non-enum-aware) deserializer does not choke on "Generic".
     private sealed record ExecutorState(bool Enabled);

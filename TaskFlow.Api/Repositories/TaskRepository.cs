@@ -17,9 +17,14 @@ public class TaskRepository : ITaskRepository
         return await query.FirstOrDefaultAsync(t => t.Id == id, ct);
     }
 
-    public async Task<List<TaskItem>> GetAllAsync(WorkflowStatus? status, TaskPriority? priority, CancellationToken ct = default)
+    public async Task<List<TaskItem>> GetAllAsync(WorkflowStatus? status, TaskPriority? priority, int callerId, CancellationToken ct = default)
     {
-        var query = _db.Tasks.Include(t => t.AssignedTo).AsQueryable();
+        // Generic tasks (no ApplicationId) are the shared board, visible to everyone. Epic 3
+        // sibling tasks carry personal document content (TailoredContent) and are visible only to
+        // the JobApplication's own owner - a caller with the wrong id must not see them at all,
+        // not just be blocked from acting on them (PR #45 review finding).
+        var query = _db.Tasks.Include(t => t.AssignedTo)
+            .Where(t => t.ApplicationId == null || t.Application!.OwnerId == callerId);
         if (status.HasValue)   query = query.Where(t => t.Status == status.Value);
         if (priority.HasValue) query = query.Where(t => t.Priority == priority.Value);
         return await query.OrderBy(t => t.DueDate).ThenBy(t => t.Priority).ToListAsync(ct);

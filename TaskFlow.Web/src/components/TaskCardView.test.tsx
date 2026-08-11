@@ -15,6 +15,9 @@ const task: TaskItem = {
   updatedAt: '',
   assignedToId: null,
   assignedToName: null,
+  kind: 'Generic',
+  applicationId: null,
+  tailoredContent: null,
 }
 
 describe('TaskCardView', () => {

@@ -40,3 +40,36 @@ export function taskOutput(logs: AgentLog[], taskId: number): string[] {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .map((l) => l.details as string)
 }
+
+export interface ApplicationPair {
+  applicationId: number
+  resumeTask: TaskItem
+  coverLetterTask: TaskItem
+}
+
+// A ReviewReady application, derived purely from the visible task list rather than a separate
+// application-state field: the backend's ApplicationState.ReviewReady is exactly and only true when
+// both sibling TaskItems are Review (Sprint 3R's own invariant), so checking both siblings' own
+// status here is equivalent and needs no extra field on the wire.
+export function reviewReadyPairs(tasks: TaskItem[]): ApplicationPair[] {
+  const byApplication = new Map<number, TaskItem[]>()
+  for (const task of tasks) {
+    if (task.applicationId === null) continue
+    const siblings = byApplication.get(task.applicationId) ?? []
+    siblings.push(task)
+    byApplication.set(task.applicationId, siblings)
+  }
+
+  const pairs: ApplicationPair[] = []
+  for (const [applicationId, siblings] of byApplication) {
+    const resumeTask = siblings.find((t) => t.kind === 'ResumeTailoring' && t.status === 'Review')
+    const coverLetterTask = siblings.find(
+      (t) => t.kind === 'CoverLetterTailoring' && t.status === 'Review',
+    )
+    if (resumeTask && coverLetterTask) {
+      pairs.push({ applicationId, resumeTask, coverLetterTask })
+    }
+  }
+
+  return pairs
+}

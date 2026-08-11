@@ -149,7 +149,7 @@ public class TaskService : ITaskService
             : Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
-    public async Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, CancellationToken ct = default)
+    public async Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, int callerId, CancellationToken ct = default)
     {
         WorkflowStatus? parsedStatus = null;
         if (!string.IsNullOrWhiteSpace(status))
@@ -169,7 +169,7 @@ public class TaskService : ITaskService
             parsedPriority = p;
         }
 
-        var tasks = await _tasks.GetAllAsync(parsedStatus, parsedPriority, ct);
+        var tasks = await _tasks.GetAllAsync(parsedStatus, parsedPriority, callerId, ct);
         IReadOnlyList<TaskResponseDto> dtos = tasks.Select(TaskResponseDto.FromEntity).ToList();
         return Result<IReadOnlyList<TaskResponseDto>>.Ok(dtos);
     }
