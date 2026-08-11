@@ -1,6 +1,6 @@
 # Rules to follow for AI who are reading this:
 
-- TDD is How we will build everything
+- Strict TDD, clean code, SOLID, and DRY are how we will build everything.
 - **When adding code, add its test coverage in the same change — up front, not later.**
   If asked to add a method/class/file, deliver the tests that cover it alongside it. Do not
   hand over new implementation code with "tests can come later."
@@ -15,6 +15,14 @@
   does not run `dotnet`. So: Claude writes the code and tests into the repo; YOU run every
   `git` and `dotnet test`/`dotnet build` command on your machine and report the result.
   This matches the TDD loop (you run, Claude writes).
+  **Exception (confirmed working, 2026-08-10): Claude may run `.\test` itself** to confirm a
+  fix before reporting it done — it only writes the git-ignored `test-results.txt` and
+  coverage files, touches no git state, and this session's sandbox ran it cleanly.
+  **Second exception (2026-08-10): Claude may run a `git` or `dotnet` command — including
+  `git commit`/`git push`, `dotnet build`, `dotnet ef` — when the user explicitly asks for
+  that specific command/action in the moment.** This is not standing/autonomous permission;
+  it does not cover Claude deciding on its own to run one. Absent that explicit in-the-moment
+  ask, git/build/test commands still go to the user by default.
 - **Root convenience commands:** `.\run` (run.cmd) starts the whole app — API + web with the browser
   opening on `:5173` — and `.\test` (test.cmd) runs the full test suite with coverage into
   `test-results.txt`. Both live at the repo root so no folder-changing is needed.
@@ -55,9 +63,12 @@
 - **Hold the whole map, not just the slice in front of you.** Read the entire document
   before advising so guidance fits the overall scope, not one local step. (Violated:
   advised for several turns having only read part of the doc.)
-- **Do not attempt `git` or `dotnet` from the AI sandbox.** It cannot write `.git` and has
-  no `dotnet`; a failed attempt left a stale `.git/index.lock` the user had to remove by
-  hand. Hand every git/build/test command to the user (see Tooling boundary above).
+- **Do not attempt `git` or `dotnet` from the AI sandbox on your own initiative.** It cannot
+  write `.git` and has no `dotnet`; a failed attempt left a stale `.git/index.lock` the user
+  had to remove by hand. Hand every git/build/test command to the user by default (see
+  Tooling boundary above) — **except `.\test`, which Claude may always run itself, and except
+  any specific `git`/`dotnet` command the user explicitly asks Claude to run in the moment
+  (e.g. "commit this," "push it") — both are confirmed exceptions, see Tooling boundary.**
 - **Do not invent scope, and never slip unspecified work into a "next step."** If something is
   missing and should be added, say so explicitly and record it in the active doc as a labeled
   decision before acting. (Violated: dropped "thread a source name into provenance" as if it were
@@ -113,3 +124,23 @@
   to change and where, and let them apply it. Always keep the guide doc updated yourself.
   Edit source directly only on explicit request, and do not overstep a "where does this go?"
   question by silently creating or moving files.
+
+**Findings from the PR #40 code-review session (2026-08-10):**
+
+- **Code review findings live in the active epic doc, not a standalone review file.** Never
+  create a one-off `PR-<n>-CODE-REVIEW.md` (or similar) file for a review. Record findings as
+  a dated subsection under the sprint the PR belongs to, in the active epic doc (e.g.
+  `TaskFlow_Epic3_ResumeBuilder.md`), matching that doc's own decision-record style (numbered
+  findings, file:line anchors, why + fix, RED-test-first note, open/fixed status). One source
+  of truth per project, not a review file per PR. (Corrected in this session: created
+  `PR-40-CODE-REVIEW.md` unprompted; user asked for it folded into the epic doc and the
+  standalone file deleted.)
+- **Cross-check a manual PR review against any automated reviewer already on the PR** (e.g.
+  GitHub Copilot's review comments, fetched via
+  `gh api repos/<owner>/<repo>/pulls/<n>/comments`) before treating the review as final.
+  Convergence between an independent automated review and a manual one is corroborating
+  evidence a finding is real, not noise; and the automated pass can catch things a manual
+  pass missed. (Applied in this session: manual review and Copilot's review independently
+  converged on the same idempotency bug and the same unguarded-`int.Parse` issue; Copilot also
+  caught a test-quality gap — a `.not.toContain(...)` assertion that doesn't actually prove
+  `localStorage.setItem` was never called — that the manual review missed.)

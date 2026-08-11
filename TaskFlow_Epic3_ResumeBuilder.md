@@ -334,17 +334,107 @@ migrate-on-boot integration tests apply the schema.
 
 ### Open decision to settle here, not carry silently
 
-The board currently surfaces agent output through `AgentLog` via `taskOutput(logs, id)` (confirmed
-— `lib/board.ts`, used by `KanbanBoard.tsx`). This sprint stores each task's own output in
-`TailoredContent` instead. **Decide whether the Review surface reads `TailoredContent` or continues
-through the log channel, and align the Sprint 3R save path and the Sprint 4R read path to the one
-chosen source.** Not yet decided; record the answer here before Sprint 3R starts.
+**Settled 2026-08-10.** The board currently surfaces agent output through `AgentLog` via
+`taskOutput(logs, id)` (confirmed — `lib/board.ts`, used by `KanbanBoard.tsx`). This sprint stores
+each task's own output in `TailoredContent` instead. The question was whether the Review surface
+reads `TailoredContent` or continues through the log channel.
+
+**Decision: the Epic 3 Review surface (`ApplicationReviewCard`, Sprint 4R) reads `TaskItem.TailoredContent`.
+The `AgentLog`/`taskOutput(logs, id)` channel is untouched and keeps serving exactly what it serves
+today — `TaskKind.Generic` tasks on the existing board's Review column via `KanbanColumn`'s
+`outputFor`.** Two channels for two different kinds, not a forced unification — same pattern as
+Sprint 2's `IJobPostingIngestionParser` sitting alongside `IIngestionParser` without replacing it.
+
+**Why, not just what:**
+- `taskOutput` reconstructs an ordered array of narrative log strings (`record_progress` notes, then
+  a `request_review` summary) for the *current claim cycle* of a `GenericExecutorAgent`-style task —
+  it is built for "what did the agent do, in order," not "here is the one clean artifact." A tailored
+  resume or cover letter is a single cohesive markdown document, not a log entry, and forcing it
+  through `details` (an untyped log string with no size/format guarantee) to reconstruct a document
+  would be more fragile than reading the purpose-built field that already exists for exactly this.
+- The later sprints' own task text, written before this decision was explicitly closed out, already
+  assumed the `TailoredContent` answer without saying so out loud — re-reading them settles this
+  rather than requiring a fresh design: **T3R.2** already says `ResumeTailoringAgent` "produces a
+  tailored resume to its own `TailoredContent` ... with a completion log" — the log and the
+  deliverable are already two separate things in that sentence. **T4R.2**'s `ApplicationReviewCard`
+  renders "base resume, tailored resume, and cover letter" as three documents, not three log arrays.
+  **T5.1** is the deciding evidence: `IExportService` explicitly "renders a `TailoredContent`
+  markdown document to PDF and to a Markdown file" — export was already specified to read
+  `TailoredContent`, and Review must read the same source Export does, or the two surfaces could
+  show different content for the same task.
+- Agents still call `RecordActionAsync` (existing `ClaudeAgentBase` mechanism, used by every agent
+  today) to log a completion entry — that stays as the audit trail visible via the existing agent
+  feed/diagnostics surfaces, it just is not what `ApplicationReviewCard` reads for the deliverable
+  itself.
+
+**Not done here, deliberately — this is a decision, not an implementation pass:** no agent writes to
+`TailoredContent` yet (Sprint 3R's `T3R.1`/`T3R.2`), and `ApplicationReviewCard` does not exist yet
+(Sprint 4R's `T4R.2`). Closing this decision only unblocks those sprints; it does not pull their
+work forward.
 
 ---
 
 ## Sprint 2 — Job Posting Ingestion
 
-**Status: Ready. Architecture only.**
+**Status: COMPLETE (2026-08-10).** T2.1–T2.4 shipped on
+`feature/epic3-sprint2-job-posting-ingestion` (4 commits: architect decisions, T2.1/T2.2 parsers,
+T2.3 frontend capture, T2.3-backend/T2.4 assembly+controller). Full suite green via `.\test`:
+146/146 backend, 44/44 frontend, both with coverage. Built by three delegated engineers — two run
+in parallel with zero file overlap (backend parsers; frontend base-resume capture), one sequenced
+after because it depends on the parallel parser slice's `IJobPostingIngestionParser` interface —
+each independently re-verified against the actual diff and a fresh `dotnet build`/`dotnet test`/
+`npx vitest run`/`npx tsc -b` run rather than taken on the subagent's self-report. This section is
+now the historical record for Sprint 2.
+
+**Decisions made before dispatching work** (full detail in the "Decisions owned here" subsection
+below, kept in place as the record): `JobApplicationsController` (`api/JobApplications`) as a new
+controller, not a change to `IngestionController`; `IJobPostingIngestionParser` marker-interface DI
+seam so the existing default `IIngestionParser` registration is untouched;
+`JobApplication.IngestionSessionId`/`OwnerId` added (new migration) so a Sprint 3R agent — running
+outside any HTTP request — can resolve which `ResumeContext` to read without a JWT of its own.
+
+**What shipped, exactly as specified, plus one real bug found and fixed during implementation:**
+- `T2.1` — `JobPostingParser` (free): first level-1 heading is title, first level-2 heading is
+  company, found independently of ordering; returns an empty list when no title heading exists so
+  the tiered composer escalates to Claude.
+- `T2.2` — `ClaudeJobPostingParser` (paid): fixed prompt extracts title/company/top-5 requirements;
+  the posting is wrapped via `PromptSafety.WrapUntrusted` before it reaches Claude — proved by a
+  test asserting on `StubClaude`'s new `LastRequest` capture, not just declared in a comment. Every
+  field of the response is validated (missing/blank title, missing/malformed JSON, no JSON object
+  at all), not just the happy path.
+- `IJobPostingIngestionParser`/`JobPostingIngestionParser` compose both via the existing
+  `TieredIngestionParser` (reused, not reimplemented) behind the marker interface.
+- `T2.3` — base resume capture: `IngestDocument.tsx` gained a labeled base-resume textarea and
+  "Save base resume" button, independent of the existing generic paste/parse/approve flow. A
+  session id is generated once per component instance (`crypto.randomUUID()`) and reused across
+  saves — proved never written to `localStorage` via a `Storage.prototype.setItem` spy, not just
+  asserted. Backend: `IResumeContextService` validates and persists via the Sprint 0
+  `ToolOutputValidator` guardrail (reused, not reimplemented).
+- `T2.4` — `IJobApplicationAssemblyService`/`JobApplicationAssemblyService`: creates one
+  `JobApplication` (`Building`) plus two `Todo` sibling tasks sharing `ApplicationId`, refusing
+  (`NotFound`) when no `ResumeContext` exists yet for the caller's session+owner — and proved to
+  persist nothing on every failure path (blank session id, blank title, missing resume context,
+  wrong-owner resume context) by querying the DB afterward, not just checking the return value.
+- **Bug found and fixed, not in the original spec:** `AssembleAsync` originally returned the raw
+  `JobApplication` entity; EF Core's relationship fixup makes each sibling task's `Application`
+  navigation point back at the same instance, and `System.Text.Json` throws on that cycle with no
+  reference-handling configured — caught by a real HTTP-level integration test failing with `A
+  possible object cycle was detected`, not assumed. Fixed with
+  `JobApplicationResponseDto`/`JobApplicationTaskDto`, the same pattern `TaskResponseDto` already
+  uses for `TaskItem` elsewhere in this codebase.
+
+**Resolved 2026-08-11 (was "still open" above; Copilot's round-3 review flagged the old text as
+stale):**
+- The branch claim was wrong by the time Copilot read it — the branch has been pushed and is PR #40,
+  with several commits on it since.
+- Migration-application status is now **confirmed, not just inferred**: `dotnet ef migrations list
+  --project TaskFlow.Api` was run directly against the dev DB and printed all twelve migrations,
+  including `20260810224718_AddJobApplicationSessionOwnership` and
+  `20260810233326_MakeResumeContextSessionOwnerUnique`, with none marked `(Pending)` — meaning both
+  are applied. This is the authoritative source; an earlier attempt to answer the same question by
+  grepping the raw `taskflow.db` file directly gave a misleading, contradictory signal (SQLite can
+  leave stale byte content in freed pages after a migration rewrites `sqlite_master`, so raw-file
+  grep is not a reliable way to check applied-migration state — `dotnet ef migrations list` is).
 
 ### Goal
 
@@ -406,6 +496,54 @@ Sprint 2 must not do.
 - `TaskFlow.Web/src/features/IngestDocument.tsx` (edit)
 - Tests: `JobPostingParserTests.cs`, `ClaudeJobPostingParserTests.cs`, `IngestDocument.test.tsx`
 
+### Decisions owned here, before dispatching any engineer (2026-08-10)
+
+Settles open decision #4 and one gap the source docs didn't address:
+
+- **Controller/route shape:** a new `JobApplicationsController` (`api/JobApplications`, `[Authorize]`),
+  separate from `IngestionController`, with three actions: `POST parse` (job-posting text →
+  drafts), `POST resume-context` (base resume → `ResumeContext`), `POST` (assemble → creates the
+  `JobApplication` + two siblings). `IngestionController`/`/api/Ingestion` is untouched, matching
+  the standing decision above.
+- **DI seam without touching the existing `IIngestionParser` registration:** a marker interface
+  `IJobPostingIngestionParser : IIngestionParser`, implemented by a thin `JobPostingIngestionParser`
+  that composes `JobPostingParser` (free) + `ClaudeJobPostingParser` (paid) via
+  `TieredIngestionParser` internally. `JobApplicationsController` depends on
+  `IJobPostingIngestionParser`, never the bare `IIngestionParser` — so the container keeps
+  resolving the existing generic registration for `IngestionController` unchanged. Avoids relying
+  on keyed DI (version-sensitive); one new interface is simpler and safer.
+- **Real gap found while designing T2.4, not addressed by any source doc: nothing links a
+  `JobApplication` back to the `ResumeContext` it needs.** `JobApplication` (Sprint 1) has no
+  session or owner field, and Sprint 3R's agents run outside any HTTP request — they cannot resolve
+  "which `ResumeContext`" from a JWT the way a controller can. **Decision: add `IngestionSessionId`
+  (`MaxLength(200)`, matches `ResumeContext`) and `OwnerId` (`int`) to `JobApplication`, stamped at
+  assembly time from the authenticated caller.** A Sprint 3R agent then resolves its base resume as
+  `task.ApplicationId → JobApplication.{IngestionSessionId, OwnerId} → ResumeContextRepository.GetForOwnerAsync`,
+  reusing the Sprint 0 ownership-scoped repository as-is. This is new migration scope on top of what
+  Sprint 1 shipped, but it is required to satisfy this sprint's own Definition of Done line ("both
+  linked to the `ResumeContext`"), not unrelated work — recorded here rather than left implicit.
+  `JobApplicationAssemblyService.AssembleAsync` refuses to assemble (`Result.NotFound`) if no
+  `ResumeContext` exists yet for the given session+owner, since a resume-less application would have
+  nothing for Sprint 3R to read.
+- **Session id origin:** the frontend generates one `crypto.randomUUID()` per intake attempt (not
+  persisted anywhere, so it cannot become a `localStorage` violation) and threads it through the
+  resume-context save call. T2.4's assemble call is backend-only in this sprint's frontend scope
+  (`IngestDocument.tsx` only grows a base-resume input per T2.3's RED test — wiring the parse/assemble
+  calls into the UI is Sprint 6's guided-flow redesign, not duplicated here).
+- **First controller to read the caller's own identity from the JWT.** No existing controller does
+  this (`TasksController`/`IngestionController` don't scope by owner). `JobApplicationsController`
+  adds a small `CurrentUserId()` helper reading `ClaimTypes.NameIdentifier`, matching how
+  `JwtService` already stamps that claim.
+- **Found during implementation, not in the original spec: `AssembleAsync` cannot return the raw
+  `JobApplication` entity.** EF Core's relationship fixup sets each sibling `TaskItem.Application`
+  back to the same in-memory `JobApplication`, and with no reference-cycle handling configured,
+  `System.Text.Json` throws on serializing that cycle — confirmed via a real HTTP-level integration
+  test failing with `A possible object cycle was detected`, not assumed. Fixed the same way this
+  codebase already avoids the same problem for `TaskItem` (`TaskResponseDto`/`TaskService`): added
+  `JobApplicationResponseDto`/`JobApplicationTaskDto` with a `FromEntity` factory, and
+  `IJobApplicationAssemblyService.AssembleAsync` returns `Result<JobApplicationResponseDto>`, not
+  `Result<JobApplication>`.
+
 ### Tasks
 
 **T2.1 — Deterministic job posting parser.** RED: `JobPostingParserTests` feeds a markdown string
@@ -451,6 +589,228 @@ posting creates one `JobApplication` and exactly two sibling tasks with the corr
 - Prerequisites: Sprint 0 (`ResumeContext`, input isolation) and Sprint 1 (kinds, `JobApplication`,
   `ApplicationId`).
 - Unblocks: the Sprint 3R agents have two `Todo` tasks and a readable base resume.
+
+### Code review findings (2026-08-10) — PR #40
+
+Full review of PR #40 (`feature/epic3-sprint2-job-posting-ingestion` → `develop`), structured against
+Google's Engineering Practices code-review guidelines (correctness, design, complexity, tests,
+naming), then cross-checked against GitHub Copilot's automated PR review. Recorded here, in this
+doc, rather than as a standalone review file, so the sprint's own history carries its review outcome
+the same way it carries its bug-found-during-implementation note above.
+
+#### Round 2 (2026-08-10) — a fresh manual pass + Copilot's second automated pass, post-round-1-fix
+
+Run independently after round 1's fixes landed, to check the fixed code with fresh eyes rather than
+just re-verifying old findings. Cross-checked against Copilot's second automated review the same day.
+**Status: FIXED, confirmed GREEN.** 158/158 backend (+5 tests), 44/44 frontend.
+
+- **Manual finding, confirmed by Copilot independently:** `JobPostingSummaryDto` (`Title`,
+  `Description`, `Section`) had no `[MaxLength]` matching `TaskItem`'s own persistence caps (`Title`
+  200, `Description` 2000, `SourceSection` 200) — an oversized value would bypass model validation
+  entirely. **Fixed:** added `TaskItem.TitleMaxLength`/`DescriptionMaxLength`/`SourceSectionMaxLength`
+  constants (so the DTO's caps and the entity's caps can't drift apart) and applied them via
+  `[MaxLength]` on `JobPostingSummaryDto`. RED tests: three new HTTP-level tests in
+  `JobApplicationsIntegrationTests.cs`, one per oversized field, each expecting 400.
+- **Copilot caught a sharper version of the same finding, manual review missed it:** capping the
+  DTO's `Title` alone is not sufficient — `JobApplicationAssemblyService` builds the cover-letter
+  sibling's title as `"Cover letter — " + posting.Title`, so a `Title` at exactly the 200-char cap
+  still overflows the column once that prefix is added. **Fixed:** `BuildCoverLetterTitle` truncates
+  the derived title to `TaskItem.TitleMaxLength` defensively, independent of the input cap. RED test:
+  `JobApplicationAssemblyServiceTests.Assembling_with_a_max_length_title_produces_a_cover_letter_title_that_still_fits_the_cap`.
+- **Manual finding:** `ResumeContextService.SaveAsync`'s check-then-act upsert (the round-1 fix)
+  isn't race-safe against the unique index that same fix added — a losing concurrent insert now
+  throws `DbUpdateException` instead of silently duplicating, but the service didn't catch it, so it
+  would surface as an unhandled 500. **Fixed:** catches `DbUpdateException` on the insert path only
+  (the update path is left alone) and returns `Result.Conflict(...)` (maps to HTTP 409). RED test:
+  `ResumeContextServiceTests.SaveAsync_returns_Conflict_when_a_concurrent_insert_wins_the_unique_index_race`.
+- **Manual finding (nit):** `JobApplicationsController.Assemble`'s comment overstated what setting
+  `TaskDraft`'s `Kind` accomplishes — `JobApplicationAssemblyService` never reads `posting.Kind`, it
+  hardcodes both sibling kinds itself. **Fixed:** corrected the comment; no behavior change, no test
+  needed.
+- **Copilot false positive, checked and rejected, not fixed:** Copilot's second pass flagged an
+  "unused `using TaskFlow.Api.Security;`" in `ResumeContextService.cs`. Verified via grep:
+  `ToolOutputValidator` (called at line 24 of that file) lives in `namespace TaskFlow.Api.Security` —
+  the `using` is required; removing it would break the build. Recorded here rather than silently
+  dropped, per this doc's own rule to log every review finding, confirmed or rejected.
+
+This is also the first review round conducted under the "fix now, not forward" rule (`CLAUDE.md`):
+every item above was fixed in the same pass that found it, not deferred.
+
+#### Round 3 (2026-08-11) — Copilot's third automated pass, on round 2's fix commit
+
+**Status: FIXED, confirmed GREEN.** 159/159 backend (+1 test — one added, one updated in place),
+44/44 frontend.
+
+- **Copilot finding, confirmed real:** round 2's fix caught `DbUpdateException` unconditionally in
+  `ResumeContextService.SaveAsync` and always translated it to `Result.Conflict` — which would
+  misreport an unrelated persistence failure (DB unavailable, some other constraint violation) as a
+  concurrency race, hiding the real error. **Fixed:** on catching `DbUpdateException`, re-checks
+  `GetForOwnerAsync` for this exact `(session, owner)` pair — only a genuine race leaves a row there;
+  anything else rethrows the original exception. Deliberately checks business state rather than
+  introspecting provider-specific exception internals (e.g. SQLite error codes), so the fix isn't
+  tied to SQLite specifically. RED test:
+  `ResumeContextServiceTests.SaveAsync_rethrows_when_the_insert_failure_is_not_actually_a_concurrent_row_for_this_pair`;
+  the existing Conflict test was updated to mock `GetForOwnerAsync` returning the race winner's row
+  on its second call.
+- **Copilot finding, confirmed real:** this doc's Sprint 2 "Still open" note claimed the branch
+  "has not been pushed/PR'd" — false by the time Copilot read it; PR #40 already existed with
+  several commits on it. **Fixed:** corrected in place (see that section above). While fixing it,
+  attempted to also verify the migration-application claim by reading the raw `taskflow.db` file
+  directly — got a contradictory signal that a blind file grep couldn't resolve, so it was left
+  genuinely open rather than asserted either way. **Resolved the same day:** the user ran
+  `dotnet ef migrations list --project TaskFlow.Api` directly — the authoritative source, not a raw
+  file read — and confirmed both migrations are applied (neither marked `(Pending)`). Doc updated
+  accordingly.
+- **Copilot finding, confirmed real (grammar):** `CLAUDE.md`'s opening line had a subject/verb
+  mismatch ("... is How we will build everything" — plural subject, singular verb, and a stray
+  mid-sentence capital). **Fixed.**
+
+#### Round 4 (2026-08-11) — Copilot's fourth automated pass, on round 3's fix commit
+
+**Status: FIXED, confirmed GREEN.** 165/165 backend (+6 tests: one theory expanded to cover
+null/empty/whitespace on both insert and update paths, plus one new integration test), 44/44
+frontend. Both findings this round were real, not false positives or nits — this round pushed back
+on treating round 3's thin yield (one edge case, one stale doc line, one grammar nit) as a sign the
+review loop was near done. It wasn't; round 4 found two more substantive gaps.
+
+- **Copilot finding, confirmed real:** `ResumeContextService.SaveAsync`'s `contentFormat ?? "text"`
+  only defaults a `null` `ContentFormat` — an empty or whitespace-only value (a valid string, so it
+  passes the null-coalescing operator unchanged) would be persisted as-is, polluting what's meant to
+  be an enum-like discriminator ("text"/"markdown") with a meaningless value. Present on both the
+  insert and update paths. **Fixed:** extracted `NormalizeContentFormat`, using
+  `string.IsNullOrWhiteSpace` instead of a null check, applied on both paths. RED tests: two new
+  `[Theory]` tests (`_on_insert`/`_on_update`) with `null`/`""`/`"   "` cases each, replacing the
+  old null-only test.
+- **Copilot finding, confirmed real:** `JobPostingSummaryDto.Section` is typed as a non-nullable
+  `string` but had no `[Required]` — a client sending an explicit JSON `null` (not omitting the
+  field, sending it as `null`) passes model validation anyway, and `Section` ends up actually `null`
+  at runtime despite its type. **Fixed:** added `[Required(AllowEmptyStrings = true)]` — empty
+  string still passes, explicit `null` now returns 400. RED test:
+  `JobApplicationsIntegrationTests.Assembling_with_an_explicit_null_posting_section_returns_400`.
+
+**Status: FIXED (2026-08-10).** Items 1, 2, 4, 4a, 5, and 6 addressed below, each with a RED test
+confirmed failing against the pre-fix code before the GREEN change, per this doc's standing TDD
+rule. Full suite green afterward: 152/152 backend, 44/44 frontend. Items 7 and 8 are left open by
+design (see their own entries below — neither is fixable in isolation right now).
+
+Item 3 was initially spun off as a separate background follow-up task instead of fixed here — then
+reconsidered the same day: this project's standing preference is to fix a found, scoped, fixable
+issue now rather than pass it forward, even one found outside the original ask (recorded in
+`CLAUDE.md`, since deferring it was itself the process mistake). The fix (below, under item 3) is
+**confirmed GREEN** via a fresh `.\test` run: 153/153 backend (152 + the one new wrapping test), 44/44
+frontend. The background task chip tracking it has been dismissed.
+
+- **#1 (critical):** `ResumeContextService.SaveAsync` now upserts (`GetForOwnerAsync` first, mutate
+  if found) instead of always inserting, **and** `ResumeContext`'s `(IngestionSessionId, OwnerId)`
+  index is now `.IsUnique()` (migration `MakeResumeContextSessionOwnerUnique`, applied to the dev
+  DB — confirmed zero existing rows before applying, so no backfill conflict). Two RED tests: one at
+  the service level (`ResumeContextServiceTests.SaveAsync_called_twice_for_the_same_session_and_owner_updates_instead_of_duplicating`,
+  real SQLite) and one at the repository/schema level proving the DB itself refuses a bypassed
+  duplicate insert (`ResumeContextRepositoryTests.Adding_a_second_row_for_the_same_session_and_owner_violates_the_unique_index`).
+- **#2:** Extracted `ClaudeJsonExtractionParserBase<TJson>` (new,
+  `TaskFlow.Api/Ingestion/ClaudeJsonExtractionParserBase.cs`); `ClaudeIngestionParser` and
+  `ClaudeJobPostingParser` are now thin subclasses supplying only their prompt, JSON delimiter pair,
+  and drafts-mapping step. Pure refactor — both parsers' existing test suites (10 tests total) verified
+  unchanged as the regression safety net, no new tests needed for the extraction itself.
+- **#4:** Added `Parse_returns_400_when_the_parser_reports_invalid` to
+  `JobApplicationsControllerTests.cs`.
+- **#4a:** Tightened the `IngestDocument.test.tsx` localStorage test from "no stored value contains
+  the resume text" to `expect(setItemSpy).not.toHaveBeenCalled()`.
+- **#5:** `JobApplicationsController` now has `TryGetCurrentUserId(out int)` (uses `int.TryParse`)
+  instead of `int.Parse(...)!`; `SaveResumeContext`/`Assemble` return 401 via a new
+  `UnauthenticatedIdentity()` helper when the claim is missing or non-numeric, instead of throwing.
+  Two RED tests confirmed the prior code threw `ArgumentNullException`/`FormatException` (would
+  surface as an unhandled 500) before the fix.
+- **#6:** New `JobPostingSummaryDto` (no `Kind` field) replaces `TaskDraft` as
+  `AssembleJobApplicationDto.Posting`'s type — the client can no longer send a `kind` that gets
+  silently ignored, because the wire shape doesn't have the field at all. The controller constructs
+  the internal `TaskDraft` with a fixed `Kind = ResumeTailoring` before calling the assembly service
+  (unchanged — still takes `TaskDraft`, so `JobApplicationAssemblyServiceTests.cs` needed no changes).
+- **#3 (fixed 2026-08-10, confirmed GREEN):** `ClaudeIngestionParser.BuildPrompt` now wraps
+  `documentText` with `PromptSafety.WrapUntrusted` before it reaches the prompt, matching
+  `ClaudeJobPostingParser`. RED test added:
+  `ClaudeIngestionParserTests.Document_text_is_wrapped_as_untrusted_before_being_sent_to_claude`
+  (mirrors `ClaudeJobPostingParserTests`'s equivalent, asserting on `StubClaude.LastRequest`'s actual
+  wrapped text, not just that `PromptSafety` is imported). Confirmed via a fresh `.\test` run:
+  153/153 backend, 44/44 frontend.
+- **#7 (not fixed, by design):** the ingestion session id lives in `IngestDocument.tsx` component
+  state and doesn't survive an unmount/remount. Not a bug today — wiring `assemble` into the UI is
+  still Sprint 6 scope — but Sprint 6's guided-flow design needs to give the session id a home that
+  outlives this component (e.g. a route param).
+- **#8 (not fixed, by design):** the `AddJobApplicationSessionOwnership` migration's backfill
+  defaults (`OwnerId = 0`, `IngestionSessionId = ""`) are placeholders. Harmless today — no database
+  has real `JobApplication` rows yet — but will need a real backfill strategy before this ever runs
+  against one that does.
+
+**Critical — real correctness bug, not a style nit:**
+
+1. **`ResumeContextService.SaveAsync` is not idempotent** (`TaskFlow.Api/Services/ResumeContextService.cs`,
+   line 38). It unconditionally `AddAsync`s a new `ResumeContext` row on every save. There is no
+   unique constraint on `(IngestionSessionId, OwnerId)` — only the non-unique index this sprint
+   already added — so saving the same session twice (which `IngestDocument.tsx`'s "Save base resume"
+   button explicitly allows and T2.3's own test exercises) creates **two rows**. The read path,
+   `ResumeContextRepository.GetForOwnerAsync` (Sprint 0/1, unchanged here), is `FirstOrDefaultAsync`
+   with no `OrderBy`, so which row a later read returns is undefined — in practice, likely the
+   first-inserted (oldest) one. **Concrete failure:** a user pastes a resume, saves, fixes a typo,
+   saves again — `JobApplicationAssemblyService.AssembleAsync` can silently hand Sprint 3R's agents
+   the stale, pre-edit resume, with no error anywhere. **Independently flagged by Copilot's automated
+   PR review on the same line**, which is corroborating, not redundant — two independent reviewers
+   converging on the same root cause raises confidence this is real.
+   **Fix:** make `SaveAsync` an upsert (look up via `GetForOwnerAsync` first; update `Content`,
+   `ContentFormat`, `UpdatedAt` if found, insert only if not), and change the
+   `(IngestionSessionId, OwnerId)` index to `.IsUnique()` in `AppDbContext.cs` so the invariant is
+   structural, not just a convention — this needs its own additive migration. **RED test first:**
+   seed two saves to the same session, assert exactly one row exists afterward and its content is the
+   second save's.
+
+**Suggestions — fix in this PR or as an immediate fast-follow, not blocking on their own:**
+
+2. **DRY violation: `ClaudeJobPostingParser` duplicates ~80% of the existing `ClaudeIngestionParser`**
+   (`TaskFlow.Api/Ingestion/ClaudeJobPostingParser.cs` vs. `ClaudeIngestionParser.cs`, Sprint 1).
+   Identical constructor shape, identical `IsConfigured` early-return, identical
+   `_config["Anthropic:Model"] ?? AnthropicDefaults.Model` / `MaxTokens` lookup, identical
+   send-Claude → extract-text → extract-JSON-substring → deserialize → map-to-`TaskDraft` skeleton.
+   The only load-bearing differences are the prompt text, array-vs-object JSON extraction, and that
+   the new parser wraps input via `PromptSafety.WrapUntrusted` while the old one doesn't (see #3).
+   This repo's standing rule is strict DRY — extract a shared
+   `ClaudeJsonExtractionParserBase(IClaudeClient, IConfiguration)` with `BuildPrompt`/`ExtractJson`/
+   `MapJson` as the per-parser hooks, the same move already made for agents via `ClaudeAgentBase`.
+   Cheap now, with only two implementations; a third copy will make this worse.
+4. **`JobApplicationsControllerTests` has no failure-path test for `Parse`.** `SaveResumeContext` and
+   `Assemble` both got a success test and a mapped-error-status test; `Parse` only got the happy path.
+   Add the missing case: `_parser.ParseAsync` returning `Result.Invalid(...)` → `Parse` returns 400.
+4a. **The "never writes to localStorage" test doesn't prove `setItem` was never called**
+   (`TaskFlow.Web/src/features/IngestDocument.test.tsx`, line 77 — **flagged by Copilot's automated
+   review**). It only asserts stored *values* don't contain the literal resume text
+   (`expect(call[1]).not.toContain('Secret resume contents')`), which would still pass if the
+   component wrote the session id, or the resume text wrapped/transformed some other way, to
+   `localStorage`. Tighten to `expect(setItemSpy).not.toHaveBeenCalled()`.
+5. **`JobApplicationsController.CurrentUserId()` uses an unguarded `int.Parse(...)!`** on the JWT
+   `NameIdentifier` claim (line 45 — **independently flagged by Copilot's automated review, same
+   line**). If the claim is ever missing or non-numeric, this throws inside the action, surfacing as
+   an unhandled 500 instead of a controlled 401. Low severity today (`[Authorize]` guards every
+   action here), but worth fixing before a second controller copies this helper: use
+   `int.TryParse(...)` and return/throw toward a 401 when it fails.
+6. **`AssembleJobApplicationDto.Posting.Kind` is accepted from the client but silently discarded** —
+   `JobApplicationAssemblyService` hardcodes `ResumeTailoring`/`CoverLetterTailoring` for the two
+   created tasks regardless of what's sent. Not a security issue, but a footgun for the next caller
+   of this endpoint. Either narrow the DTO to not accept `Kind`, or comment that it's ignored.
+7. **`ingestionSessionId` lives in `IngestDocument.tsx` component state**, generated once per
+   component instance via `crypto.randomUUID()`. Correct for "never `localStorage`," but it does not
+   survive an unmount/remount (nav away and back). Not a bug yet — wiring `assemble` into the UI is
+   explicitly deferred to Sprint 6 — but Sprint 6's guided-flow design needs to account for this
+   (the session id needs to live somewhere that outlives this component, e.g. a route param).
+8. **Migration `AddJobApplicationSessionOwnership`'s backfill defaults** (`OwnerId = 0`,
+   `IngestionSessionId = ""`) are placeholder-only. Harmless now — the migration hasn't been applied
+   to any database with real `JobApplication` rows — but will need a real backfill strategy the
+   moment this runs against a database that isn't disposable dev state.
+
+**Originally recorded here as "out of scope, spun off separately":** the initial pass on this
+finding (`ClaudeIngestionParser` sending raw user-pasted text into its Claude prompt with no
+`PromptSafety.WrapUntrusted`) deferred the fix to a background task rather than making it. That
+deferral is now item #3 above — fixed the same day, once the deferral itself was recognized as the
+wrong call. Left here as the historical record of the initial (corrected) decision, not as an open
+item.
 
 ---
 
@@ -550,8 +910,10 @@ approve the pair in one action, preserving the human gate.
   a single task (`ITaskService.ApproveAsync(int id)` / `RejectAsync(int id, reason)` — confirmed).
 - The frontend `TaskItem` type (`types.ts`) currently has **no `kind` or `applicationId`** —
   confirmed. This sprint adds both.
-- Agent output currently reaches the board through `AgentLog` via `taskOutput` — see the Sprint 1
-  open decision on whether this sprint reads `TailoredContent` instead.
+- Agent output currently reaches the *generic* board (`TaskKind.Generic`, via `KanbanColumn`'s
+  `outputFor`) through `AgentLog`/`taskOutput`, and stays on that path — untouched by this sprint.
+  **Settled 2026-08-10 (Sprint 1's open decision):** `ApplicationReviewCard` (`T4R.2` below) reads
+  `TaskItem.TailoredContent` instead, not the log channel.
 
 ### Files involved
 
@@ -698,16 +1060,18 @@ empty/error states render. GREEN: accessibility and state handling.
 Recorded so nothing is silently assumed. Each needs an answer before the sprint that depends on it
 starts:
 
-1. **Sprint 1 / 3R / 4R — where does agent output live for the Review surface?** `TailoredContent`
-   on `TaskItem`, or continue through `AgentLog`/`taskOutput`? Not yet decided.
+1. **Sprint 1 / 3R / 4R — where does agent output live for the Review surface?** ~~Not yet
+   decided.~~ **Settled 2026-08-10** — see Sprint 1's "Open decision to settle here" subsection:
+   `TailoredContent` for the Epic 3 Review surface; `AgentLog`/`taskOutput` untouched, still serves
+   `TaskKind.Generic` tasks exactly as it does today.
 2. **Sprint 0, T0.3 — which markdown-sanitization library?** No candidate installed yet
    (`react-markdown` + `rehype-sanitize`, or `marked` + `dompurify`). Not yet decided.
 3. **Sprint 5, T5.1 — which PDF library?** QuestPDF vs. an HTML-to-PDF path. Not yet decided, and
    licensing hasn't been checked.
-4. **Sprint 2, T2.1/T2.4 — exact controller/endpoint shape for the job-posting flow.** Decided in
-   principle (new service, new registration, existing generic `/api/Ingestion` untouched — see
-   Sprint 2's architecture notes) but the concrete controller/route name is not chosen; settle it
-   when writing `T2.1`'s RED test.
+4. **Sprint 2, T2.1/T2.4 — exact controller/endpoint shape for the job-posting flow.** ~~Decided in
+   principle~~ **Settled 2026-08-10** — see Sprint 2's "Decisions owned here" subsection:
+   `JobApplicationsController` (`api/JobApplications`), `IJobPostingIngestionParser` DI seam,
+   `JobApplication.IngestionSessionId`/`OwnerId` added for the Sprint 3R handoff.
 
 ---
 

@@ -58,13 +58,21 @@ public class AppDbContext : DbContext
             // Store enum as string so the DB is human-readable
             entity.Property(a => a.State)
                   .HasConversion<string>();
+
+            // Sprint 3R's agents will query JobApplication by this pair to resolve the
+            // ResumeContext (task.ApplicationId -> this row -> ResumeContext lookup), mirroring
+            // ResumeContext's own index on the same pair.
+            entity.HasIndex(a => new { a.IngestionSessionId, a.OwnerId });
         });
 
         // ── ResumeContext configuration ─────────────────────────────────────────
         modelBuilder.Entity<ResumeContext>(entity =>
         {
             // Every read/delete queries by this pair together (ownership scoping), so index it.
-            entity.HasIndex(r => new { r.IngestionSessionId, r.OwnerId });
+            // Unique because ResumeContextService.SaveAsync upserts by this same pair - without a
+            // DB-level constraint, a race between two concurrent saves for the same session could
+            // still land two rows even though the service checks-then-acts.
+            entity.HasIndex(r => new { r.IngestionSessionId, r.OwnerId }).IsUnique();
         });
 
         // ── Seed data ─────────────────────────────────────────────────────────

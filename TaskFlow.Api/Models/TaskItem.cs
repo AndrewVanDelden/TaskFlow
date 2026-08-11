@@ -5,13 +5,19 @@ namespace TaskFlow.Api.Models;
 
 public class TaskItem
 {
+    // Shared with the DTOs that feed these fields (e.g. JobPostingSummaryDto) so the API
+    // boundary's validation caps and this entity's persistence caps can't drift apart.
+    public const int TitleMaxLength = 200;
+    public const int DescriptionMaxLength = 2000;
+    public const int SourceSectionMaxLength = 200;
+
     public int Id { get; set; }
 
     [Required]
-    [MaxLength(200)]
+    [MaxLength(TitleMaxLength)]
     public string Title { get; set; } = string.Empty;
 
-    [MaxLength(2000)]
+    [MaxLength(DescriptionMaxLength)]
     public string? Description { get; set; }
 
     public WorkflowStatus Status { get; set; } = WorkflowStatus.Todo;
@@ -38,7 +44,7 @@ public class TaskItem
     [MaxLength(200)]
     public string? SourceName { get; set; }
 
-    [MaxLength(200)]
+    [MaxLength(SourceSectionMaxLength)]
     public string? SourceSection { get; set; }
 
     // The agent currently working this task; null when unclaimed. Stamped atomically at claim time.
