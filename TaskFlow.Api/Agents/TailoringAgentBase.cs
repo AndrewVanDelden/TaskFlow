@@ -317,31 +317,66 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
             return ToolResult(toolUse, $"Error: Task {task.Id} was not InProgress; nothing to save.");
         }
 
-        await RecordActionAsync(new AgentLog
-        {
-            AgentName = Name,
-            Action = AgentActions.TailoredContentSaved,
-            TaskId = task.Id,
-            Details = "Tailored content saved; moved to Review.",
-            Success = true,
-            CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
-
-        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
-
-        // Atomic join attempt. False is the normal case (sibling not done yet) — not an error, no log.
-        var promoted = await _jobApplications.TryPromoteToReviewReadyAsync(application.Id, cancellationToken);
-        if (promoted)
+        // The atomic save above already committed — the task is genuinely saved and in Review
+        // regardless of what happens below. Everything from here on (the save's own audit log, the
+        // notify, the join attempt, and the join's own audit log) is best-effort follow-up, not
+        // part of that guarantee: each step gets its own try/catch so a failure in one does not
+        // block the next, and none of them can turn an already-successful save into a misreported
+        // tool error (PR #43 review, round 4: Copilot's automated review found this same pattern
+        // one spot after where round 3's RollBackAsync fix landed). If the join attempt itself is
+        // what fails, JobApplicationPromotionReconcilerService is the backstop that retries it.
+        try
         {
             await RecordActionAsync(new AgentLog
             {
                 AgentName = Name,
-                Action = AgentActions.ApplicationReviewReady,
+                Action = AgentActions.TailoredContentSaved,
                 TaskId = task.Id,
-                Details = $"JobApplication {application.Id} promoted to ReviewReady.",
+                Details = "Tailored content saved; moved to Review.",
                 Success = true,
                 CreatedAt = DateTime.UtcNow
             }, cancellationToken);
+
+            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "[{Agent}] Task {Id} was saved, but recording it failed.", Name, task.Id);
+        }
+
+        bool promoted;
+        try
+        {
+            // Atomic join attempt. False is the normal case (sibling not done yet) — not an error, no log.
+            promoted = await _jobApplications.TryPromoteToReviewReadyAsync(application.Id, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex,
+                "[{Agent}] Join attempt failed for JobApplication {AppId}; the reconciliation sweep will retry.",
+                Name, application.Id);
+            promoted = false;
+        }
+
+        if (promoted)
+        {
+            try
+            {
+                await RecordActionAsync(new AgentLog
+                {
+                    AgentName = Name,
+                    Action = AgentActions.ApplicationReviewReady,
+                    TaskId = task.Id,
+                    Details = $"JobApplication {application.Id} promoted to ReviewReady.",
+                    Success = true,
+                    CreatedAt = DateTime.UtcNow
+                }, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex,
+                    "[{Agent}] JobApplication {AppId} was promoted, but recording it failed.", Name, application.Id);
+            }
         }
 
         return ToolResult(toolUse, $"Saved and moved Task {task.Id} to Review.");

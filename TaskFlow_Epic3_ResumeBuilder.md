@@ -946,8 +946,8 @@ already used, applied one more place.
 Manual review (against `.github/skills/code-review/SKILL.md`) plus GitHub Copilot's automated
 review, cross-checked against each other per this repo's standing rule.
 
-**Status: all findings across three rounds fixed and confirmed GREEN (196/196 backend, +7 tests
-total across all three rounds; 44/44 frontend).**
+**Status: all findings across four rounds fixed and confirmed GREEN (198/198 backend, +9 tests
+total across all four rounds; 44/44 frontend).**
 
 - **Copilot's automated review, confirmed real and fixed:**
   `JobApplicationRepository.TryPromoteToReviewReadyAsync`'s guard was
@@ -1010,10 +1010,34 @@ total across all three rounds; 44/44 frontend).**
   paths including the developer's Windows username. It was never actually excluded by `.gitignore`
   despite that file's own "Test / coverage" section clearly intending to exclude coverage
   artifacts — it lives outside `coverage/` and isn't `*.trx`, so it slipped through. **Fixed:**
-  added an explicit `coverage.json` line. **Not yet fixed:** the file is still tracked in git
-  history from every prior commit this session — `.gitignore` only stops *new* changes to it from
-  being staged; removing it from tracking going forward needs a `git rm --cached`, which wasn't run
-  without an explicit ask for that specific command, per this project's tooling-boundary rule.
+  added an explicit `coverage.json` line, then untracked the file with `git rm --cached` on
+  explicit request (a separate ask, per this project's tooling-boundary rule) — 11,316 lines
+  removed from tracking; the local file itself is untouched, `.\test` regenerates it every run.
+
+**Round 4 (2026-08-11) — user re-checked with Copilot after round 3's fix; same pattern, one spot
+earlier:**
+
+- **Copilot's automated review, confirmed real and fixed:** round 3 fixed `RollBackAsync`'s tail,
+  but `SaveAsync`'s own *success*-path tail — the `TailoredContentSaved` log write, right before the
+  join attempt — had the identical unguarded shape and was never touched. If that log write throws,
+  the exception escapes `SaveAsync`, misreporting an already-successful save as a tool error to
+  Claude, and skips the join attempt for that cycle. The round-2 reconciliation sweep mitigates the
+  worst-case *consequence* (a stuck application eventually gets promoted on the next sweep), but
+  doesn't stop the immediate misreport or the unnecessary delay — asked directly whether this exact
+  Copilot comment was already covered by the sweep, and the honest answer was no, it needed its own
+  fix. **Fixed:** the log write, the notify, the join attempt itself, and the join's own log write
+  are now each wrapped in their own independent `try/catch` — a failure in one no longer blocks the
+  next, and none of them can turn a successful save into a misreported error. If the join attempt
+  itself is what fails, `JobApplicationPromotionReconcilerService` remains the backstop. RED test in
+  both `CoverLetterAgentTests` and `ResumeTailoringAgentTests`:
+  `Saves_and_still_completes_the_join_in_the_same_cycle_even_when_recording_the_saved_log_fails` —
+  seeds the sibling as already `Review`, fails only the `SaveChangesAsync` immediately following a
+  `TailoredContentSaved` `AddAsync` (a naive "fail every log write" mock was tried first and
+  produced a false failure: it also broke the earlier, unrelated `Claimed` log in `RunAsync`,
+  triggering the separate and already-correct roll-back-before-any-work path instead of reaching
+  `SaveAsync` at all — caught by actually running the test and reading why it failed, not assumed),
+  then asserts both the task *and* the `JobApplication` end up in their fully-promoted state despite
+  the log failure.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 

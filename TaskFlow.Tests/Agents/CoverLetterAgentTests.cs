@@ -322,4 +322,77 @@ public class CoverLetterAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Todo);
         updated.ClaimedBy.Should().BeNull();
     }
+
+    // Copilot's automated review (PR #43, round 4) flagged the same pattern one spot earlier:
+    // SaveAsync's own success-path log write (TailoredContentSaved) was unguarded too. If it
+    // throws right after the atomic save already succeeded, the exception escapes SaveAsync,
+    // misreporting a successful save as a tool error to Claude - and, more importantly, skips the
+    // join attempt for this cycle entirely (the reconciliation sweep would eventually catch it, but
+    // not immediately). The sibling is already Review here, so a correct fix must still attempt -
+    // and succeed at - the join in the same cycle despite the log failure.
+    [Fact]
+    public async Task Saves_and_still_completes_the_join_in_the_same_cycle_even_when_recording_the_saved_log_fails()
+    {
+        using var db = new SqliteInMemoryContext();
+        await db.Context.Tasks.ExecuteDeleteAsync();
+        await db.Context.JobApplications.ExecuteDeleteAsync();
+        await db.Context.ResumeContexts.ExecuteDeleteAsync();
+        db.Context.ResumeContexts.Add(new ResumeContext { IngestionSessionId = SessionId, OwnerId = OwnerId, Content = BaseResumeText });
+        var application = new JobApplication { State = ApplicationState.Building, IngestionSessionId = SessionId, OwnerId = OwnerId };
+        db.Context.JobApplications.Add(application);
+        await db.Context.SaveChangesAsync();
+        var resumeTask = new TaskItem
+        {
+            Title = "Product Manager",
+            SourceSection = "Globex Inc",
+            Status = WorkflowStatus.Review, // sibling already done
+            Kind = TaskKind.ResumeTailoring,
+            ApplicationId = application.Id,
+            TailoredContent = "Already-tailored resume."
+        };
+        var coverLetterTask = new TaskItem
+        {
+            Title = "Product Manager",
+            SourceSection = "Globex Inc",
+            Status = WorkflowStatus.Todo,
+            Kind = TaskKind.CoverLetterTailoring,
+            ApplicationId = application.Id
+        };
+        db.Context.Tasks.AddRange(resumeTask, coverLetterTask);
+        await db.Context.SaveChangesAsync();
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        // Fails only the SaveChangesAsync immediately following a TailoredContentSaved AddAsync -
+        // the earlier "Claimed" log (RunAsync) and, if reached, the later "ApplicationReviewReady"
+        // log must succeed normally, so this test isolates the exact step Copilot flagged instead
+        // of tripping the (separate, acceptable) roll-back-before-any-work path.
+        var failNextSave = false;
+        var failingLogs = new Mock<IAgentLogRepository>();
+        failingLogs.Setup(l => l.AddAsync(It.IsAny<AgentLog>(), It.IsAny<CancellationToken>()))
+            .Returns((AgentLog log, CancellationToken _) =>
+            {
+                failNextSave = log.Action == AgentActions.TailoredContentSaved;
+                return Task.CompletedTask;
+            });
+        failingLogs.Setup(l => l.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .Returns(() => failNextSave
+                ? Task.FromException(new InvalidOperationException("log write failed"))
+                : Task.CompletedTask);
+        const string coverLetter = "# Cover letter\n\nDear hiring team, ...";
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, coverLetter);
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, failingLogs.Object, Mock.Of<IAgentNotifier>());
+
+        await sut.RunAsync(CancellationToken.None); // must not throw
+
+        db.Context.ChangeTracker.Clear();
+        var updatedCoverLetterTask = await tasks.GetByIdAsync(coverLetterTask.Id);
+        updatedCoverLetterTask!.Status.Should().Be(WorkflowStatus.Review);
+        updatedCoverLetterTask.TailoredContent.Should().Be(coverLetter);
+
+        var updatedApplication = await jobApplications.GetByIdAsync(application.Id);
+        updatedApplication!.State.Should().Be(ApplicationState.ReviewReady);
+    }
 }
