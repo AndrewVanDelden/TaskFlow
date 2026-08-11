@@ -93,6 +93,25 @@ public sealed class StubClaude : IClaudeClient
         ToolUse("tool_2", "request_review", new { summary }),
         EndTurn());
 
+    /// <summary>
+    /// Scripts a read_base_context call, then a save call for <paramref name="saveToolName"/> with
+    /// <paramref name="content"/>, then an end_turn. Shared by the Sprint 3R tailoring agents
+    /// (ResumeTailoringAgent, CoverLetterAgent), which differ only in their save tool's name.
+    /// </summary>
+    public static StubClaude ThatReadsContextThenSaves(string saveToolName, string content) => new(
+        ToolUse("tool_1", "read_base_context", new { }),
+        ToolUse("tool_2", saveToolName, new { content }),
+        EndTurn());
+
+    /// <summary>
+    /// Scripts a single save call for <paramref name="saveToolName"/> with <paramref name="content"/>
+    /// (skipping read_base_context), then an end_turn. Used to script an over-length save attempt
+    /// that gets rejected by ToolOutputValidator before the cycle ends.
+    /// </summary>
+    public static StubClaude ThatSavesOnly(string saveToolName, string content) => new(
+        ToolUse("tool_1", saveToolName, new { content }),
+        EndTurn());
+
     private static MessageResponse ToolUse(string id, string name, object args) => new()
     {
         StopReason = "tool_use",

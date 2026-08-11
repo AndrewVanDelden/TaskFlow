@@ -47,6 +47,17 @@ public interface ITaskRepository
     /// </summary>
     Task<int> RecoverStaleInProgressAsync(TimeSpan staleAfter, CancellationToken ct = default);
 
+    /// <summary>
+    /// Atomically saves an Epic 3 agent's generated output to <see cref="TaskItem.TailoredContent"/>
+    /// AND moves the task from <see cref="WorkflowStatus.InProgress"/> to <see cref="WorkflowStatus.Review"/>
+    /// in one guarded UPDATE — there is no window where content is saved but the status transition could
+    /// fail separately, or vice versa. Mirrors <see cref="MarkForReviewAsync"/>'s atomicity, extended by
+    /// one more <c>SetProperty</c>. Returns true if a row moved (the task was InProgress).
+    /// Does not itself validate content length — callers must validate before calling (see
+    /// <c>ToolOutputValidator</c>); SQLite's TEXT column type does not enforce <c>[MaxLength]</c>.
+    /// </summary>
+    Task<bool> SaveTailoredContentAndMarkForReviewAsync(int taskId, string content, CancellationToken ct = default);
+
     Task AddAsync(TaskItem task, CancellationToken ct = default);
     void Remove(TaskItem task);
     Task SaveChangesAsync(CancellationToken ct = default);

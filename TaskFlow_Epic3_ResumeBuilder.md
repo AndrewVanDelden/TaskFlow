@@ -905,8 +905,212 @@ looks at the pattern across the whole cycle, not any one finding already logged 
 
 ## Sprint 3R — Multi-Agent Generation (Resume and Cover Letter)
 
-**Status: Ready. Architecture only. Fully specifies both agents; does not depend on any
-single-agent Sprint 3.**
+**Status: COMPLETE (2026-08-11).** T3R.1–T3R.5 shipped on
+`feature/epic3-sprint3r-multi-agent-generation` (3 commits: architect decisions, the atomic
+repository layer, then the two agents). Full backend suite green: 189/189 (165 baseline + 9
+repository tests + 15 per-agent tests + 1 integration test that proves T3R.3/T3R.4/T3R.5 together).
+Built by two delegated engineers, sequenced rather than parallel (the repository layer first, then
+the agents on top of it — see the decision below on why), each independently re-verified against the
+real diff and a fresh `dotnet build`/`dotnet test` run rather than taken on the subagent's word.
+The atomic-join SQL claim specifically was re-verified a third way: a standalone throwaway program
+run against a real SQLite context with EF logging enabled, confirming EF Core 10 generates exactly
+one `UPDATE ... WHERE ... (SELECT COUNT(*) ...)` statement, not a check-then-act pair. This section
+is now the historical record for Sprint 3R.
+
+**What shipped, exactly as specified, plus one real bug caught and fixed during implementation:**
+`TailoringAgentBase` (new abstract class) owns the claim → resolve-`JobApplication`/`ResumeContext`
+→ tool-conversation → save-and-promote → rollback flow for both `ResumeTailoringAgent` and
+`CoverLetterAgent`, and owns the `PromptSafety.WrapUntrusted` calls itself (both the job posting,
+wrapped into the initial prompt, and the base resume, wrapped into the `read_base_context` tool's
+result) so a concrete subclass cannot structurally omit either. `ITaskRepository
+.SaveTailoredContentAndMarkForReviewAsync` and `IJobApplicationRepository
+.TryPromoteToReviewReadyAsync` are both single guarded `ExecuteUpdateAsync` calls — no
+check-then-act anywhere in this sprint's write paths. **Bug found and fixed during GREEN, not
+glossed over:** the terminal-state rollback check (did the cycle end without ever saving?)
+originally used a tracked `GetByIdAsync` read, which returned a stale in-memory entity via EF's
+identity map rather than the DB's real current status — fixed by dropping the tracked read entirely
+and calling the existing guarded `ReleaseClaimAsync` unconditionally (it is a harmless no-op if a
+save already moved the task on), which is the same atomic-guard discipline the rest of this sprint
+already used, applied one more place.
+
+**Still open, not part of this sprint's scope:**
+- **Corrected 2026-08-11:** this line originally said the branch had not been pushed/PR'd — stale
+  by the time it mattered; the branch is PR #43.
+- No config value has been added to `appsettings.json` for `Agents:ResumeTailoringIntervalMinutes`/
+  `Agents:CoverLetterIntervalMinutes` — both default to 5 minutes via `Config.GetValue(..., 5)`,
+  matching the pattern every other agent interval already uses; an explicit override is optional,
+  not required for correctness.
+
+### Code review findings (2026-08-11) — PR #43
+
+Manual review (against `.github/skills/code-review/SKILL.md`) plus GitHub Copilot's automated
+review, cross-checked against each other per this repo's standing rule.
+
+**Status: all findings across four rounds fixed and confirmed GREEN (198/198 backend, +9 tests
+total across all four rounds; 44/44 frontend).**
+
+- **Copilot's automated review, confirmed real and fixed:**
+  `JobApplicationRepository.TryPromoteToReviewReadyAsync`'s guard was
+  `a.Tasks.Count(t => t.Status == Review) == 2` — this counts *any* two Review tasks, not
+  specifically that the `ResumeTailoring` sibling AND the `CoverLetterTailoring` sibling are both
+  Review. Not reachable today (`JobApplicationAssemblyService` always creates exactly one of each
+  kind), but the guard itself shouldn't depend on that being the only way an application is ever
+  built. **Fixed:** tightened to two correlated `Any()` checks, one per required kind. RED test:
+  `JobApplicationRepositoryPromotionTests.TryPromoteToReviewReady_does_not_promote_when_the_two_Review_tasks_are_the_same_kind`
+  (two `ResumeTailoring` tasks, both Review, no `CoverLetterTailoring` task at all — old guard
+  promoted anyway). **Not independently re-verified via query logging** that this specific two-`Any()`
+  form is still a single UPDATE statement (the original `Count(...) == 2` form was verified that way
+  per the sprint's own notes above; this fix wasn't reverified the same way, only functionally
+  tested) — `Any(predicate)` on a navigation collection is an equally standard EF Core
+  `ExecuteUpdateAsync` translation, but stating this as unverified rather than assumed, per this
+  doc's own rule.
+- **Manual finding, independently confirmed by Copilot's automated review on the very next pass
+  (both converged on the same gap, though Copilot's version also named `NotifyTaskMovedAsync` as a
+  possible throw source — checked and that part is wrong: `SignalRAgentNotifier.TaskMovedAsync`
+  already wraps its own broadcast in a `try/catch` with the explicit comment "a broadcast failure
+  must never break an agent cycle," so it cannot be the trigger; the real one is narrower —
+  `RecordActionAsync`'s own `SaveChangesAsync` and the join call itself, both genuinely unguarded):**
+  the atomic join (`TryPromoteToReviewReadyAsync`) is only ever attempted once per agent completion.
+  If the log write or the join call itself throws — a transient SQLite write-lock under two agents'
+  genuinely concurrent `DbContext`s is the realistic trigger, and no `Busy Timeout` is configured on
+  the connection string (checked) — `TailoringAgentBase.ExecuteToolAsync`'s own `try/catch` swallows
+  it into a tool-error response to Claude, the cycle ends normally, and the join attempt is lost. If
+  the other sibling was already Review, the `JobApplication` is now stuck at `Building` forever.
+  **Fixed:** given a second independent review converged on the same real gap, this was a decision
+  worth making rather than deferring a third time. Added
+  `IJobApplicationRepository.PromotePendingReviewReadyApplicationsAsync` (bulk sibling of
+  `TryPromoteToReviewReadyAsync`, no id filter, same shared `BothRequiredSiblingsAreReview`
+  predicate extracted for both) and `JobApplicationPromotionReconcilerService`, a plain
+  `BackgroundService` mirroring `StaleClaimReaperService`'s exact shape — sweeps on startup and every
+  `Agents:PromotionSweepIntervalMinutes` (default 5), promoting every `Building` application whose
+  siblings are both actually `Review`. Following this codebase's own precedent
+  (`StaleClaimReaperService` has no test file of its own; its repository method,
+  `RecoverStaleInProgressAsync`, does), the sweep service itself is untested at the unit level; the
+  repository method it calls has four new tests covering multi-application promotion, the zero-match
+  case, not double-touching an already-`ReviewReady` row, and the same-kind-duplicate edge case.
+
+**Round 3 (2026-08-11) — Copilot's automated review, on the reconciliation-sweep commit:**
+
+- **Copilot's automated review, confirmed real and fixed (Copilot's version again also named
+  `NotifyTaskMovedAsync` as a possible throw source — same imprecision as round 2's finding; checked
+  again, same answer: it can't throw, already wrapped):** `RollBackAsync`'s own tail
+  (`RecordActionAsync`/`NotifyTaskMovedAsync`) was unguarded — if the `AgentLog` write throws *after*
+  `ReleaseClaimAsync` already committed, the exception escapes `RollBackAsync` entirely, so the cycle
+  ends via an unhandled exception (caught by `AgentRunner`'s own outer catch, so it doesn't crash the
+  process, but it's a worse-observability outcome than necessary) even though the task itself is
+  already correctly released back to `Todo`. **Fixed:** wrapped the log/notify tail in its own
+  `try/catch`, logs and continues rather than propagating — the claim release no longer depends on
+  the audit-log write succeeding. RED test in both `CoverLetterAgentTests` and
+  `ResumeTailoringAgentTests`:
+  `RollBackAsync_still_releases_the_claim_even_when_recording_the_rollback_log_fails` (a failing
+  mocked `IAgentLogRepository`, asserting `RunAsync` completes without throwing and the task is
+  still correctly released).
+- **Copilot's automated review, confirmed real and fixed:** `TaskFlow.Tests/coverage.json` (the
+  coverlet report, committed on every round of this review cycle) contains absolute local file
+  paths including the developer's Windows username. It was never actually excluded by `.gitignore`
+  despite that file's own "Test / coverage" section clearly intending to exclude coverage
+  artifacts — it lives outside `coverage/` and isn't `*.trx`, so it slipped through. **Fixed:**
+  added an explicit `coverage.json` line, then untracked the file with `git rm --cached` on
+  explicit request (a separate ask, per this project's tooling-boundary rule) — 11,316 lines
+  removed from tracking; the local file itself is untouched, `.\test` regenerates it every run.
+
+**Round 4 (2026-08-11) — user re-checked with Copilot after round 3's fix; same pattern, one spot
+earlier:**
+
+- **Copilot's automated review, confirmed real and fixed:** round 3 fixed `RollBackAsync`'s tail,
+  but `SaveAsync`'s own *success*-path tail — the `TailoredContentSaved` log write, right before the
+  join attempt — had the identical unguarded shape and was never touched. If that log write throws,
+  the exception escapes `SaveAsync`, misreporting an already-successful save as a tool error to
+  Claude, and skips the join attempt for that cycle. The round-2 reconciliation sweep mitigates the
+  worst-case *consequence* (a stuck application eventually gets promoted on the next sweep), but
+  doesn't stop the immediate misreport or the unnecessary delay — asked directly whether this exact
+  Copilot comment was already covered by the sweep, and the honest answer was no, it needed its own
+  fix. **Fixed:** the log write, the notify, the join attempt itself, and the join's own log write
+  are now each wrapped in their own independent `try/catch` — a failure in one no longer blocks the
+  next, and none of them can turn a successful save into a misreported error. If the join attempt
+  itself is what fails, `JobApplicationPromotionReconcilerService` remains the backstop. RED test in
+  both `CoverLetterAgentTests` and `ResumeTailoringAgentTests`:
+  `Saves_and_still_completes_the_join_in_the_same_cycle_even_when_recording_the_saved_log_fails` —
+  seeds the sibling as already `Review`, fails only the `SaveChangesAsync` immediately following a
+  `TailoredContentSaved` `AddAsync` (a naive "fail every log write" mock was tried first and
+  produced a false failure: it also broke the earlier, unrelated `Claimed` log in `RunAsync`,
+  triggering the separate and already-correct roll-back-before-any-work path instead of reaching
+  `SaveAsync` at all — caught by actually running the test and reading why it failed, not assumed),
+  then asserts both the task *and* the `JobApplication` end up in their fully-promoted state despite
+  the log failure.
+
+### Decisions owned here, before dispatching any engineer (2026-08-11)
+
+Confirmed against the repo first (`ClaudeAgentBase`, `GenericExecutorAgent`, `TaskPrioritizerAgent`,
+`AgentRunner`, `ITaskRepository`, `IJobApplicationRepository`, `TaskRepositoryClaimTests.cs`) rather
+than designed from scratch:
+
+- **`ResumeTailoringAgent` and `CoverLetterAgent` share a new abstract `TailoringAgentBase :
+  ClaudeAgentBase`.** They are structurally near-identical (claim by kind, fetch the base resume via
+  a tool, produce one markdown artifact, save-and-move-to-Review, attempt the atomic join) — building
+  them as two independent siblings would repeat the exact DRY failure Sprint 2's review cycle already
+  found once (`ClaudeJobPostingParser`/`ClaudeIngestionParser`) and is exactly what the Sprint 2
+  retrospective asked to avoid doing reactively. `TailoringAgentBase` owns the claim/rollback/promote
+  flow and — critically — **owns the `PromptSafety.WrapUntrusted` call itself**, so a subclass cannot
+  structurally forget to wrap untrusted content (a concrete agent only supplies `Kind`, its save
+  tool's name, and its own instructional framing text, never the wrapping itself).
+- **No `IExecutorSwitch`/`ISpendGuard` for these two agents.** Confirmed those are specific to
+  `GenericExecutorAgent`'s standing kill-switch/spend-cap policy (`TaskPrioritizerAgent` doesn't use
+  them either) — not a shared `ClaudeAgentBase` requirement. Not adding governance the spec doesn't
+  ask for.
+- **`AgentRunner` already runs every registered `ITaskFlowAgent` concurrently** (`Task.WhenAll` over
+  each agent's own polling loop), and `TryClaimNextAsync` already filters by kind (confirmed —
+  `TaskRepositoryClaimTests.TryClaimNext_filters_by_kind_across_generic_resume_and_cover_letter_tasks`
+  already exists from Sprint 1). **T3R.3 needs no new coordination code** — registering both agents
+  is what makes them parallel; the RED test proves the *outcome* (two independent claim loops, no
+  shared write target), not new plumbing.
+- **The "job requirements" T3R references are already on the claimed `TaskItem`, not a separate
+  fetch.** `JobApplicationAssemblyService` (Sprint 2) already stamps `Title`/`Description`/
+  `SourceSection` from the parsed posting onto both sibling tasks at assembly time. No new
+  repository call is needed to read "the job requirements" — and per the doc's own instruction
+  ("wrap the base resume **and requirements** as untrusted input"), this task-derived text gets
+  `PromptSafety.WrapUntrusted`ed too, not just the resume — it is still user-pasted-posting-derived
+  text re-entering a second Claude call, so it is not "trusted" just because it already passed
+  through `ClaudeJobPostingParser` once.
+- **`read_base_context()` is a real tool call, not pre-embedded in the initial prompt** — matches the
+  doc's own tool list literally. The base resume is fetched via `IResumeContextRepository
+  .GetForOwnerAsync(application.IngestionSessionId, application.OwnerId)` (resolved from the claimed
+  task's `ApplicationId` → `JobApplication`, reusing the exact ownership-scoped lookup Sprint 0 built
+  and Sprint 2 already threaded `IngestionSessionId`/`OwnerId` onto `JobApplication` for), and the
+  tool result text is the wrapped content. The job-posting text, by contrast, is small and already on
+  the claimed task, so it goes directly into the initial prompt (wrapped) — no tool round-trip needed
+  for it.
+- **Two new atomic repository methods, both single guarded `ExecuteUpdateAsync` calls — no
+  check-then-act, applying the Sprint 2 retrospective's standing rules from the first RED test:**
+  - `ITaskRepository.SaveTailoredContentAndMarkForReviewAsync(taskId, content)` — one guarded UPDATE
+    (`WHERE Status == InProgress`) that sets `TailoredContent` **and** `Status = Review` together, so
+    there is no window where content is saved but the status transition could fail separately (or
+    vice versa). Mirrors `MarkForReviewAsync`'s existing atomicity, extended by one `SetProperty`.
+  - `IJobApplicationRepository.TryPromoteToReviewReadyAsync(applicationId)` — one guarded UPDATE
+    (`WHERE State == Building AND Tasks.Count(t => t.Status == Review) == 2`) that flips `State` to
+    `ReviewReady`. The sibling-status check is a correlated subquery *inside* the same `WHERE`, not a
+    separate `SELECT` before the `UPDATE` — this is the actual mechanism that makes T3R.4's
+    "simulated near-simultaneous completion does not double-promote and does not miss the promotion"
+    true: only one caller's guarded update can ever affect a row, and both callers attempting it is
+    exactly the near-simultaneous case. EF Core 10 (confirmed the installed version) translates
+    `.Count(predicate)` on a navigation collection inside `Where()` for `ExecuteUpdateAsync` into a
+    single correlated-subquery `UPDATE`, so this is genuinely one SQL statement, not two.
+- **`TaskItem.TailoredContentMaxLength` constant added** (mirrors the `TitleMaxLength`/
+  `DescriptionMaxLength`/`SourceSectionMaxLength` constants Sprint 2's review round 2 already added),
+  so the save tool's `ToolOutputValidator.Validate(content, maxLength)` call references the same cap
+  as the column instead of a second `20000` literal — applying the Sprint 2 retrospective's DTO/domain
+  parity rule to a tool-call boundary, not just a DTO.
+- **Failure isolation (T3R.5) needs no special-casing.** Each agent's own rollback (already the
+  existing `ReleaseClaimAsync` + `RolledBack` log pattern, reused verbatim from
+  `GenericExecutorAgent`) only ever touches the task it claimed. The atomic-join guard
+  (`Tasks.Count(... Review) == 2`) naturally never fires when one sibling is back in `Todo` — no
+  extra "don't promote if the other failed" logic needed, it falls out of the same guard that
+  prevents double-promotion.
+- **Sequencing, not full parallel delegation this time.** Two engineers, sequential: repository
+  methods first (the highest-risk, atomicity-critical piece per the retrospective), independently
+  verified and committed; then the agents, built on top of the already-verified repository layer.
+  Splitting the tightly-coupled agent-pair work itself across two parallel engineers would risk
+  reintroducing the exact divergence the shared base class exists to prevent.
 
 ### Goal
 
