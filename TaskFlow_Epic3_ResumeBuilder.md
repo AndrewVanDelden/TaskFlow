@@ -1344,8 +1344,8 @@ an `applicationId` change) turned out not to be currently reachable, though stil
 defensively; the other two were confirmed exactly as described, with one turning out to be more
 severe in practice than its own description (see below).
 
-**Status: all findings fixed and confirmed GREEN (249/249 backend, +10 tests; 71/71 frontend, +1
-test).**
+**Status: all findings across both rounds fixed and confirmed GREEN (249/249 backend, +10 tests;
+72/72 frontend, +2 tests).**
 
 - **Manual finding (mine), Critical/Security, confirmed by directly reading the query — not
   inferred from the DTO change alone:** `TaskResponseDto` (this sprint) added `TailoredContent` to
@@ -1410,6 +1410,24 @@ test).**
   accident of how its only caller happens to use it. RED test renders the hook directly with a
   changing `id` prop (bypassing the real caller's remount-on-key-change behavior on purpose, to
   exercise the hook's own effect logic) and asserts `baseResume` clears immediately.
+
+**Round 2 (2026-08-11) — Copilot's automated review, on the fix commit above:**
+
+- **Copilot's automated review, confirmed real, same "not reachable today, fix anyway" reasoning
+  as round 1's `baseResume` finding:** round 1's fix cleared `baseResume`/`baseResumeError` on an
+  `applicationId` change but left `actionLoading`/`actionError` untouched — a previous
+  application's approve/reject error (or an in-flight loading flag) would leak into the new
+  application's UI if the hook were ever reused across ids. **Fixed:** the same effect now also
+  resets `actionLoading`/`actionError`. RED test: approve against application 10 until it fails,
+  then change to application 20 and assert the stale error is gone.
+- **Copilot's automated review, confirmed real (test-quality, not production code):** the
+  `jobApplications.test.ts` fixture helper `applicationResponse(state)` set a sibling task's
+  `status` to the *application's* state string (`"Approved"`/`"Building"`) instead of a real task
+  status (`"Done"`/`"Todo"`) — inert today since no assertion reads `tasks[].status`, but exactly
+  the kind of fixture that silently masks a bug the moment a later test starts relying on it.
+  **Fixed:** the helper now takes `taskStatus` as its own parameter, and both call sites assert on
+  it (`Done` for approve, `Todo` for reject) so the distinction is actually exercised, not just
+  declared.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 

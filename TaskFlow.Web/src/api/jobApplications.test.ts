@@ -16,13 +16,17 @@ describe('saveResumeContext', () => {
   })
 })
 
-const applicationResponse = (state: string) => ({
+// taskStatus is deliberately a separate value from the application's own state (Copilot's
+// automated review, PR #45 round 2): a task's status ("Done"/"Todo") and a JobApplication's state
+// ("Approved"/"Building") are different vocabularies, and reusing one for the other here would
+// mask a bug if a later test starts asserting on the returned task statuses.
+const applicationResponse = (state: string, taskStatus: string) => ({
   id: 10,
   state,
   ingestionSessionId: '11111111-1111-1111-1111-111111111111',
   ownerId: 1,
   createdAt: '',
-  tasks: [{ id: 1, title: 'Tailor resume', kind: 'ResumeTailoring', status: state }],
+  tasks: [{ id: 1, title: 'Tailor resume', kind: 'ResumeTailoring', status: taskStatus }],
 })
 
 describe('getApplicationResumeContext', () => {
@@ -48,12 +52,13 @@ describe('getApplicationResumeContext', () => {
 describe('approveApplication', () => {
   it('posts approve and returns the application in its Approved state', async () => {
     server.use(
-      http.post('*/api/JobApplications/10/approve', () => HttpResponse.json(applicationResponse('Approved'))),
+      http.post('*/api/JobApplications/10/approve', () => HttpResponse.json(applicationResponse('Approved', 'Done'))),
     )
 
     const result = await approveApplication(10)
 
     expect(result.state).toBe('Approved')
+    expect(result.tasks[0].status).toBe('Done')
   })
 
   it('rejects when the server refuses the approval', async () => {
@@ -68,12 +73,13 @@ describe('approveApplication', () => {
 describe('rejectApplication', () => {
   it('posts the reason and returns the application in its Building state', async () => {
     server.use(
-      http.post('*/api/JobApplications/10/reject', () => HttpResponse.json(applicationResponse('Building'))),
+      http.post('*/api/JobApplications/10/reject', () => HttpResponse.json(applicationResponse('Building', 'Todo'))),
     )
 
     const result = await rejectApplication(10, 'Needs more detail')
 
     expect(result.state).toBe('Building')
+    expect(result.tasks[0].status).toBe('Todo')
   })
 
   it('rejects when the reason is empty/whitespace (400)', async () => {

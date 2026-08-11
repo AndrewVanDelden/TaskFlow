@@ -113,6 +113,35 @@ describe('useApplicationReview', () => {
     expect(result.current.baseResume).toBeNull()
   })
 
+  // Copilot's automated review (PR #45, round 2): the fix above cleared baseResume/baseResumeError
+  // on an applicationId change but left actionLoading/actionError untouched - a previous
+  // application's approve/reject error (or in-flight loading state) would leak into the new
+  // application's UI. Same "not reachable via the real caller today, fix the hook anyway" reasoning
+  // as the baseResume case.
+  it("clears a previous action error when applicationId changes", async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),
+      http.post('*/api/JobApplications/10/approve', () => new HttpResponse(null, { status: 409 })),
+    )
+    const { result, rerender } = renderHook(
+      ({ id }: { id: number }) => useApplicationReview(id),
+      { initialProps: { id: 10 } },
+    )
+    await waitFor(() => expect(result.current.baseResumeLoading).toBe(false))
+    await act(async () => {
+      await result.current.approve()
+    })
+    await waitFor(() => expect(result.current.actionError).not.toBeNull())
+
+    server.use(
+      http.get('*/api/JobApplications/20/resume-context', () => HttpResponse.json('base for 20')),
+    )
+    rerender({ id: 20 })
+
+    expect(result.current.actionError).toBeNull()
+    expect(result.current.actionLoading).toBe(false)
+  })
+
   it('sets an action error when reject fails', async () => {
     server.use(
       http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),

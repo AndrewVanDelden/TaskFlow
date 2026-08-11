@@ -20,6 +20,11 @@ export function useApplicationReview(applicationId: number) {
     // across different applicationIds would briefly (or, on error, indefinitely) keep showing the
     // wrong application's content (PR #45 review finding).
     setBaseResume(null)
+    // Also clear any leftover action state from the previous application (PR #45 review, round 2)
+    // - otherwise a prior approve/reject error, or an in-flight loading flag, would leak into the
+    // new application's UI.
+    setActionLoading(false)
+    setActionError(null)
     getApplicationResumeContext(applicationId)
       .then((content) => {
         if (cancelled) return
