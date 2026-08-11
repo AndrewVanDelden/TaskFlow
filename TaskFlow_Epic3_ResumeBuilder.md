@@ -1357,8 +1357,10 @@ starts:
    decided.~~ **Settled 2026-08-10** — see Sprint 1's "Open decision to settle here" subsection:
    `TailoredContent` for the Epic 3 Review surface; `AgentLog`/`taskOutput` untouched, still serves
    `TaskKind.Generic` tasks exactly as it does today.
-2. **Sprint 0, T0.3 — which markdown-sanitization library?** No candidate installed yet
-   (`react-markdown` + `rehype-sanitize`, or `marked` + `dompurify`). Not yet decided.
+2. **Sprint 0, T0.3 — which markdown-sanitization library?** ~~No candidate installed yet.~~
+   **Settled and shipped in Sprint 0:** `react-markdown` + `rehype-sanitize` (confirmed installed
+   in `TaskFlow.Web/package.json`). This log entry was stale — the decision was made and shipped
+   in Sprint 0's own section but never reflected back here.
 3. **Sprint 5, T5.1 — which PDF library?** QuestPDF vs. an HTML-to-PDF path. Not yet decided, and
    licensing hasn't been checked.
 4. **Sprint 2, T2.1/T2.4 — exact controller/endpoint shape for the job-posting flow.** ~~Decided in
