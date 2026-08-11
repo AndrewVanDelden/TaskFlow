@@ -1299,6 +1299,76 @@ recovered by the Sprint 0 orphan recovery so the join cannot deadlock.
 **Status: Ready. Architecture only. Fully specifies the paired review/approval; does not depend on
 any single-output Sprint 4.**
 
+### Decisions owned here, before dispatching any engineer (2026-08-11)
+
+Confirmed against the repo first (`ITaskService`/`TaskService`, `TasksController`, `TaskResponseDto`,
+`useBoardTasks.ts`, `KanbanColumn.tsx`, `TaskCardView.tsx`, `ReviewActions.tsx`,
+`ResumeContextService.cs`, `JobApplicationResponseDto.cs`) rather than designed from scratch:
+
+- **Real gap found while designing, not addressed by the source doc: there is no way to read a base
+  resume back.** Sprint 2 built `POST .../resume-context` to *write* one; nothing reads it. But T4R.2
+  explicitly requires rendering "base resume, tailored resume, and cover letter" together, and the
+  base resume is not a `TaskItem` field — it lives in a separate `ResumeContext`. **Decision:** add
+  `IResumeContextService.GetForApplicationAsync(applicationId, callerId)` (resolves the owning
+  `JobApplication`, checks ownership, then reads via the existing ownership-scoped
+  `IResumeContextRepository.GetForOwnerAsync`) and a new `GET
+  api/JobApplications/{id}/resume-context` action. `ResumeContextService` gains a dependency on
+  `IJobApplicationRepository` to resolve the application → session/owner; this stays inside its
+  existing SRP ("resume context access"), it does not become a second concern.
+- **Approve/reject is this project's next "atomic multi-part completion trigger," and the Sprint 3R
+  retrospective said this shape needs its atomicity designed in from the first RED test, not found by
+  review a second time.** Two tables move together — both sibling `TaskItem`s to `Done`/`Todo` **and**
+  the `JobApplication` to `Approved`/back to `Building` — and `ExecuteUpdateAsync` commits immediately
+  per call (it is not deferred like `SaveChangesAsync`), so two separate guarded updates are **not**
+  atomic together just because they share a `DbContext`. **Decision:**
+  `IJobApplicationRepository.TryApprovePairAsync`/`TryRejectPairAsync` wrap both updates in one
+  explicit `Database.BeginTransactionAsync`/`CommitAsync`, guarded on
+  `Id == applicationId && OwnerId == callerId && State == ReviewReady` for the `JobApplications` row
+  (both the race guard *and* the ownership check baked into the same WHERE clause — reusing
+  `TryPromoteToReviewReadyAsync`'s exact reasoning: only one caller's guarded update can ever flip the
+  row) — a losing/unauthorized/wrong-state caller rolls the transaction back and returns `false`
+  before touching `Tasks` at all.
+- **The `Tasks` half of that same transaction does not need its own "both required kinds are Review"
+  guard.** `State == ReviewReady` can only ever be set by `TryPromoteToReviewReadyAsync`/
+  `PromotePendingReviewReadyApplicationsAsync` (Sprint 3R, already tightened in that sprint's own
+  review round 1 to check both specific kinds), so by the time an application reaches `ReviewReady`
+  the "both siblings are actually Review" invariant already holds structurally — re-deriving it here
+  would duplicate a check the state field already encodes. The `Tasks` update targets
+  `ApplicationId == id && Status == Review`, and its own affected-row count is logged if it is ever
+  not exactly 2 (a defensive diagnostic, not a hard failure — the invariant is airtight by
+  construction, so this should never fire, and if it somehow does, the `JobApplications` half already
+  committed correctly and that's the state that matters).
+- **No dedicated reconciliation sweep for this trigger, unlike Sprint 3R's promotion — reasoned about,
+  not just pattern-matched.** Sprint 3R's sweep exists because a *background agent's* silently-caught
+  tool-call exception could skip a promotion with nobody watching. Approve/reject is a synchronous,
+  human-initiated HTTP request: if the transaction fails, the request itself returns an error the
+  frontend surfaces directly to the person who just clicked the button, who can simply retry — there
+  is no silent-swallow failure mode analogous to the agent case. Applying the reconciliation-sweep
+  pattern here anyway would be solving a problem this trigger does not actually have.
+- **`TaskResponseDto` gains `Kind`, `ApplicationId`, and `TailoredContent`** — the last one is not
+  named in T4R.1's own task text ("kind and applicationId") but is required for T4R.2's
+  `ApplicationReviewCard` to render the tailored resume/cover letter at all, since that content only
+  exists on `TaskItem.TailoredContent`. Recording this as a necessary-but-unstated field now rather
+  than discovering the gap mid-build.
+- **"Both siblings are Review" is derived on the frontend from the already-fetched task list, not a
+  new field.** Since `ApplicationState.ReviewReady` is exactly and only true when both sibling
+  `TaskItem`s are `Review` (the same Sprint 3R invariant above), the frontend does not need
+  `JobApplication.State` on the wire just to decide whether to render `ApplicationReviewCard` — a
+  pure `reviewReadyPairs(tasks)` helper in `lib/board.ts` (alongside the existing `taskOutput`/
+  `resolveDropColumn` pure board-logic functions) groups by `applicationId` and checks both siblings'
+  own `status` fields, which the board already has from `GET /api/Tasks`.
+- **`ApplicationReviewCard` is not draggable.** It represents a pair, and dragging a merged pair has
+  no clear single-task semantic in this system; T4R.3's Definition of Done does not ask for it. It
+  renders as a static block in the Review column, alongside (not replacing the mechanics of) the
+  existing `SortableContext`-wrapped individual `TaskCard`s for everything not part of a ready pair.
+- **Reuse `ReviewActions` verbatim for the pair's approve/reject controls** — it is already exactly
+  `{ onApprove: () => void; onReject: (reason: string) => void }` with no task-specific coupling, the
+  same reason-required-to-reject UX, no need for a second implementation.
+- **Two engineers, parallel, locked contract — same shape as Sprint 2, not Sprint 3R.** Backend and
+  frontend touch fully disjoint files this time, connected only by an HTTP contract (routes, request/
+  response shapes) fixed below before dispatch, not by shared code that risks divergence the way
+  Sprint 3R's two agents did.
+
 ### Goal
 
 Let the user review the tailored resume and cover letter together against the base resume, and
