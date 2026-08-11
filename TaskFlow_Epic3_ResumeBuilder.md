@@ -109,6 +109,30 @@ retrospective for the full reasoning. Each maps to a real, confirmed bug, not a 
   pattern found in this project so far. It exists to be read during implementation, not only
   during review.
 
+**Added after Sprint 3R's four-round review cycle (2026-08-11) — see that sprint's post-sprint
+retrospective for the full reasoning:**
+
+- **When a fix isolates a fallible side effect (a log write, a notify/broadcast call) from a
+  critical state transition with its own `try/catch`, audit every other call site in the same
+  class for the identical shape in the same pass.** Don't wait for review to find each instance
+  separately — Sprint 3R's `TailoringAgentBase` had this exact gap in three places (the join's own
+  tail, `RollBackAsync`'s tail, `SaveAsync`'s success-path tail) and it took three review rounds to
+  close all three because each was fixed only where the reviewer happened to point.
+- **A new guarded atomic-update method needs two separate verifications, not one: (1) does the
+  generated SQL execute as a single non-racing statement, and (2) does the WHERE/guard condition's
+  logic actually encode the intended business rule.** These are independent properties — Sprint
+  3R's `TryPromoteToReviewReadyAsync` was genuinely atomic (verified by query-logging) from its
+  first version, but its guard (`Count(Review) == 2`) didn't actually mean "both required sibling
+  kinds are Review," only "any two Review tasks are." Verifying atomicity does not verify
+  correctness.
+- **Any atomic trigger for a multi-part completion condition (promote-when-all-siblings-done,
+  finalize-when-N-steps-complete, etc.) needs a periodic reconciliation sweep as a structural
+  backstop, designed in from the start** — mirroring `StaleClaimReaperService`'s existing pattern —
+  **not added reactively once review finds that a single-shot trigger can be silently skipped** by
+  an unrelated downstream failure (a log write throwing, a transient lock). Sprint 4R's paired
+  approval and Sprint 5's export-on-approval both have this same "act only when a multi-part
+  condition is met" shape; design the sweep in alongside the trigger, not after.
+
 ---
 
 # Roadmap
@@ -905,17 +929,19 @@ looks at the pattern across the whole cycle, not any one finding already logged 
 
 ## Sprint 3R — Multi-Agent Generation (Resume and Cover Letter)
 
-**Status: COMPLETE (2026-08-11).** T3R.1–T3R.5 shipped on
-`feature/epic3-sprint3r-multi-agent-generation` (3 commits: architect decisions, the atomic
-repository layer, then the two agents). Full backend suite green: 189/189 (165 baseline + 9
-repository tests + 15 per-agent tests + 1 integration test that proves T3R.3/T3R.4/T3R.5 together).
-Built by two delegated engineers, sequenced rather than parallel (the repository layer first, then
-the agents on top of it — see the decision below on why), each independently re-verified against the
-real diff and a fresh `dotnet build`/`dotnet test` run rather than taken on the subagent's word.
-The atomic-join SQL claim specifically was re-verified a third way: a standalone throwaway program
-run against a real SQLite context with EF logging enabled, confirming EF Core 10 generates exactly
-one `UPDATE ... WHERE ... (SELECT COUNT(*) ...)` statement, not a check-then-act pair. This section
-is now the historical record for Sprint 3R.
+**Status: COMPLETE and MERGED (2026-08-11).** T3R.1–T3R.5 shipped on
+`feature/epic3-sprint3r-multi-agent-generation`, merged to `develop` as PR #43 after four review
+rounds (see "Code review findings" below for the full history — a reconciliation-sweep service and
+a tightened promotion guard were added during review, not just bug-sized patches). Final backend
+suite green: 198/198 (up from the 189 the initial implementation shipped with — 9 more tests landed
+across the four review rounds), 44/44 frontend. Built by two delegated engineers for the initial
+implementation, sequenced rather than parallel (the repository layer first, then the agents on top
+of it — see the decision below on why), each independently re-verified against the real diff and a
+fresh `dotnet build`/`dotnet test` run rather than taken on the subagent's word. The atomic-join SQL
+claim specifically was re-verified a third way before the first commit: a standalone throwaway
+program run against a real SQLite context with EF logging enabled, confirming EF Core 10 generates
+exactly one `UPDATE ... WHERE ... (SELECT COUNT(*) ...)` statement, not a check-then-act pair. This
+section is now the historical record for Sprint 3R.
 
 **What shipped, exactly as specified, plus one real bug caught and fixed during implementation:**
 `TailoringAgentBase` (new abstract class) owns the claim → resolve-`JobApplication`/`ResumeContext`
@@ -1038,6 +1064,89 @@ earlier:**
   `SaveAsync` at all — caught by actually running the test and reading why it failed, not assumed),
   then asserts both the task *and* the `JobApplication` end up in their fully-promoted state despite
   the log failure.
+
+### Post-sprint retrospective (2026-08-11)
+
+Sprint 3R shipped correct, and PR #43 is merged — but it took the initial implementation plus
+**four** review rounds to get there, the same round count as Sprint 2. That repetition is the
+headline: proactively applying Sprint 2's lessons demonstrably worked for the bug classes it named,
+but a genuinely new bug class simply took their place. This section looks at that pattern, not the
+individual findings already logged per-round above.
+
+**What went well:**
+
+- **Zero recurrence of any Sprint 2 bug class.** No DRY duplication (the shared `TailoringAgentBase`
+  held), no reintroduced check-then-act race (both new repository methods stayed single guarded
+  `ExecuteUpdateAsync` calls through all four rounds), no DTO/`MaxLength` gap, no weak test
+  assertion. The standing rules added after Sprint 2 were applied from the first RED test, not
+  rediscovered — and it worked, for exactly what they targeted.
+- **The atomic-join mechanism's atomicity itself was never broken.** Round 1's finding was about the
+  guard's *precision* (which rows it counted), not about reintroducing a race — the single-statement
+  `ExecuteUpdateAsync` property held throughout every round's fix, including the tightened guard.
+- **A second independent review converging on the same gap (round 2) was correctly treated as
+  strong-enough signal to build a real structural fix** (a whole new
+  `JobApplicationPromotionReconcilerService`, mirroring `StaleClaimReaperService`) rather than
+  deferring a third time — the "fix now, don't defer" rule applied at a bigger scale than a
+  one-line fix, and applied consistently with how it was learned in the first place (Sprint 2's own
+  deferral-then-correction on the `PromptSafety` gap).
+- **Copilot's findings were verified, not applied blind, when a specific claimed detail was wrong.**
+  Both round 2 and round 3 findings named `NotifyTaskMovedAsync` as a possible throw source; both
+  times this was checked directly against `SignalRAgentNotifier` (it already wraps its own
+  broadcast) and found incorrect, while the surrounding finding was still real and still fixed. The
+  finding being real and every claimed detail being correct are separate questions.
+- **Round 4 is the clearest example yet of the project's "never claim you verified something you
+  did not actually check" rule holding under direct pressure to just say yes:** asked point-blank
+  whether a specific Copilot comment was already covered by round 2's reconciliation sweep, and the
+  honest answer — checked, not assumed — was no, it needed its own independent fix.
+- **A test-design mistake was caught by reading *why* a test failed, not by assuming red meant
+  success.** Round 4's first attempt at a failing-log-write mock broke an earlier, unrelated log
+  call and tripped the wrong code path entirely; this was noticed and corrected rather than accepted
+  as "the RED test is red, good enough."
+
+**What to improve:**
+
+- **The same bug shape appeared in three separate places in one file before it was fully closed —
+  each found by a separate review round instead of one audit pass.** `TailoringAgentBase` mixes a
+  critical DB write (save content, release a claim) with a fallible side effect (an `AgentLog`
+  write, a SignalR notify) in at least three spots: the join's own call site, `RollBackAsync`'s
+  tail, and `SaveAsync`'s success-path tail. Round 2 fixed the first, round 3 the second, round 4
+  the third — the exact same fix shape ("wrap the fallible tail in its own `try/catch`, applied
+  once) each time. Once round 2 established that pattern, grepping the same file for every other
+  `RecordActionAsync`/`NotifyTaskMovedAsync` call site would have closed all three in one round
+  instead of three.
+- **My own independent verification passes this sprint didn't check for this pattern at all.** I
+  verified spec-conformance and ran the tests for both delegated slices, and separately re-verified
+  the atomic-join SQL against a real database — but never traced "what happens if this specific
+  side-effect call throws" through `TailoringAgentBase`'s methods. That's a real gap in how
+  thoroughly I checked agent code this sprint: confirming the tests pass and the happy path matches
+  spec is not the same as tracing exception propagation through every method that mixes a critical
+  write with a fallible one.
+- **"The guard is atomic" and "the guard is correct" turned out to be two different claims, and I
+  had only verified the first.** I independently re-ran `TryPromoteToReviewReadyAsync`'s SQL against
+  real SQLite with query logging before committing it — genuinely useful, and it did confirm no
+  race. It did not, and could not, catch that `Count(Review) == 2` doesn't mean "both required
+  kinds," since that's a logic question, not an execution-plan question. Both need checking,
+  separately, for any future guarded-update method.
+- **A structural gap surfaced that wasn't anticipated at design time: an atomically-correct
+  "promote on completion" trigger can still be silently skipped by an unrelated downstream failure,
+  with nothing to retry it.** `JobApplicationPromotionReconcilerService` closes this for Sprint 3R,
+  but it was added reactively, in round 2, once two independent reviews found the gap — not
+  designed in alongside the trigger the way `StaleClaimReaperService` already existed as precedent
+  for exactly this shape of problem before Sprint 3R even started. Sprint 4R's paired-approval flow
+  and Sprint 5's export-on-approval flow will likely have the same "act only once a multi-part
+  condition holds" shape; the reconciliation sweep should be part of the first design pass for
+  those, not a round-2 addition.
+- **A housekeeping issue unrelated to this sprint's actual feature work surfaced only because this
+  PR happened to get a third review round.** `TaskFlow.Tests/coverage.json` — containing the local
+  developer's Windows username — had been committed on every test run since the coverage tooling
+  was set up, `.gitignore`'s own "Test / coverage" section notwithstanding (it lives outside
+  `coverage/` and isn't `*.trx`, so the existing patterns never matched it). Worth remembering that
+  feature-scoped review only catches what's in the diff's neighborhood — periodic, non-feature-driven
+  housekeeping passes catch a different class of accumulated cruft entirely.
+- **Two sprints in a row now at four review rounds.** Read this as "proactive lesson-application
+  reduces the round count for *known* bug classes, and a new class will keep taking their place
+  until the fix-and-then-sweep-the-pattern habit (the first bullet above) is actually applied
+  in-the-moment" — not as evidence the lessons don't work. They clearly did, for what they targeted.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 
