@@ -133,6 +133,42 @@ retrospective for the full reasoning:**
   approval and Sprint 5's export-on-approval both have this same "act only when a multi-part
   condition is met" shape; design the sweep in alongside the trigger, not after.
 
+**Added after Sprint 4R's review cycle (2026-08-11) — see that sprint's post-sprint retrospective.
+The first bullet below is this project's most serious finding to date, not a nit:**
+
+- **Before adding a field to an existing, already-shared DTO/endpoint, check whether that field
+  carries data with an ownership or privacy boundary the endpoint's *existing* access scope does
+  not already enforce.** An endpoint being correctly unscoped for its original fields (a shared
+  team Kanban board showing every generic task to every user, by design) does not mean it stays
+  correct once a differently-scoped field is grafted onto the same payload. Sprint 4R added
+  `TailoredContent` — a personal document — to `TaskResponseDto`/`GET /api/Tasks`, which had never
+  been scoped by caller because it never needed to be before. Any two authenticated users could
+  read each other's tailored résumés and cover letters until this was caught, and it was caught by
+  a manual review reading the actual query, not by the automated reviewer.
+- **A guard's "this invariant is airtight by construction" claim must be checked against every
+  write path into the guarded field — including pre-existing, generic, unrestricted endpoints —
+  not just the write paths the current feature itself introduces.** `TryApprovePairAsync`'s
+  assumption that "`State == ReviewReady` implies both siblings are actually `Review`" was true for
+  every path *this sprint* controlled, but the pre-existing `PATCH /api/Tasks/{id}/status` endpoint
+  can move either sibling to any status independently of the whole approve/reject/promote
+  choreography, and was never accounted for. When asserting an invariant "can't happen," enumerate
+  every endpoint that touches the same rows, not just the ones the current change added.
+- **These two findings share one root cause, worth naming explicitly for Sprint 5 and beyond: Epic
+  3 keeps layering new ownership/atomicity invariants on top of a pre-existing generic board that
+  was never designed with those invariants in mind.** Every time, the gap has been in the seam
+  between "what Epic 3's new code correctly enforces" and "what the original generic endpoint still
+  allows unchecked." Before shipping a new Epic 3 invariant, explicitly ask "which existing generic
+  endpoints can reach these same rows or fields outside my new code path?" as its own checklist
+  item, not an afterthought.
+- **When a fix clears one piece of state on a prop/id change, list and clear (or explicitly justify
+  not clearing) every other piece of state the same hook/component owns, in the same commit.** This
+  is Sprint 3R's "audit the same pattern in one pass" rule, and it did not fully hold one sprint
+  later: `useApplicationReview`'s round-1 fix cleared `baseResume`/`baseResumeError` on an
+  `applicationId` change but missed `actionLoading`/`actionError`, caught only in round 2. Knowing
+  the general principle did not stop the recurrence under multi-issue review pressure; the concrete
+  form — enumerate the hook's full state list, not just the one field the finding named — is what
+  actually prevents it.
+
 ---
 
 # Roadmap
@@ -1428,6 +1464,72 @@ severe in practice than its own description (see below).
   **Fixed:** the helper now takes `taskStatus` as its own parameter, and both call sites assert on
   it (`Done` for approve, `Todo` for reject) so the distinction is actually exercised, not just
   declared.
+
+### Post-sprint retrospective (2026-08-11)
+
+Sprint 4R shipped correct and PR #45 is merged in two review rounds — the fewest of any Epic 3
+sprint so far (Sprint 2 and Sprint 3R both took four). But round count is the wrong single metric
+here: round 1 included this project's most serious finding to date, a real cross-user data leak,
+and it was **not** caught by the automated reviewer.
+
+**What went well:**
+
+- **The critical finding was caught at all, and caught by the right mechanism.** Copilot's
+  automated pass reviewed this PR and did not flag the `GetAllAsync`/`TasksController.GetAll`
+  scoping gap — a manual review, reading the actual EF query rather than reasoning about the DTO
+  change in the abstract, is what found it. This is direct, concrete evidence for why this project
+  insists on a manual pass alongside the automated one, not just a corroborating nice-to-have: here,
+  the automated pass would have missed the worst bug in the PR entirely.
+- **Every one of Copilot's three claims was checked for actual reachability before being treated as
+  real, not just plausibility.** The atomic-rollback finding was verified by confirming
+  `PATCH /api/Tasks/{id}/status` is a real, unrestricted, already-in-use endpoint capable of
+  triggering it — not assumed from Copilot's description alone. The `useApplicationReview` finding
+  was checked against its one real caller and found *not* currently reachable (React remounts on
+  `key={applicationId}` change) — and fixed anyway, on the explicit principle that a hook should be
+  correct in isolation rather than correct by accident of how its only caller happens to use it
+  today. Both outcomes (act on it now, or note it's unreachable but still worth fixing) are
+  defensible; what matters is neither was decided without checking first.
+- **A DRY opportunity was taken proactively while fixing an unrelated bug, not left as a second
+  copy.** Fixing the ownership-scoping gap required `TasksController` to resolve the caller's
+  identity the same way `JobApplicationsController` already did privately — extracted into
+  `ControllerBaseExtensions` in the same commit, not deferred.
+- **Manual review flagged the atomic-rollback gap independently, before Copilot's pass named the
+  concrete mechanism** — the sprint's own decisions doc had already recorded a doc/code mismatch (a
+  "log if not exactly 2" comment describing behavior the code never actually implemented). Two
+  independent passes converging on the same real gap, from different angles, is exactly the
+  cross-checking this project's standing rules ask for.
+- **Scope discipline held under pressure to just fix everything found.** `TaskService.RejectAsync`
+  has the identical whitespace-reason gap the pair-level `RejectAsync` fix addressed, on a different,
+  already-shipped feature — flagged in the doc rather than silently fixed in the same PR, keeping
+  the change scoped to what this PR actually touches.
+
+**What to improve:**
+
+- **This sprint's root security bug and its atomicity bug share one cause, and it's a new one for
+  this project: Epic 3 keeps adding new invariants on top of a pre-existing generic board that was
+  never designed with those invariants in mind, and neither this sprint's own design pass nor my
+  independent verification checked for that seam.** `TaskResponseDto` gaining `TailoredContent` was
+  recorded as a deliberate, reasoned decision in this sprint's "Decisions owned here" — and it was
+  still wrong, because the decision reasoned about what the *new* field needed to render, not about
+  what the *existing, unscoped* endpoint carrying it could now leak. The atomicity gap has the exact
+  same shape: reasoning about the invariant from the new code's own write paths, not from every
+  endpoint capable of touching the same rows. Both are now standing rules above; this is the
+  discipline that would have caught them at design time instead of at review time.
+- **The "audit every state field for the same pattern in one pass" rule from Sprint 3R's own
+  retrospective did not fully hold here, one sprint later.** `useApplicationReview`'s round-1 fix
+  cleared two of four pieces of hook state and missed the other two, caught only in round 2. This
+  isn't evidence the rule is wrong — it's evidence that stating a general principle once is not
+  enough to make it reliably applied under the pressure of fixing three *other*, more severe issues
+  in the same pass. The standing rule above is now stated more concretely (enumerate the hook's full
+  state list explicitly) for exactly this reason.
+- **Fewer review rounds is not the same as fewer or smaller findings, and this retrospective should
+  not read as "the process is converging."** Two rounds with one critical security bug is a worse
+  outcome than four rounds of correctness/robustness gaps, even though the round count went down.
+  Track severity alongside round count going forward, not round count alone.
+- **For Sprint 5 (export) and Sprint 6 (intake redesign) specifically:** both will touch or extend
+  endpoints/payloads that already exist from earlier sprints. Before either starts, explicitly
+  re-check every endpoint the new work reads from or writes to for the same generic-endpoint-meets-
+  new-invariant seam this sprint's finding exposed — not just the new code being added.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 
