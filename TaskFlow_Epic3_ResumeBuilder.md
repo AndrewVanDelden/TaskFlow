@@ -1296,8 +1296,44 @@ recovered by the Sprint 0 orphan recovery so the join cannot deadlock.
 
 ## Sprint 4R — Combined Review and Approval
 
-**Status: Ready. Architecture only. Fully specifies the paired review/approval; does not depend on
-any single-output Sprint 4.**
+**Status: COMPLETE (2026-08-11).** T4R.1–T4R.3 shipped on
+`feature/epic3-sprint4r-combined-review-approval` (3 commits: architect decisions, backend, frontend
+— two engineers in parallel this time, not sequenced, since backend and frontend touched fully
+disjoint files connected only by the locked HTTP contract recorded below). Full suite green: 239/239
+backend (198 baseline + 41 new), 70/70 frontend (44 baseline + 26 new). Both slices independently
+re-verified against the real diff and a fresh `dotnet build`/`dotnet test`/`npx vitest run`/
+`npx tsc -b` run rather than taken on either engineer's word — including grepping every production
+call site of `IJobApplicationRepository.GetByIdAsync` myself to confirm a `AsNoTracking()` fix was
+actually safe before trusting the claim. Both engineers hit the session's API rate limit partway
+through and were resumed (not restarted) from their own transcripts, picking up exactly where they
+left off with no lost work. This section is now the historical record for Sprint 4R.
+
+**What shipped, exactly as specified, plus one real gap closed and two real bugs fixed:**
+`IJobApplicationRepository.TryApprovePairAsync`/`TryRejectPairAsync` wrap two guarded
+`ExecuteUpdateAsync` calls (`JobApplications`, then `Tasks`) in one explicit DB transaction —
+`ExecuteUpdateAsync` commits immediately per call, so a transaction is what actually makes this
+atomic across two tables, not just two guarded updates sharing a `DbContext`. The
+`Id`+`OwnerId`+`State == ReviewReady` guard carries both the ownership check and the race guard in
+the same `WHERE` clause, applying Sprint 3R's exact reasoning from the first RED test rather than
+finding it by review a second time. `JobApplicationService` explicitly reasoned about (and rejected)
+adding a reconciliation sweep here — approve/reject is a synchronous HTTP request, not a
+silently-swallowed background-agent exception, so Sprint 3R's sweep pattern does not actually apply,
+and it was not copied reflexively. `IResumeContextService.GetForApplicationAsync` closes a real gap
+the source docs never addressed: Sprint 2 built a way to *save* a base resume but nothing to read one
+back, which `ApplicationReviewCard` needs to render at all.
+
+**Two real bugs found and fixed mid-build, each with its own RED test:** (1) `GET
+.../resume-context` returned unquoted `text/plain` instead of a JSON string, because ASP.NET Core's
+default `StringOutputFormatter` intercepts any bare-`string` `ObjectResult` — fixed by pinning the
+success path to `application/json` in `ResultExtensions`. (2) A stale read-after-write via EF's
+identity map: `ExecuteUpdateAsync` bypasses the change tracker, so a second `GetByIdAsync` call on
+the same `DbContext` after an atomic transition returned the first call's now-stale tracked instance
+— fixed with `AsNoTracking()` on `GetByIdAsync`, independently verified safe (not just taken on
+faith) by grepping every production call site and confirming none of them mutate-then-save a fetched
+`JobApplication`.
+
+**Still open, not part of this sprint's scope:**
+- The branch has not been pushed/PR'd yet — pending user confirmation.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 
