@@ -106,6 +106,32 @@ public class JobApplicationRepositoryPromotionTests
         reloaded!.State.Should().Be(ApplicationState.Building);
     }
 
+    // Copilot's automated review (PR #43) found the original guard - Count(Review) == 2 - checks
+    // that two tasks are Review, not that the two required kinds specifically are. This is not
+    // reachable today (JobApplicationAssemblyService always creates exactly one of each kind), but
+    // the guard itself shouldn't depend on that being the only way an application is ever built.
+    [Fact]
+    public async Task TryPromoteToReviewReady_does_not_promote_when_the_two_Review_tasks_are_the_same_kind()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        var application = new JobApplication { State = ApplicationState.Building };
+        db.Context.JobApplications.Add(application);
+        await db.Context.SaveChangesAsync();
+        db.Context.Tasks.AddRange(
+            new TaskItem { Title = "Resume A", Status = WorkflowStatus.Review, Kind = TaskKind.ResumeTailoring, ApplicationId = application.Id },
+            new TaskItem { Title = "Resume B", Status = WorkflowStatus.Review, Kind = TaskKind.ResumeTailoring, ApplicationId = application.Id });
+        await db.Context.SaveChangesAsync();
+        var repo = new JobApplicationRepository(db.Context);
+
+        var promoted = await repo.TryPromoteToReviewReadyAsync(application.Id);
+
+        promoted.Should().BeFalse();
+        db.Context.ChangeTracker.Clear();
+        var reloaded = await repo.GetByIdAsync(application.Id);
+        reloaded!.State.Should().Be(ApplicationState.Building);
+    }
+
     private static async Task<JobApplication> SeedApplicationWithSiblings(
         AppDbContext db, WorkflowStatus resumeStatus, WorkflowStatus coverLetterStatus)
     {

@@ -934,12 +934,50 @@ save already moved the task on), which is the same atomic-guard discipline the r
 already used, applied one more place.
 
 **Still open, not part of this sprint's scope:**
-- The branch has not been pushed/PR'd yet — pending user confirmation, consistent with the
-  project's convention that release actions are confirmed, not silent.
+- **Corrected 2026-08-11:** this line originally said the branch had not been pushed/PR'd — stale
+  by the time it mattered; the branch is PR #43.
 - No config value has been added to `appsettings.json` for `Agents:ResumeTailoringIntervalMinutes`/
   `Agents:CoverLetterIntervalMinutes` — both default to 5 minutes via `Config.GetValue(..., 5)`,
   matching the pattern every other agent interval already uses; an explicit override is optional,
   not required for correctness.
+
+### Code review findings (2026-08-11) — PR #43
+
+Manual review (against `.github/skills/code-review/SKILL.md`) plus GitHub Copilot's automated
+review, cross-checked against each other per this repo's standing rule.
+
+**Status: one finding fixed and confirmed GREEN (190/190 backend, +1 test; 44/44 frontend); one
+finding recorded as open, needs a decision rather than a reflexive fix.**
+
+- **Copilot's automated review, confirmed real and fixed:**
+  `JobApplicationRepository.TryPromoteToReviewReadyAsync`'s guard was
+  `a.Tasks.Count(t => t.Status == Review) == 2` — this counts *any* two Review tasks, not
+  specifically that the `ResumeTailoring` sibling AND the `CoverLetterTailoring` sibling are both
+  Review. Not reachable today (`JobApplicationAssemblyService` always creates exactly one of each
+  kind), but the guard itself shouldn't depend on that being the only way an application is ever
+  built. **Fixed:** tightened to two correlated `Any()` checks, one per required kind. RED test:
+  `JobApplicationRepositoryPromotionTests.TryPromoteToReviewReady_does_not_promote_when_the_two_Review_tasks_are_the_same_kind`
+  (two `ResumeTailoring` tasks, both Review, no `CoverLetterTailoring` task at all — old guard
+  promoted anyway). **Not independently re-verified via query logging** that this specific two-`Any()`
+  form is still a single UPDATE statement (the original `Count(...) == 2` form was verified that way
+  per the sprint's own notes above; this fix wasn't reverified the same way, only functionally
+  tested) — `Any(predicate)` on a navigation collection is an equally standard EF Core
+  `ExecuteUpdateAsync` translation, but stating this as unverified rather than assumed, per this
+  doc's own rule.
+- **Manual finding (mine), recorded as open — needs a decision, not a reflexive fix:** the atomic
+  join (`TryPromoteToReviewReadyAsync`) is only ever attempted once per agent completion, immediately
+  after `SaveTailoredContentAndMarkForReviewAsync`, with an `AgentLog` write and a SignalR notify in
+  between. If any of those calls throws — a transient SQLite write-lock under two agents' genuinely
+  concurrent `DbContext`s is the realistic trigger, and no `Busy Timeout` is configured on the
+  connection string (checked) — `TailoringAgentBase.ExecuteToolAsync`'s own `try/catch` swallows it
+  into a tool-error response to Claude, the cycle ends normally, and the join attempt is lost. If the
+  other sibling was already Review, the `JobApplication` is now stuck at `Building` forever — no
+  periodic sweep re-checks "both siblings Review but application still Building" the way
+  `StaleClaimReaperService` sweeps stale `InProgress` tasks. Two candidate fixes: (a) a small
+  idempotent reconciliation sweep mirroring `StaleClaimReaperService`, which closes the gap
+  regardless of where the interruption happens, or (b) narrowing the window by reordering the calls,
+  which only reduces it. Left open for a decision rather than picked unilaterally, since it's
+  genuinely architectural, not a quick fix.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 
