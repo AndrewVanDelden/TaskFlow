@@ -99,15 +99,40 @@ public class ResumeContextServiceTests
         _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
-    public async Task SaveAsync_defaults_ContentFormat_to_text_when_null()
+    // Round 4 (Copilot's automated review): contentFormat ?? "text" only defaults a null value -
+    // an empty or whitespace-only ContentFormat (still a valid string, so it passes null-coalescing
+    // unchanged) would be persisted as-is, polluting what's meant to be an enum-like discriminator
+    // ("text"/"markdown") with a meaningless value. Covers both the insert and the update path.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task SaveAsync_defaults_ContentFormat_to_text_when_null_empty_or_whitespace_on_insert(string? contentFormat)
     {
-        var result = await CreateSut().SaveAsync("session-A", 1, "Base resume text.", null);
+        var result = await CreateSut().SaveAsync("session-A", 1, "Base resume text.", contentFormat);
 
         result.IsSuccess.Should().BeTrue();
         _repo.Verify(r => r.AddAsync(
             It.Is<ResumeContext>(c => c.ContentFormat == "text"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task SaveAsync_defaults_ContentFormat_to_text_when_null_empty_or_whitespace_on_update(string? contentFormat)
+    {
+        using var db = new SqliteInMemoryContext();
+        var sut = new ResumeContextService(new ResumeContextRepository(db.Context));
+        await sut.SaveAsync("session-A", 1, "First draft.", "text");
+
+        var result = await sut.SaveAsync("session-A", 1, "Second draft.", contentFormat);
+
+        result.IsSuccess.Should().BeTrue();
+        var row = await db.Context.ResumeContexts
+            .SingleAsync(c => c.IngestionSessionId == "session-A" && c.OwnerId == 1);
+        row.ContentFormat.Should().Be("text");
     }
 
     [Theory]

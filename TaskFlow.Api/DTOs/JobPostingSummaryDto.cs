@@ -24,6 +24,10 @@ public class JobPostingSummaryDto
     [MaxLength(TaskItem.DescriptionMaxLength)]
     public string? Description { get; set; }
 
+    // Required(AllowEmptyStrings: true) - Section is typed non-nullable, but without this, a
+    // client sending an explicit JSON null passes model validation anyway and Section ends up
+    // actually null at runtime (PR #40 review, round 4). Empty string is still fine; null isn't.
+    [Required(AllowEmptyStrings = true)]
     [MaxLength(TaskItem.SourceSectionMaxLength)]
     public string Section { get; set; } = string.Empty;
 }

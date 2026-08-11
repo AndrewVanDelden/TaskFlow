@@ -138,6 +138,28 @@ public class JobApplicationsIntegrationTests
         assemble.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    // Round 4 (Copilot's automated review): Section is typed as a non-nullable string, but with no
+    // [Required], a client sending an explicit JSON null passes model validation anyway and Section
+    // ends up actually null at runtime - a real gap between the C# type and what the wire actually
+    // allows. Sent as a real null (not omitted), matching what Copilot's finding described.
+    [Fact]
+    public async Task Assembling_with_an_explicit_null_posting_section_returns_400()
+    {
+        var client = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await client.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+
+        var assemble = await client.PostAsJsonAsync("/api/JobApplications",
+            new
+            {
+                ingestionSessionId = sessionId,
+                posting = new { title = "Backend Engineer", section = (string?)null }
+            });
+
+        assemble.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     // Local shapes: Kind as a plain string so the test's default deserializer does not choke.
     private sealed record DraftDto(string Title, string? Description, string Kind, string? Section);
     private sealed record JobApplicationDto(int Id, string State, List<object> Tasks);

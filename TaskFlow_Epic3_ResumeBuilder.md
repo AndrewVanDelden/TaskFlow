@@ -665,6 +665,29 @@ every item above was fixed in the same pass that found it, not deferred.
   mismatch ("... is How we will build everything" — plural subject, singular verb, and a stray
   mid-sentence capital). **Fixed.**
 
+#### Round 4 (2026-08-11) — Copilot's fourth automated pass, on round 3's fix commit
+
+**Status: FIXED, confirmed GREEN.** 165/165 backend (+6 tests: one theory expanded to cover
+null/empty/whitespace on both insert and update paths, plus one new integration test), 44/44
+frontend. Both findings this round were real, not false positives or nits — this round pushed back
+on treating round 3's thin yield (one edge case, one stale doc line, one grammar nit) as a sign the
+review loop was near done. It wasn't; round 4 found two more substantive gaps.
+
+- **Copilot finding, confirmed real:** `ResumeContextService.SaveAsync`'s `contentFormat ?? "text"`
+  only defaults a `null` `ContentFormat` — an empty or whitespace-only value (a valid string, so it
+  passes the null-coalescing operator unchanged) would be persisted as-is, polluting what's meant to
+  be an enum-like discriminator ("text"/"markdown") with a meaningless value. Present on both the
+  insert and update paths. **Fixed:** extracted `NormalizeContentFormat`, using
+  `string.IsNullOrWhiteSpace` instead of a null check, applied on both paths. RED tests: two new
+  `[Theory]` tests (`_on_insert`/`_on_update`) with `null`/`""`/`"   "` cases each, replacing the
+  old null-only test.
+- **Copilot finding, confirmed real:** `JobPostingSummaryDto.Section` is typed as a non-nullable
+  `string` but had no `[Required]` — a client sending an explicit JSON `null` (not omitting the
+  field, sending it as `null`) passes model validation anyway, and `Section` ends up actually `null`
+  at runtime despite its type. **Fixed:** added `[Required(AllowEmptyStrings = true)]` — empty
+  string still passes, explicit `null` now returns 400. RED test:
+  `JobApplicationsIntegrationTests.Assembling_with_an_explicit_null_posting_section_returns_400`.
+
 **Status: FIXED (2026-08-10).** Items 1, 2, 4, 4a, 5, and 6 addressed below, each with a RED test
 confirmed failing against the pre-fix code before the GREEN change, per this doc's standing TDD
 rule. Full suite green afterward: 152/152 backend, 44/44 frontend. Items 7 and 8 are left open by

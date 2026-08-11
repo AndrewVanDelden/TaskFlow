@@ -36,7 +36,7 @@ public sealed class ResumeContextService : IResumeContextService
         if (existing is not null)
         {
             existing.Content = validated.Value!;
-            existing.ContentFormat = contentFormat ?? "text";
+            existing.ContentFormat = NormalizeContentFormat(contentFormat);
             existing.UpdatedAt = DateTime.UtcNow;
 
             await _resumeContexts.SaveChangesAsync(ct);
@@ -48,7 +48,7 @@ public sealed class ResumeContextService : IResumeContextService
             IngestionSessionId = ingestionSessionId,
             OwnerId = ownerId,
             Content = validated.Value!,
-            ContentFormat = contentFormat ?? "text"
+            ContentFormat = NormalizeContentFormat(contentFormat)
         }, ct);
 
         try
@@ -74,4 +74,11 @@ public sealed class ResumeContextService : IResumeContextService
 
         return Result<bool>.Ok(true);
     }
+
+    // ContentFormat is an enum-like discriminator ("text"/"markdown"), not free text - null,
+    // empty, and whitespace-only all mean "unspecified" and must default the same way (PR #40
+    // review, round 4: contentFormat ?? "text" only caught null, leaving "" or "   " persisted
+    // as-is).
+    private static string NormalizeContentFormat(string? contentFormat) =>
+        string.IsNullOrWhiteSpace(contentFormat) ? "text" : contentFormat;
 }
