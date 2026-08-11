@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using TaskFlow.Api.Common;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Repositories;
@@ -37,19 +38,32 @@ public sealed class ResumeContextService : IResumeContextService
             existing.Content = validated.Value!;
             existing.ContentFormat = contentFormat ?? "text";
             existing.UpdatedAt = DateTime.UtcNow;
-        }
-        else
-        {
-            await _resumeContexts.AddAsync(new ResumeContext
-            {
-                IngestionSessionId = ingestionSessionId,
-                OwnerId = ownerId,
-                Content = validated.Value!,
-                ContentFormat = contentFormat ?? "text"
-            }, ct);
+
+            await _resumeContexts.SaveChangesAsync(ct);
+            return Result<bool>.Ok(true);
         }
 
-        await _resumeContexts.SaveChangesAsync(ct);
+        await _resumeContexts.AddAsync(new ResumeContext
+        {
+            IngestionSessionId = ingestionSessionId,
+            OwnerId = ownerId,
+            Content = validated.Value!,
+            ContentFormat = contentFormat ?? "text"
+        }, ct);
+
+        try
+        {
+            await _resumeContexts.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException)
+        {
+            // Check-then-act can still lose a race: a concurrent request for this same
+            // (session, owner) inserted first, and the unique index (PR #40 review, round 1)
+            // rejected ours. That's a real, if narrow, gap the index itself introduced - without
+            // this catch, it would surface as an unhandled 500. Report it as a clean Conflict so
+            // the caller can retry, rather than silently swallowing or corrupting the other save.
+            return Result<bool>.Conflict("Another save for this session is already in progress. Please retry.");
+        }
 
         return Result<bool>.Ok(true);
     }

@@ -80,6 +80,64 @@ public class JobApplicationsIntegrationTests
         assemble.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // PR #40 review (round 2, both manual and Copilot): JobPostingSummaryDto had no MaxLength
+    // caps matching TaskItem's own persistence limits (Title 200, Description 2000,
+    // SourceSection 200), so an oversized value would bypass model validation entirely. Proved
+    // at the HTTP level, since that's where [ApiController]'s automatic model validation acts.
+    [Fact]
+    public async Task Assembling_with_an_oversized_posting_title_returns_400()
+    {
+        var client = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await client.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+
+        var assemble = await client.PostAsJsonAsync("/api/JobApplications",
+            new
+            {
+                ingestionSessionId = sessionId,
+                posting = new { title = new string('A', 201), section = "Job Posting" }
+            });
+
+        assemble.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Assembling_with_an_oversized_posting_description_returns_400()
+    {
+        var client = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await client.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+
+        var assemble = await client.PostAsJsonAsync("/api/JobApplications",
+            new
+            {
+                ingestionSessionId = sessionId,
+                posting = new { title = "Backend Engineer", description = new string('A', 2001), section = "Job Posting" }
+            });
+
+        assemble.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Assembling_with_an_oversized_posting_section_returns_400()
+    {
+        var client = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await client.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+
+        var assemble = await client.PostAsJsonAsync("/api/JobApplications",
+            new
+            {
+                ingestionSessionId = sessionId,
+                posting = new { title = "Backend Engineer", section = new string('A', 201) }
+            });
+
+        assemble.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     // Local shapes: Kind as a plain string so the test's default deserializer does not choke.
     private sealed record DraftDto(string Title, string? Description, string Kind, string? Section);
     private sealed record JobApplicationDto(int Id, string State, List<object> Tasks);

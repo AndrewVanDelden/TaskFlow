@@ -53,7 +53,7 @@ public sealed class JobApplicationAssemblyService : IJobApplicationAssemblyServi
                 },
                 new TaskItem
                 {
-                    Title = $"Cover letter — {posting.Title}",
+                    Title = BuildCoverLetterTitle(posting.Title),
                     Description = posting.Description,
                     Kind = TaskKind.CoverLetterTailoring,
                     Status = WorkflowStatus.Todo,
@@ -66,5 +66,17 @@ public sealed class JobApplicationAssemblyService : IJobApplicationAssemblyServi
         await _jobApplications.SaveChangesAsync(ct);
 
         return Result<JobApplicationResponseDto>.Ok(JobApplicationResponseDto.FromEntity(application));
+    }
+
+    private const string CoverLetterTitlePrefix = "Cover letter — ";
+
+    // A posting title at (or near) TaskItem.TitleMaxLength would push this derived title past the
+    // column's own cap once the prefix is added (PR #40 review, round 2 - Copilot's automated
+    // review caught this: capping the input alone isn't enough, since the prefix adds more on
+    // top). Truncate defensively so this can never exceed the cap, regardless of the input cap.
+    private static string BuildCoverLetterTitle(string jobTitle)
+    {
+        var title = CoverLetterTitlePrefix + jobTitle;
+        return title.Length > TaskItem.TitleMaxLength ? title[..TaskItem.TitleMaxLength] : title;
     }
 }

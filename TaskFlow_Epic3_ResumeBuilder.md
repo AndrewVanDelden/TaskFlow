@@ -591,6 +591,44 @@ naming), then cross-checked against GitHub Copilot's automated PR review. Record
 doc, rather than as a standalone review file, so the sprint's own history carries its review outcome
 the same way it carries its bug-found-during-implementation note above.
 
+#### Round 2 (2026-08-10) — a fresh manual pass + Copilot's second automated pass, post-round-1-fix
+
+Run independently after round 1's fixes landed, to check the fixed code with fresh eyes rather than
+just re-verifying old findings. Cross-checked against Copilot's second automated review the same day.
+**Status: FIXED, confirmed GREEN.** 158/158 backend (+5 tests), 44/44 frontend.
+
+- **Manual finding, confirmed by Copilot independently:** `JobPostingSummaryDto` (`Title`,
+  `Description`, `Section`) had no `[MaxLength]` matching `TaskItem`'s own persistence caps (`Title`
+  200, `Description` 2000, `SourceSection` 200) — an oversized value would bypass model validation
+  entirely. **Fixed:** added `TaskItem.TitleMaxLength`/`DescriptionMaxLength`/`SourceSectionMaxLength`
+  constants (so the DTO's caps and the entity's caps can't drift apart) and applied them via
+  `[MaxLength]` on `JobPostingSummaryDto`. RED tests: three new HTTP-level tests in
+  `JobApplicationsIntegrationTests.cs`, one per oversized field, each expecting 400.
+- **Copilot caught a sharper version of the same finding, manual review missed it:** capping the
+  DTO's `Title` alone is not sufficient — `JobApplicationAssemblyService` builds the cover-letter
+  sibling's title as `"Cover letter — " + posting.Title`, so a `Title` at exactly the 200-char cap
+  still overflows the column once that prefix is added. **Fixed:** `BuildCoverLetterTitle` truncates
+  the derived title to `TaskItem.TitleMaxLength` defensively, independent of the input cap. RED test:
+  `JobApplicationAssemblyServiceTests.Assembling_with_a_max_length_title_produces_a_cover_letter_title_that_still_fits_the_cap`.
+- **Manual finding:** `ResumeContextService.SaveAsync`'s check-then-act upsert (the round-1 fix)
+  isn't race-safe against the unique index that same fix added — a losing concurrent insert now
+  throws `DbUpdateException` instead of silently duplicating, but the service didn't catch it, so it
+  would surface as an unhandled 500. **Fixed:** catches `DbUpdateException` on the insert path only
+  (the update path is left alone) and returns `Result.Conflict(...)` (maps to HTTP 409). RED test:
+  `ResumeContextServiceTests.SaveAsync_returns_Conflict_when_a_concurrent_insert_wins_the_unique_index_race`.
+- **Manual finding (nit):** `JobApplicationsController.Assemble`'s comment overstated what setting
+  `TaskDraft`'s `Kind` accomplishes — `JobApplicationAssemblyService` never reads `posting.Kind`, it
+  hardcodes both sibling kinds itself. **Fixed:** corrected the comment; no behavior change, no test
+  needed.
+- **Copilot false positive, checked and rejected, not fixed:** Copilot's second pass flagged an
+  "unused `using TaskFlow.Api.Security;`" in `ResumeContextService.cs`. Verified via grep:
+  `ToolOutputValidator` (called at line 24 of that file) lives in `namespace TaskFlow.Api.Security` —
+  the `using` is required; removing it would break the build. Recorded here rather than silently
+  dropped, per this doc's own rule to log every review finding, confirmed or rejected.
+
+This is also the first review round conducted under the "fix now, not forward" rule (`CLAUDE.md`):
+every item above was fixed in the same pass that found it, not deferred.
+
 **Status: FIXED (2026-08-10).** Items 1, 2, 4, 4a, 5, and 6 addressed below, each with a RED test
 confirmed failing against the pre-fix code before the GREEN change, per this doc's standing TDD
 rule. Full suite green afterward: 152/152 backend, 44/44 frontend. Items 7 and 8 are left open by

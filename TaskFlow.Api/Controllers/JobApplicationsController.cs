@@ -43,9 +43,11 @@ public class JobApplicationsController : ControllerBase
         return (await _resumeContext.SaveAsync(dto.IngestionSessionId, ownerId, dto.Content, dto.ContentFormat)).ToActionResult();
     }
 
-    // Assemble the approved posting into a JobApplication with two Todo sibling tasks. The kind
-    // on the resulting TaskDraft is fixed here, not client-supplied: JobApplicationAssemblyService
-    // always creates exactly one ResumeTailoring and one CoverLetterTailoring sibling regardless.
+    // Assemble the approved posting into a JobApplication with two Todo sibling tasks.
+    // TaskDraft's constructor requires a Kind, but AssembleAsync never reads posting.Kind - it
+    // always creates exactly one ResumeTailoring and one CoverLetterTailoring sibling regardless
+    // of what's passed here, so this value is a placeholder only, not something that steers
+    // behavior downstream.
     [HttpPost]
     public async Task<IActionResult> Assemble([FromBody] AssembleJobApplicationDto dto)
     {

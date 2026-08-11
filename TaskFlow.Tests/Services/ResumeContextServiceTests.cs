@@ -41,6 +41,23 @@ public class ResumeContextServiceTests
         rows[0].Content.Should().Be("Second draft.");
     }
 
+    // Review (round 2, both manual and Copilot) found the check-then-act upsert isn't race-safe:
+    // the unique index (added to fix the original duplicate-row bug) means a losing concurrent
+    // insert now throws DbUpdateException instead of silently duplicating - but SaveAsync didn't
+    // catch it, so it would surface as an unhandled 500. It should return a clean Result instead.
+    [Fact]
+    public async Task SaveAsync_returns_Conflict_when_a_concurrent_insert_wins_the_unique_index_race()
+    {
+        _repo.Setup(r => r.GetForOwnerAsync("session-A", 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ResumeContext?)null);
+        _repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateException("UNIQUE constraint failed"));
+
+        var result = await CreateSut().SaveAsync("session-A", 1, "Base resume text.", "text");
+
+        result.Status.Should().Be(ResultStatus.Conflict);
+    }
+
     [Fact]
     public async Task SaveAsync_persists_content_and_returns_Ok_true()
     {

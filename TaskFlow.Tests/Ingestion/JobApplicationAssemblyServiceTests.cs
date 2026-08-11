@@ -108,4 +108,24 @@ public class JobApplicationAssemblyServiceTests
         result.Status.Should().Be(ResultStatus.Validation);
         (await ctx.JobApplications.CountAsync()).Should().Be(0);
     }
+
+    // PR #40 review (round 2): the cover-letter sibling's title is "Cover letter — " + posting.Title.
+    // A posting title at exactly TaskItem.TitleMaxLength would push the combined string past the
+    // column's own cap - capping the DTO's Title alone does not fix this, since the prefix adds more
+    // on top. The derived title must be truncated to fit, independent of what the input cap is.
+    [Fact]
+    public async Task Assembling_with_a_max_length_title_produces_a_cover_letter_title_that_still_fits_the_cap()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedResumeContextAsync(db.Context, "session-A", 1);
+        var (sut, ctx) = CreateSut(db);
+        var maxLengthTitle = new string('A', TaskItem.TitleMaxLength);
+        var posting = new TaskDraft(maxLengthTitle, "Great role", TaskKind.ResumeTailoring, "Job Posting");
+
+        var result = await sut.AssembleAsync("session-A", 1, posting);
+
+        result.IsSuccess.Should().BeTrue();
+        var siblings = await ctx.Tasks.Where(t => t.ApplicationId == result.Value!.Id).ToListAsync();
+        siblings.Should().OnlyContain(t => t.Title.Length <= TaskItem.TitleMaxLength);
+    }
 }
