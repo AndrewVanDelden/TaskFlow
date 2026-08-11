@@ -132,6 +132,84 @@ public class JobApplicationRepositoryPromotionTests
         reloaded!.State.Should().Be(ApplicationState.Building);
     }
 
+    // ── PromotePendingReviewReadyApplicationsAsync (the reconciliation sweep's repository call) ──
+    // PR #43 review, round 2 (both a manual review and Copilot's automated review, independently):
+    // the per-application join attempted right after a save is a best-effort trigger, not a
+    // guarantee. If it's interrupted (an AgentLog write or the join call itself throwing), a
+    // JobApplication can be left stuck at Building with both siblings already Review, with nothing
+    // to retry it. This bulk method is what JobApplicationPromotionReconcilerService's periodic
+    // sweep calls to find and fix every application in that state, not just one.
+
+    [Fact]
+    public async Task PromotePendingReviewReady_promotes_every_qualifying_application_and_returns_the_count()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        var stuckA = await SeedApplicationWithSiblings(db.Context, WorkflowStatus.Review, WorkflowStatus.Review);
+        var stuckB = await SeedApplicationWithSiblings(db.Context, WorkflowStatus.Review, WorkflowStatus.Review);
+        var notYetDone = await SeedApplicationWithSiblings(db.Context, WorkflowStatus.Review, WorkflowStatus.InProgress);
+        var repo = new JobApplicationRepository(db.Context);
+
+        var count = await repo.PromotePendingReviewReadyApplicationsAsync();
+
+        count.Should().Be(2);
+        db.Context.ChangeTracker.Clear();
+        (await repo.GetByIdAsync(stuckA.Id))!.State.Should().Be(ApplicationState.ReviewReady);
+        (await repo.GetByIdAsync(stuckB.Id))!.State.Should().Be(ApplicationState.ReviewReady);
+        (await repo.GetByIdAsync(notYetDone.Id))!.State.Should().Be(ApplicationState.Building);
+    }
+
+    [Fact]
+    public async Task PromotePendingReviewReady_returns_zero_when_nothing_qualifies()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        await SeedApplicationWithSiblings(db.Context, WorkflowStatus.Todo, WorkflowStatus.Todo);
+        var repo = new JobApplicationRepository(db.Context);
+
+        var count = await repo.PromotePendingReviewReadyApplicationsAsync();
+
+        count.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PromotePendingReviewReady_does_not_touch_an_application_already_ReviewReady()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        var application = await SeedApplicationWithSiblings(db.Context, WorkflowStatus.Review, WorkflowStatus.Review);
+        var repo = new JobApplicationRepository(db.Context);
+        await repo.PromotePendingReviewReadyApplicationsAsync();
+
+        var secondSweepCount = await repo.PromotePendingReviewReadyApplicationsAsync();
+
+        secondSweepCount.Should().Be(0);
+        db.Context.ChangeTracker.Clear();
+        (await repo.GetByIdAsync(application.Id))!.State.Should().Be(ApplicationState.ReviewReady);
+    }
+
+    [Fact]
+    public async Task PromotePendingReviewReady_does_not_promote_when_the_two_Review_tasks_are_the_same_kind()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        var application = new JobApplication { State = ApplicationState.Building };
+        db.Context.JobApplications.Add(application);
+        await db.Context.SaveChangesAsync();
+        db.Context.Tasks.AddRange(
+            new TaskItem { Title = "Resume A", Status = WorkflowStatus.Review, Kind = TaskKind.ResumeTailoring, ApplicationId = application.Id },
+            new TaskItem { Title = "Resume B", Status = WorkflowStatus.Review, Kind = TaskKind.ResumeTailoring, ApplicationId = application.Id });
+        await db.Context.SaveChangesAsync();
+        var repo = new JobApplicationRepository(db.Context);
+
+        var count = await repo.PromotePendingReviewReadyApplicationsAsync();
+
+        count.Should().Be(0);
+        db.Context.ChangeTracker.Clear();
+        var reloaded = await repo.GetByIdAsync(application.Id);
+        reloaded!.State.Should().Be(ApplicationState.Building);
+    }
+
     private static async Task<JobApplication> SeedApplicationWithSiblings(
         AppDbContext db, WorkflowStatus resumeStatus, WorkflowStatus coverLetterStatus)
     {

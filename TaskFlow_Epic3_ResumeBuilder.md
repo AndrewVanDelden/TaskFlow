@@ -946,8 +946,8 @@ already used, applied one more place.
 Manual review (against `.github/skills/code-review/SKILL.md`) plus GitHub Copilot's automated
 review, cross-checked against each other per this repo's standing rule.
 
-**Status: one finding fixed and confirmed GREEN (190/190 backend, +1 test; 44/44 frontend); one
-finding recorded as open, needs a decision rather than a reflexive fix.**
+**Status: both findings fixed and confirmed GREEN (194/194 backend, +5 tests total across both
+rounds; 44/44 frontend).**
 
 - **Copilot's automated review, confirmed real and fixed:**
   `JobApplicationRepository.TryPromoteToReviewReadyAsync`'s guard was
@@ -964,20 +964,30 @@ finding recorded as open, needs a decision rather than a reflexive fix.**
   tested) — `Any(predicate)` on a navigation collection is an equally standard EF Core
   `ExecuteUpdateAsync` translation, but stating this as unverified rather than assumed, per this
   doc's own rule.
-- **Manual finding (mine), recorded as open — needs a decision, not a reflexive fix:** the atomic
-  join (`TryPromoteToReviewReadyAsync`) is only ever attempted once per agent completion, immediately
-  after `SaveTailoredContentAndMarkForReviewAsync`, with an `AgentLog` write and a SignalR notify in
-  between. If any of those calls throws — a transient SQLite write-lock under two agents' genuinely
-  concurrent `DbContext`s is the realistic trigger, and no `Busy Timeout` is configured on the
-  connection string (checked) — `TailoringAgentBase.ExecuteToolAsync`'s own `try/catch` swallows it
-  into a tool-error response to Claude, the cycle ends normally, and the join attempt is lost. If the
-  other sibling was already Review, the `JobApplication` is now stuck at `Building` forever — no
-  periodic sweep re-checks "both siblings Review but application still Building" the way
-  `StaleClaimReaperService` sweeps stale `InProgress` tasks. Two candidate fixes: (a) a small
-  idempotent reconciliation sweep mirroring `StaleClaimReaperService`, which closes the gap
-  regardless of where the interruption happens, or (b) narrowing the window by reordering the calls,
-  which only reduces it. Left open for a decision rather than picked unilaterally, since it's
-  genuinely architectural, not a quick fix.
+- **Manual finding, independently confirmed by Copilot's automated review on the very next pass
+  (both converged on the same gap, though Copilot's version also named `NotifyTaskMovedAsync` as a
+  possible throw source — checked and that part is wrong: `SignalRAgentNotifier.TaskMovedAsync`
+  already wraps its own broadcast in a `try/catch` with the explicit comment "a broadcast failure
+  must never break an agent cycle," so it cannot be the trigger; the real one is narrower —
+  `RecordActionAsync`'s own `SaveChangesAsync` and the join call itself, both genuinely unguarded):**
+  the atomic join (`TryPromoteToReviewReadyAsync`) is only ever attempted once per agent completion.
+  If the log write or the join call itself throws — a transient SQLite write-lock under two agents'
+  genuinely concurrent `DbContext`s is the realistic trigger, and no `Busy Timeout` is configured on
+  the connection string (checked) — `TailoringAgentBase.ExecuteToolAsync`'s own `try/catch` swallows
+  it into a tool-error response to Claude, the cycle ends normally, and the join attempt is lost. If
+  the other sibling was already Review, the `JobApplication` is now stuck at `Building` forever.
+  **Fixed:** given a second independent review converged on the same real gap, this was a decision
+  worth making rather than deferring a third time. Added
+  `IJobApplicationRepository.PromotePendingReviewReadyApplicationsAsync` (bulk sibling of
+  `TryPromoteToReviewReadyAsync`, no id filter, same shared `BothRequiredSiblingsAreReview`
+  predicate extracted for both) and `JobApplicationPromotionReconcilerService`, a plain
+  `BackgroundService` mirroring `StaleClaimReaperService`'s exact shape — sweeps on startup and every
+  `Agents:PromotionSweepIntervalMinutes` (default 5), promoting every `Building` application whose
+  siblings are both actually `Review`. Following this codebase's own precedent
+  (`StaleClaimReaperService` has no test file of its own; its repository method,
+  `RecoverStaleInProgressAsync`, does), the sweep service itself is untested at the unit level; the
+  repository method it calls has four new tests covering multi-application promotion, the zero-match
+  case, not double-touching an already-`ReviewReady` row, and the same-kind-duplicate edge case.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 

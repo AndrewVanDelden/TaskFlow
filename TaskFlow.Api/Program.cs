@@ -151,6 +151,11 @@ builder.Services.AddHostedService<AgentRunner>();
 // failure which GenericExecutorAgent's own try/catch already rolls back.
 builder.Services.AddHostedService<StaleClaimReaperService>();
 
+// Plain sweep (not an ITaskFlowAgent) that recovers JobApplications left stuck at Building when
+// both sibling tasks are actually Review — TailoringAgentBase's per-application join right after a
+// save is a best-effort trigger, not a guarantee (PR #43 review, round 2).
+builder.Services.AddHostedService<JobApplicationPromotionReconcilerService>();
+
 // ── CORS ─────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
 {

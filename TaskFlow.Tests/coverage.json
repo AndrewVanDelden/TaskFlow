@@ -46,7 +46,7 @@
             "57": 0,
             "58": 1,
             "61": 1,
-            "62": 64,
+            "62": 65,
             "65": 1,
             "66": 1,
             "67": 1,
@@ -114,71 +114,72 @@
             "143": 1,
             "147": 1,
             "152": 1,
-            "155": 1,
-            "156": 1,
             "157": 1,
-            "158": 1,
-            "159": 1,
             "160": 1,
             "161": 1,
             "162": 1,
             "163": 1,
-            "164": 2,
-            "165": 2,
+            "164": 1,
+            "165": 1,
+            "166": 1,
+            "167": 1,
             "168": 1,
-            "170": 1,
-            "171": 1,
-            "172": 1,
+            "169": 2,
+            "170": 2,
             "173": 1,
-            "174": 1,
+            "175": 1,
             "176": 1,
-            "177": 0,
-            "178": 0,
-            "179": 0,
-            "180": 0,
-            "181": 0,
+            "177": 1,
+            "178": 1,
+            "179": 1,
+            "181": 1,
             "182": 0,
             "183": 0,
             "184": 0,
-            "186": 1,
-            "187": 1,
-            "190": 1,
+            "185": 0,
+            "186": 0,
+            "187": 0,
+            "188": 0,
+            "189": 0,
             "191": 1,
-            "193": 1,
-            "194": 0,
+            "192": 1,
+            "195": 1,
             "196": 1,
-            "197": 1,
-            "198": 1
+            "198": 1,
+            "199": 0,
+            "201": 1,
+            "202": 1,
+            "203": 1
           },
           "Branches": [
             {
-              "Line": 176,
-              "Offset": 985,
-              "EndOffset": 987,
+              "Line": 181,
+              "Offset": 1002,
+              "EndOffset": 1004,
               "Path": 0,
               "Ordinal": 0,
               "Hits": 0
             },
             {
-              "Line": 176,
-              "Offset": 985,
-              "EndOffset": 1035,
+              "Line": 181,
+              "Offset": 1002,
+              "EndOffset": 1052,
               "Path": 1,
               "Ordinal": 1,
               "Hits": 1
             },
             {
-              "Line": 193,
-              "Offset": 1083,
-              "EndOffset": 1085,
+              "Line": 198,
+              "Offset": 1100,
+              "EndOffset": 1102,
               "Path": 0,
               "Ordinal": 2,
               "Hits": 0
             },
             {
-              "Line": 193,
-              "Offset": 1083,
-              "EndOffset": 1133,
+              "Line": 198,
+              "Offset": 1100,
+              "EndOffset": 1150,
               "Path": 1,
               "Ordinal": 3,
               "Hits": 1
@@ -1528,52 +1529,74 @@
       "TaskFlow.Api.Repositories.JobApplicationRepository": {
         "System.Threading.Tasks.Task TaskFlow.Api.Repositories.JobApplicationRepository::SaveChangesAsync(System.Threading.CancellationToken)": {
           "Lines": {
-            "43": 4
+            "53": 4
           },
           "Branches": []
         },
         "System.Void TaskFlow.Api.Repositories.JobApplicationRepository::.ctor(TaskFlow.Api.Data.AppDbContext)": {
           "Lines": {
-            "11": 100
+            "12": 110
+          },
+          "Branches": []
+        },
+        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository::.cctor()": {
+          "Lines": {
+            "24": 1,
+            "25": 1,
+            "26": 1
           },
           "Branches": []
         }
       },
       "TaskFlow.Api.Repositories.JobApplicationRepository/<>c": {
-        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<>c::<TryPromoteToReviewReadyAsync>b__3_1(Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder`1<TaskFlow.Api.Models.JobApplication>)": {
+        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<>c::<TryPromoteToReviewReadyAsync>b__4_1(Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder`1<TaskFlow.Api.Models.JobApplication>)": {
           "Lines": {
-            "35": 30
+            "39": 30
+          },
+          "Branches": []
+        },
+        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<>c::<PromotePendingReviewReadyApplicationsAsync>b__5_1(Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder`1<TaskFlow.Api.Models.JobApplication>)": {
+          "Lines": {
+            "48": 12
           },
           "Branches": []
         }
       },
-      "TaskFlow.Api.Repositories.JobApplicationRepository/<AddAsync>d__4": {
-        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<AddAsync>d__4::MoveNext()": {
+      "TaskFlow.Api.Repositories.JobApplicationRepository/<AddAsync>d__6": {
+        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<AddAsync>d__6::MoveNext()": {
           "Lines": {
-            "41": 4
+            "51": 4
           },
           "Branches": []
         }
       },
-      "TaskFlow.Api.Repositories.JobApplicationRepository/<GetByIdAsync>d__2": {
-        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<GetByIdAsync>d__2::MoveNext()": {
+      "TaskFlow.Api.Repositories.JobApplicationRepository/<GetByIdAsync>d__3": {
+        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<GetByIdAsync>d__3::MoveNext()": {
           "Lines": {
-            "14": 28
+            "29": 33
           },
           "Branches": []
         }
       },
-      "TaskFlow.Api.Repositories.JobApplicationRepository/<TryPromoteToReviewReadyAsync>d__3": {
-        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<TryPromoteToReviewReadyAsync>d__3::MoveNext()": {
+      "TaskFlow.Api.Repositories.JobApplicationRepository/<PromotePendingReviewReadyApplicationsAsync>d__5": {
+        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<PromotePendingReviewReadyApplicationsAsync>d__5::MoveNext()": {
           "Lines": {
-            "17": 15,
-            "30": 15,
-            "31": 15,
+            "45": 6,
+            "46": 6,
+            "47": 6
+          },
+          "Branches": []
+        }
+      },
+      "TaskFlow.Api.Repositories.JobApplicationRepository/<TryPromoteToReviewReadyAsync>d__4": {
+        "System.Void TaskFlow.Api.Repositories.JobApplicationRepository/<TryPromoteToReviewReadyAsync>d__4::MoveNext()": {
+          "Lines": {
             "32": 15,
-            "33": 15,
-            "34": 15,
+            "36": 15,
             "37": 15,
-            "38": 15
+            "38": 15,
+            "41": 15,
+            "42": 15
           },
           "Branches": []
         }
@@ -2057,25 +2080,25 @@
       "TaskFlow.Api.Models.JobApplication": {
         "System.Int32 TaskFlow.Api.Models.JobApplication::get_Id()": {
           "Lines": {
-            "7": 74
+            "7": 91
           },
           "Branches": []
         },
         "TaskFlow.Api.Models.ApplicationState TaskFlow.Api.Models.JobApplication::get_State()": {
           "Lines": {
-            "9": 73
+            "9": 95
           },
           "Branches": []
         },
         "System.DateTime TaskFlow.Api.Models.JobApplication::get_CreatedAt()": {
           "Lines": {
-            "11": 38
+            "11": 49
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.JobApplication::get_IngestionSessionId()": {
           "Lines": {
-            "18": 75
+            "18": 86
           },
           "Branches": []
         },
@@ -2087,7 +2110,7 @@
         },
         "System.Collections.Generic.ICollection`1<TaskFlow.Api.Models.TaskItem> TaskFlow.Api.Models.JobApplication::get_Tasks()": {
           "Lines": {
-            "23": 41
+            "23": 52
           },
           "Branches": []
         }
@@ -2149,7 +2172,7 @@
         },
         "System.String TaskFlow.Api.Models.TaskItem::get_Title()": {
           "Lines": {
-            "19": 500
+            "19": 524
           },
           "Branches": []
         },
@@ -2161,13 +2184,13 @@
         },
         "TaskFlow.Api.Models.WorkflowStatus TaskFlow.Api.Models.TaskItem::get_Status()": {
           "Lines": {
-            "24": 475
+            "24": 499
           },
           "Branches": []
         },
         "TaskFlow.Api.Models.TaskPriority TaskFlow.Api.Models.TaskItem::get_Priority()": {
           "Lines": {
-            "26": 323
+            "26": 335
           },
           "Branches": []
         },
@@ -2179,13 +2202,13 @@
         },
         "System.DateTime TaskFlow.Api.Models.TaskItem::get_CreatedAt()": {
           "Lines": {
-            "30": 302
+            "30": 314
           },
           "Branches": []
         },
         "System.DateTime TaskFlow.Api.Models.TaskItem::get_UpdatedAt()": {
           "Lines": {
-            "32": 334
+            "32": 346
           },
           "Branches": []
         },
@@ -2203,7 +2226,7 @@
         },
         "TaskFlow.Api.Models.TaskKind TaskFlow.Api.Models.TaskItem::get_Kind()": {
           "Lines": {
-            "41": 340
+            "41": 364
           },
           "Branches": []
         },
@@ -2227,7 +2250,7 @@
         },
         "System.Nullable`1<System.Int32> TaskFlow.Api.Models.TaskItem::get_ApplicationId()": {
           "Lines": {
-            "57": 79
+            "57": 91
           },
           "Branches": []
         },
@@ -7291,7 +7314,7 @@
         },
         "Microsoft.EntityFrameworkCore.DbSet`1<TaskFlow.Api.Models.TaskItem> TaskFlow.Api.Data.AppDbContext::get_Tasks()": {
           "Lines": {
-            "13": 314
+            "13": 329
           },
           "Branches": []
         },
@@ -7303,7 +7326,7 @@
         },
         "Microsoft.EntityFrameworkCore.DbSet`1<TaskFlow.Api.Models.JobApplication> TaskFlow.Api.Data.AppDbContext::get_JobApplications()": {
           "Lines": {
-            "15": 91
+            "15": 108
           },
           "Branches": []
         },
@@ -7461,9 +7484,9 @@
         },
         "System.Void TaskFlow.Api.Data.AppDbContext::.ctor(Microsoft.EntityFrameworkCore.DbContextOptions`1<TaskFlow.Api.Data.AppDbContext>)": {
           "Lines": {
-            "8": 140,
-            "9": 140,
-            "10": 140
+            "8": 145,
+            "9": 145,
+            "10": 145
           },
           "Branches": []
         }
@@ -9260,6 +9283,106 @@
               "Path": 1,
               "Ordinal": 13,
               "Hits": 3
+            }
+          ]
+        }
+      }
+    },
+    "C:\\Users\\Sirgimp\\Desktop\\TaskFlow\\TaskFlow.Api\\Agents\\JobApplicationPromotionReconcilerService.cs": {
+      "TaskFlow.Api.Agents.JobApplicationPromotionReconcilerService": {
+        "System.Void TaskFlow.Api.Agents.JobApplicationPromotionReconcilerService::.ctor(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory,Microsoft.Extensions.Configuration.IConfiguration,Microsoft.Extensions.Logging.ILogger`1<TaskFlow.Api.Agents.JobApplicationPromotionReconcilerService>)": {
+          "Lines": {
+            "26": 1,
+            "27": 1,
+            "28": 1,
+            "29": 1,
+            "30": 1,
+            "34": 1,
+            "35": 1,
+            "36": 1,
+            "37": 1
+          },
+          "Branches": []
+        }
+      },
+      "TaskFlow.Api.Agents.JobApplicationPromotionReconcilerService/<ExecuteAsync>d__4": {
+        "System.Void TaskFlow.Api.Agents.JobApplicationPromotionReconcilerService/<ExecuteAsync>d__4::MoveNext()": {
+          "Lines": {
+            "40": 1,
+            "41": 1,
+            "43": 1,
+            "46": 1,
+            "47": 1,
+            "49": 1,
+            "50": 1,
+            "51": 1,
+            "52": 0,
+            "53": 0,
+            "55": 0,
+            "57": 0,
+            "58": 0,
+            "60": 0,
+            "61": 0,
+            "64": 1,
+            "65": 1,
+            "66": 0,
+            "67": 1,
+            "68": 1,
+            "69": 1,
+            "71": 0,
+            "73": 1,
+            "74": 1
+          },
+          "Branches": [
+            {
+              "Line": 46,
+              "Offset": 431,
+              "EndOffset": 113,
+              "Path": 1,
+              "Ordinal": 1,
+              "Hits": 1
+            },
+            {
+              "Line": 46,
+              "Offset": 431,
+              "EndOffset": 436,
+              "Path": 0,
+              "Ordinal": 0,
+              "Hits": 1
+            }
+          ]
+        }
+      },
+      "TaskFlow.Api.Agents.JobApplicationPromotionReconcilerService/<SweepAsync>d__5": {
+        "System.Void TaskFlow.Api.Agents.JobApplicationPromotionReconcilerService/<SweepAsync>d__5::MoveNext()": {
+          "Lines": {
+            "77": 1,
+            "78": 1,
+            "79": 1,
+            "81": 1,
+            "83": 1,
+            "84": 0,
+            "85": 0,
+            "86": 0,
+            "88": 1,
+            "89": 1
+          },
+          "Branches": [
+            {
+              "Line": 83,
+              "Offset": 202,
+              "EndOffset": 204,
+              "Path": 0,
+              "Ordinal": 0,
+              "Hits": 0
+            },
+            {
+              "Line": 83,
+              "Offset": 202,
+              "EndOffset": 248,
+              "Path": 1,
+              "Ordinal": 1,
+              "Hits": 1
             }
           ]
         }
