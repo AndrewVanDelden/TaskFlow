@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using TaskFlow.Api.DTOs;
+using TaskFlow.Api.Repositories;
 
 namespace TaskFlow.Tests.Integration;
 
@@ -160,7 +162,93 @@ public class JobApplicationsIntegrationTests
         assemble.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    // ── Sprint 4R: resume-context read-back, approve, and the cross-session guard ──────────────
+    // No test-only "mark ReviewReady" endpoint exists. Getting a real ReviewReady application
+    // through the actual HTTP surface: assemble (creates two Todo siblings via the real endpoint),
+    // move both siblings to Review via the existing generic PATCH /api/Tasks/{id}/status endpoint,
+    // then invoke the already-covered reconciliation sweep
+    // (IJobApplicationRepository.PromotePendingReviewReadyApplicationsAsync, proven atomic and
+    // correct by JobApplicationRepositoryPromotionTests) directly against the factory's DI
+    // container - a real production code path, not raw SQL, and cheaper than standing up the
+    // Claude-backed tailoring agents just to drive two tasks to Review.
+
+    [Fact]
+    public async Task Reading_resume_context_back_then_approving_moves_both_siblings_to_Done_and_the_application_to_Approved()
+    {
+        var client = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+
+        await client.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+
+        var assemble = await client.PostAsJsonAsync("/api/JobApplications",
+            new
+            {
+                ingestionSessionId = sessionId,
+                posting = new { title = "Backend Engineer", description = "Great role", section = "Job Posting" }
+            });
+        var application = await assemble.Content.ReadFromJsonAsync<JobApplicationDto>();
+
+        foreach (var task in application!.Tasks)
+        {
+            var move = await client.PatchAsJsonAsync($"/api/Tasks/{task.Id}/status", new { status = "Review" });
+            move.EnsureSuccessStatusCode();
+        }
+        await PromoteToReviewReadyAsync();
+
+        var getResumeContext = await client.GetAsync($"/api/JobApplications/{application.Id}/resume-context");
+        getResumeContext.StatusCode.Should().Be(HttpStatusCode.OK);
+        var baseResume = await getResumeContext.Content.ReadFromJsonAsync<string>();
+        baseResume.Should().Be("Base resume text.");
+
+        var approve = await client.PostAsync($"/api/JobApplications/{application.Id}/approve", null);
+
+        approve.StatusCode.Should().Be(HttpStatusCode.OK);
+        var approved = await approve.Content.ReadFromJsonAsync<JobApplicationDto>();
+        approved!.State.Should().Be("Approved");
+        approved.Tasks.Should().HaveCount(2);
+        approved.Tasks.Should().OnlyContain(t => t.Status == "Done");
+    }
+
+    [Fact]
+    public async Task A_cross_session_approve_attempt_returns_404()
+    {
+        var owner = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+
+        await owner.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+        var assemble = await owner.PostAsJsonAsync("/api/JobApplications",
+            new
+            {
+                ingestionSessionId = sessionId,
+                posting = new { title = "Backend Engineer", description = "Great role", section = "Job Posting" }
+            });
+        var application = await assemble.Content.ReadFromJsonAsync<JobApplicationDto>();
+
+        foreach (var task in application!.Tasks)
+        {
+            var move = await owner.PatchAsJsonAsync($"/api/Tasks/{task.Id}/status", new { status = "Review" });
+            move.EnsureSuccessStatusCode();
+        }
+        await PromoteToReviewReadyAsync();
+
+        var otherUser = await AuthedClientAsync();
+
+        var approve = await otherUser.PostAsync($"/api/JobApplications/{application.Id}/approve", null);
+
+        approve.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    private async Task PromoteToReviewReadyAsync()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var jobApplications = scope.ServiceProvider.GetRequiredService<IJobApplicationRepository>();
+        await jobApplications.PromotePendingReviewReadyApplicationsAsync();
+    }
+
     // Local shapes: Kind as a plain string so the test's default deserializer does not choke.
     private sealed record DraftDto(string Title, string? Description, string Kind, string? Section);
-    private sealed record JobApplicationDto(int Id, string State, List<object> Tasks);
+    private sealed record TaskSummaryDto(int Id, string Title, string Kind, string Status);
+    private sealed record JobApplicationDto(int Id, string State, List<TaskSummaryDto> Tasks);
 }

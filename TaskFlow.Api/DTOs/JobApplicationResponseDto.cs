@@ -28,6 +28,23 @@ public class JobApplicationResponseDto
         CreatedAt = application.CreatedAt,
         Tasks = application.Tasks.Select(JobApplicationTaskDto.FromEntity).ToList()
     };
+
+    /// <summary>
+    /// Sprint 4R: builds this DTO with sibling tasks supplied explicitly, for callers (the
+    /// approve/reject flow) that fetched the JobApplication via
+    /// <see cref="TaskFlow.Api.Repositories.IJobApplicationRepository.GetByIdAsync"/> — which does
+    /// not eager-load <see cref="JobApplication.Tasks"/> — and separately fetched the siblings via
+    /// <see cref="TaskFlow.Api.Repositories.ITaskRepository.GetByApplicationIdAsync"/>.
+    /// </summary>
+    public static JobApplicationResponseDto FromEntity(JobApplication application, IEnumerable<TaskItem> tasks) => new()
+    {
+        Id = application.Id,
+        State = application.State,
+        IngestionSessionId = application.IngestionSessionId,
+        OwnerId = application.OwnerId,
+        CreatedAt = application.CreatedAt,
+        Tasks = tasks.Select(JobApplicationTaskDto.FromEntity).ToList()
+    };
 }
 
 /// <summary>

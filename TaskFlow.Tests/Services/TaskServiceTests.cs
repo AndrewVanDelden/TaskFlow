@@ -280,6 +280,28 @@ public class TaskServiceTests
         result.Value!.Should().HaveCount(2);
     }
 
+    // Sprint 4R, Task 1: TaskResponseDto gains Kind, ApplicationId, TailoredContent so a second
+    // team's frontend (ApplicationReviewCard) can render an Epic 3 sibling task's tailored output
+    // from the existing GET /api/Tasks payload without a second endpoint.
+    [Fact]
+    public async Task GetAll_maps_Kind_ApplicationId_and_TailoredContent_for_an_Epic3_sibling_task()
+    {
+        var task = SampleTask(1);
+        task.Kind = TaskKind.ResumeTailoring;
+        task.ApplicationId = 5;
+        task.TailoredContent = "Tailored resume markdown.";
+        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(new List<TaskItem> { task });
+
+        var result = await CreateSut().GetAllAsync(null, null);
+
+        result.IsSuccess.Should().BeTrue();
+        var dto = result.Value!.Single();
+        dto.Kind.Should().Be(nameof(TaskKind.ResumeTailoring));
+        dto.ApplicationId.Should().Be(5);
+        dto.TailoredContent.Should().Be("Tailored resume markdown.");
+    }
+
     // ── Delete ────────────────────────────────────────────────────────────────
     [Fact]
     public async Task Delete_returns_NotFound_when_task_missing()

@@ -25,8 +25,16 @@ public class JobApplicationRepository : IJobApplicationRepository
         a.Tasks.Any(t => t.Kind == TaskKind.ResumeTailoring && t.Status == WorkflowStatus.Review)
         && a.Tasks.Any(t => t.Kind == TaskKind.CoverLetterTailoring && t.Status == WorkflowStatus.Review);
 
+    // AsNoTracking: this repository never mutates a fetched JobApplication and calls
+    // SaveChangesAsync on it - every write goes through a guarded ExecuteUpdateAsync, which
+    // bypasses the change tracker entirely. Without AsNoTracking, a caller that reads before and
+    // after one of those guarded updates (JobApplicationService.ApproveAsync/RejectAsync does
+    // exactly this) would get back the first call's already-tracked, now-stale instance from EF's
+    // identity map instead of the committed row (found via a real HTTP-level integration test,
+    // then reproduced directly against SqliteInMemoryContext - see
+    // JobApplicationRepositoryApprovalTests.GetByIdAsync_reflects_TryApprovePairAsync_without_a_manual_ChangeTracker_Clear).
     public async Task<JobApplication?> GetByIdAsync(int id, CancellationToken ct = default) =>
-        await _db.JobApplications.FirstOrDefaultAsync(a => a.Id == id, ct);
+        await _db.JobApplications.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct);
 
     public async Task<bool> TryPromoteToReviewReadyAsync(int applicationId, CancellationToken ct = default)
     {
@@ -46,6 +54,64 @@ public class JobApplicationRepository : IJobApplicationRepository
             .Where(a => a.State == ApplicationState.Building)
             .Where(BothRequiredSiblingsAreReview)
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, ApplicationState.ReviewReady), ct);
+
+    public async Task<bool> TryApprovePairAsync(int applicationId, int ownerId, CancellationToken ct = default)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+
+        var approved = await _db.JobApplications
+            .Where(a => a.Id == applicationId && a.OwnerId == ownerId && a.State == ApplicationState.ReviewReady)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, ApplicationState.Approved), ct);
+
+        if (approved != 1)
+        {
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
+
+        // ReviewReady can only ever be set by TryPromoteToReviewReadyAsync/
+        // PromotePendingReviewReadyApplicationsAsync, both of which already require both required
+        // sibling kinds to be Review - so this invariant already holds by construction and does not
+        // need re-deriving here. If the affected-row count below is ever not exactly 2, the
+        // JobApplications half above has already committed correctly, which is the state that
+        // actually matters; this repository has no ILogger dependency today and adding one solely
+        // for this defensive diagnostic isn't justified (see the service/report notes).
+        await _db.Tasks
+            .Where(t => t.ApplicationId == applicationId && t.Status == WorkflowStatus.Review)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, WorkflowStatus.Done)
+                .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+
+        await transaction.CommitAsync(ct);
+        return true;
+    }
+
+    public async Task<bool> TryRejectPairAsync(int applicationId, int ownerId, CancellationToken ct = default)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+
+        var rejected = await _db.JobApplications
+            .Where(a => a.Id == applicationId && a.OwnerId == ownerId && a.State == ApplicationState.ReviewReady)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, ApplicationState.Building), ct);
+
+        if (rejected != 1)
+        {
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
+
+        // Same reasoning as TryApprovePairAsync: the "both siblings are Review" invariant already
+        // holds by construction once State == ReviewReady, so no re-derivation is needed here.
+        await _db.Tasks
+            .Where(t => t.ApplicationId == applicationId && t.Status == WorkflowStatus.Review)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, WorkflowStatus.Todo)
+                .SetProperty(t => t.ClaimedBy, (string?)null)
+                .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+
+        await transaction.CommitAsync(ct);
+        return true;
+    }
 
     public async Task AddAsync(JobApplication application, CancellationToken ct = default) =>
         await _db.JobApplications.AddAsync(application, ct);

@@ -13,8 +13,9 @@ namespace TaskFlow.Tests.Services;
 public class ResumeContextServiceTests
 {
     private readonly Mock<IResumeContextRepository> _repo = new();
+    private readonly Mock<IJobApplicationRepository> _applications = new();
 
-    private ResumeContextService CreateSut() => new(_repo.Object);
+    private ResumeContextService CreateSut() => new(_repo.Object, _applications.Object);
 
     // A second save for the same (session, owner) must update the existing row rather than
     // insert a duplicate - otherwise GetForOwnerAsync's FirstOrDefaultAsync could return either
@@ -25,7 +26,7 @@ public class ResumeContextServiceTests
     public async Task SaveAsync_called_twice_for_the_same_session_and_owner_updates_instead_of_duplicating()
     {
         using var db = new SqliteInMemoryContext();
-        var sut = new ResumeContextService(new ResumeContextRepository(db.Context));
+        var sut = new ResumeContextService(new ResumeContextRepository(db.Context), Mock.Of<IJobApplicationRepository>());
 
         var first = await sut.SaveAsync("session-A", 1, "First draft.", "text");
         var second = await sut.SaveAsync("session-A", 1, "Second draft.", "text");
@@ -124,7 +125,7 @@ public class ResumeContextServiceTests
     public async Task SaveAsync_defaults_ContentFormat_to_text_when_null_empty_or_whitespace_on_update(string? contentFormat)
     {
         using var db = new SqliteInMemoryContext();
-        var sut = new ResumeContextService(new ResumeContextRepository(db.Context));
+        var sut = new ResumeContextService(new ResumeContextRepository(db.Context), Mock.Of<IJobApplicationRepository>());
         await sut.SaveAsync("session-A", 1, "First draft.", "text");
 
         var result = await sut.SaveAsync("session-A", 1, "Second draft.", contentFormat);
@@ -170,5 +171,60 @@ public class ResumeContextServiceTests
 
         result.Status.Should().Be(ResultStatus.Validation);
         _repo.Verify(r => r.AddAsync(It.IsAny<ResumeContext>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── GetForApplicationAsync (Sprint 4R: reads a base resume back for the paired review) ──────
+    // ResumeContextService gains a dependency on IJobApplicationRepository to resolve
+    // applicationId -> (IngestionSessionId, OwnerId) before reading the existing
+    // ownership-scoped IResumeContextRepository.GetForOwnerAsync lookup.
+
+    [Fact]
+    public async Task GetForApplicationAsync_returns_the_saved_base_resume_content()
+    {
+        _applications.Setup(a => a.GetByIdAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JobApplication { Id = 5, OwnerId = 1, IngestionSessionId = "session-A" });
+        _repo.Setup(r => r.GetForOwnerAsync("session-A", 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ResumeContext { IngestionSessionId = "session-A", OwnerId = 1, Content = "Base resume text." });
+
+        var result = await CreateSut().GetForApplicationAsync(5, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Be("Base resume text.");
+    }
+
+    [Fact]
+    public async Task GetForApplicationAsync_returns_NotFound_when_the_application_does_not_exist()
+    {
+        _applications.Setup(a => a.GetByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync((JobApplication?)null);
+
+        var result = await CreateSut().GetForApplicationAsync(5, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
+    // IDOR-safe convention: a cross-owner probe must be indistinguishable from a genuine 404.
+    [Fact]
+    public async Task GetForApplicationAsync_returns_NotFound_when_the_application_is_owned_by_someone_else()
+    {
+        _applications.Setup(a => a.GetByIdAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JobApplication { Id = 5, OwnerId = 999, IngestionSessionId = "session-A" });
+
+        var result = await CreateSut().GetForApplicationAsync(5, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+        _repo.Verify(r => r.GetForOwnerAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetForApplicationAsync_returns_NotFound_when_no_resume_context_has_been_saved_yet()
+    {
+        _applications.Setup(a => a.GetByIdAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JobApplication { Id = 5, OwnerId = 1, IngestionSessionId = "session-A" });
+        _repo.Setup(r => r.GetForOwnerAsync("session-A", 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ResumeContext?)null);
+
+        var result = await CreateSut().GetForApplicationAsync(5, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
     }
 }

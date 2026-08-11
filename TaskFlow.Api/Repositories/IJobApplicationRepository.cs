@@ -29,6 +29,25 @@ public interface IJobApplicationRepository
     /// </summary>
     Task<int> PromotePendingReviewReadyApplicationsAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Atomically approves a ReviewReady JobApplication: moves both sibling tasks to Done and the
+    /// application to Approved, in one DB transaction. ExecuteUpdateAsync commits immediately per call
+    /// (unlike the deferred-write SaveChangesAsync model), so an explicit transaction - not just two
+    /// independent guarded updates - is what makes this all-or-nothing across the JobApplications and
+    /// Tasks tables. The application-level guard (Id == applicationId && OwnerId == ownerId &&
+    /// State == ReviewReady) carries both the ownership check and the race guard in the same WHERE
+    /// clause: a losing, wrong-owner, or wrong-state caller's update matches zero rows and the whole
+    /// transaction rolls back before Tasks is ever touched.
+    /// </summary>
+    Task<bool> TryApprovePairAsync(int applicationId, int ownerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically rejects a ReviewReady JobApplication: returns both sibling tasks to Todo (clearing
+    /// ClaimedBy so they're reclaimable for rework) and the application back to Building, in one
+    /// transaction. Same guard shape as TryApprovePairAsync.
+    /// </summary>
+    Task<bool> TryRejectPairAsync(int applicationId, int ownerId, CancellationToken ct = default);
+
     Task AddAsync(JobApplication application, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }
