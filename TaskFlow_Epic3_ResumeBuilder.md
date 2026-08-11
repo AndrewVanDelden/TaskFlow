@@ -946,8 +946,8 @@ already used, applied one more place.
 Manual review (against `.github/skills/code-review/SKILL.md`) plus GitHub Copilot's automated
 review, cross-checked against each other per this repo's standing rule.
 
-**Status: both findings fixed and confirmed GREEN (194/194 backend, +5 tests total across both
-rounds; 44/44 frontend).**
+**Status: all findings across three rounds fixed and confirmed GREEN (196/196 backend, +7 tests
+total across all three rounds; 44/44 frontend).**
 
 - **Copilot's automated review, confirmed real and fixed:**
   `JobApplicationRepository.TryPromoteToReviewReadyAsync`'s guard was
@@ -988,6 +988,32 @@ rounds; 44/44 frontend).**
   `RecoverStaleInProgressAsync`, does), the sweep service itself is untested at the unit level; the
   repository method it calls has four new tests covering multi-application promotion, the zero-match
   case, not double-touching an already-`ReviewReady` row, and the same-kind-duplicate edge case.
+
+**Round 3 (2026-08-11) — Copilot's automated review, on the reconciliation-sweep commit:**
+
+- **Copilot's automated review, confirmed real and fixed (Copilot's version again also named
+  `NotifyTaskMovedAsync` as a possible throw source — same imprecision as round 2's finding; checked
+  again, same answer: it can't throw, already wrapped):** `RollBackAsync`'s own tail
+  (`RecordActionAsync`/`NotifyTaskMovedAsync`) was unguarded — if the `AgentLog` write throws *after*
+  `ReleaseClaimAsync` already committed, the exception escapes `RollBackAsync` entirely, so the cycle
+  ends via an unhandled exception (caught by `AgentRunner`'s own outer catch, so it doesn't crash the
+  process, but it's a worse-observability outcome than necessary) even though the task itself is
+  already correctly released back to `Todo`. **Fixed:** wrapped the log/notify tail in its own
+  `try/catch`, logs and continues rather than propagating — the claim release no longer depends on
+  the audit-log write succeeding. RED test in both `CoverLetterAgentTests` and
+  `ResumeTailoringAgentTests`:
+  `RollBackAsync_still_releases_the_claim_even_when_recording_the_rollback_log_fails` (a failing
+  mocked `IAgentLogRepository`, asserting `RunAsync` completes without throwing and the task is
+  still correctly released).
+- **Copilot's automated review, confirmed real and fixed:** `TaskFlow.Tests/coverage.json` (the
+  coverlet report, committed on every round of this review cycle) contains absolute local file
+  paths including the developer's Windows username. It was never actually excluded by `.gitignore`
+  despite that file's own "Test / coverage" section clearly intending to exclude coverage
+  artifacts — it lives outside `coverage/` and isn't `*.trx`, so it slipped through. **Fixed:**
+  added an explicit `coverage.json` line. **Not yet fixed:** the file is still tracked in git
+  history from every prior commit this session — `.gitignore` only stops *new* changes to it from
+  being staged; removing it from tracking going forward needs a `git rm --cached`, which wasn't run
+  without an explicit ask for that specific command, per this project's tooling-boundary rule.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 

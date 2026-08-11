@@ -1535,7 +1535,7 @@
         },
         "System.Void TaskFlow.Api.Repositories.JobApplicationRepository::.ctor(TaskFlow.Api.Data.AppDbContext)": {
           "Lines": {
-            "12": 110
+            "12": 114
           },
           "Branches": []
         },
@@ -1612,7 +1612,7 @@
         },
         "System.Void TaskFlow.Api.Repositories.ResumeContextRepository::.ctor(TaskFlow.Api.Data.AppDbContext)": {
           "Lines": {
-            "11": 102
+            "11": 106
           },
           "Branches": []
         }
@@ -1697,7 +1697,7 @@
         },
         "System.Void TaskFlow.Api.Repositories.TaskRepository::.ctor(TaskFlow.Api.Data.AppDbContext)": {
           "Lines": {
-            "11": 142
+            "11": 146
           },
           "Branches": []
         }
@@ -1719,10 +1719,10 @@
         },
         "System.Void TaskFlow.Api.Repositories.TaskRepository/<>c::<ReleaseClaimAsync>b__11_1(Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder`1<TaskFlow.Api.Models.TaskItem>)": {
           "Lines": {
-            "103": 40,
-            "104": 40,
-            "105": 40,
-            "106": 40
+            "103": 44,
+            "104": 44,
+            "105": 44,
+            "106": 44
           },
           "Branches": []
         },
@@ -1750,10 +1750,10 @@
       "TaskFlow.Api.Repositories.TaskRepository/<>c__DisplayClass9_0": {
         "System.Void TaskFlow.Api.Repositories.TaskRepository/<>c__DisplayClass9_0::<TryClaimNextAsync>b__4(Microsoft.EntityFrameworkCore.Query.UpdateSettersBuilder`1<TaskFlow.Api.Models.TaskItem>)": {
           "Lines": {
-            "71": 52,
-            "72": 52,
-            "73": 52,
-            "74": 52
+            "71": 56,
+            "72": 56,
+            "73": 56,
+            "74": 56
           },
           "Branches": []
         }
@@ -1815,11 +1815,11 @@
       "TaskFlow.Api.Repositories.TaskRepository/<GetByIdAsync>d__2": {
         "System.Void TaskFlow.Api.Repositories.TaskRepository/<GetByIdAsync>d__2::MoveNext()": {
           "Lines": {
-            "14": 49,
-            "15": 49,
-            "16": 55,
-            "17": 49,
-            "18": 49
+            "14": 51,
+            "15": 51,
+            "16": 57,
+            "17": 51,
+            "18": 51
           },
           "Branches": [
             {
@@ -1836,7 +1836,7 @@
               "EndOffset": 157,
               "Path": 1,
               "Ordinal": 1,
-              "Hits": 49
+              "Hits": 51
             }
           ]
         }
@@ -1879,11 +1879,11 @@
       "TaskFlow.Api.Repositories.TaskRepository/<ReleaseClaimAsync>d__11": {
         "System.Void TaskFlow.Api.Repositories.TaskRepository/<ReleaseClaimAsync>d__11::MoveNext()": {
           "Lines": {
-            "99": 20,
-            "101": 20,
-            "102": 20,
-            "108": 20,
-            "109": 20
+            "99": 22,
+            "101": 22,
+            "102": 22,
+            "108": 22,
+            "109": 22
           },
           "Branches": []
         }
@@ -1903,21 +1903,21 @@
       "TaskFlow.Api.Repositories.TaskRepository/<TryClaimNextAsync>d__9": {
         "System.Void TaskFlow.Api.Repositories.TaskRepository/<TryClaimNextAsync>d__9::MoveNext()": {
           "Lines": {
-            "57": 31,
-            "59": 31,
-            "60": 31,
-            "61": 31,
-            "62": 31,
-            "63": 31,
-            "65": 119,
-            "66": 26,
-            "69": 26,
-            "70": 26,
-            "76": 26,
-            "79": 26,
+            "57": 33,
+            "59": 33,
+            "60": 33,
+            "61": 33,
+            "62": 33,
+            "63": 33,
+            "65": 127,
+            "66": 28,
+            "69": 28,
+            "70": 28,
+            "76": 28,
+            "79": 28,
             "80": 0,
             "82": 5,
-            "83": 31
+            "83": 33
           },
           "Branches": [
             {
@@ -1926,7 +1926,7 @@
               "EndOffset": 30,
               "Path": 0,
               "Ordinal": 0,
-              "Hits": 31
+              "Hits": 33
             },
             {
               "Line": 57,
@@ -1934,7 +1934,7 @@
               "EndOffset": 560,
               "Path": 1,
               "Ordinal": 1,
-              "Hits": 31
+              "Hits": 33
             },
             {
               "Line": 65,
@@ -1942,7 +1942,7 @@
               "EndOffset": 588,
               "Path": 1,
               "Ordinal": 7,
-              "Hits": 26
+              "Hits": 28
             },
             {
               "Line": 69,
@@ -1950,7 +1950,7 @@
               "EndOffset": 822,
               "Path": 0,
               "Ordinal": 2,
-              "Hits": 26
+              "Hits": 28
             },
             {
               "Line": 69,
@@ -1958,7 +1958,7 @@
               "EndOffset": 856,
               "Path": 1,
               "Ordinal": 3,
-              "Hits": 26
+              "Hits": 28
             },
             {
               "Line": 76,
@@ -1966,7 +1966,7 @@
               "EndOffset": 996,
               "Path": 0,
               "Ordinal": 4,
-              "Hits": 26
+              "Hits": 28
             },
             {
               "Line": 76,
@@ -2040,37 +2040,37 @@
         },
         "System.Nullable`1<System.Int32> TaskFlow.Api.Models.AgentLog::get_TaskId()": {
           "Lines": {
-            "8": 74
+            "8": 78
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.AgentLog::get_AgentName()": {
           "Lines": {
-            "12": 154
+            "12": 162
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.AgentLog::get_Action()": {
           "Lines": {
-            "16": 193
+            "16": 201
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.AgentLog::get_Details()": {
           "Lines": {
-            "19": 60
+            "19": 64
           },
           "Branches": []
         },
         "System.Boolean TaskFlow.Api.Models.AgentLog::get_Success()": {
           "Lines": {
-            "21": 154
+            "21": 162
           },
           "Branches": []
         },
         "System.DateTime TaskFlow.Api.Models.AgentLog::get_CreatedAt()": {
           "Lines": {
-            "23": 154
+            "23": 162
           },
           "Branches": []
         }
@@ -2080,37 +2080,37 @@
       "TaskFlow.Api.Models.JobApplication": {
         "System.Int32 TaskFlow.Api.Models.JobApplication::get_Id()": {
           "Lines": {
-            "7": 91
+            "7": 95
           },
           "Branches": []
         },
         "TaskFlow.Api.Models.ApplicationState TaskFlow.Api.Models.JobApplication::get_State()": {
           "Lines": {
-            "9": 95
+            "9": 99
           },
           "Branches": []
         },
         "System.DateTime TaskFlow.Api.Models.JobApplication::get_CreatedAt()": {
           "Lines": {
-            "11": 49
+            "11": 51
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.JobApplication::get_IngestionSessionId()": {
           "Lines": {
-            "18": 86
+            "18": 90
           },
           "Branches": []
         },
         "System.Int32 TaskFlow.Api.Models.JobApplication::get_OwnerId()": {
           "Lines": {
-            "20": 40
+            "20": 42
           },
           "Branches": []
         },
         "System.Collections.Generic.ICollection`1<TaskFlow.Api.Models.TaskItem> TaskFlow.Api.Models.JobApplication::get_Tasks()": {
           "Lines": {
-            "23": 52
+            "23": 54
           },
           "Branches": []
         }
@@ -2166,31 +2166,31 @@
       "TaskFlow.Api.Models.TaskItem": {
         "System.Int32 TaskFlow.Api.Models.TaskItem::get_Id()": {
           "Lines": {
-            "15": 348
+            "15": 362
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.TaskItem::get_Title()": {
           "Lines": {
-            "19": 524
+            "19": 540
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.TaskItem::get_Description()": {
           "Lines": {
-            "22": 127
+            "22": 131
           },
           "Branches": []
         },
         "TaskFlow.Api.Models.WorkflowStatus TaskFlow.Api.Models.TaskItem::get_Status()": {
           "Lines": {
-            "24": 499
+            "24": 513
           },
           "Branches": []
         },
         "TaskFlow.Api.Models.TaskPriority TaskFlow.Api.Models.TaskItem::get_Priority()": {
           "Lines": {
-            "26": 335
+            "26": 343
           },
           "Branches": []
         },
@@ -2202,13 +2202,13 @@
         },
         "System.DateTime TaskFlow.Api.Models.TaskItem::get_CreatedAt()": {
           "Lines": {
-            "30": 314
+            "30": 322
           },
           "Branches": []
         },
         "System.DateTime TaskFlow.Api.Models.TaskItem::get_UpdatedAt()": {
           "Lines": {
-            "32": 346
+            "32": 354
           },
           "Branches": []
         },
@@ -2226,7 +2226,7 @@
         },
         "TaskFlow.Api.Models.TaskKind TaskFlow.Api.Models.TaskItem::get_Kind()": {
           "Lines": {
-            "41": 364
+            "41": 376
           },
           "Branches": []
         },
@@ -2238,19 +2238,19 @@
         },
         "System.String TaskFlow.Api.Models.TaskItem::get_SourceSection()": {
           "Lines": {
-            "49": 73
+            "49": 77
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.TaskItem::get_ClaimedBy()": {
           "Lines": {
-            "53": 29
+            "53": 31
           },
           "Branches": []
         },
         "System.Nullable`1<System.Int32> TaskFlow.Api.Models.TaskItem::get_ApplicationId()": {
           "Lines": {
-            "57": 91
+            "57": 95
           },
           "Branches": []
         },
@@ -7314,7 +7314,7 @@
         },
         "Microsoft.EntityFrameworkCore.DbSet`1<TaskFlow.Api.Models.TaskItem> TaskFlow.Api.Data.AppDbContext::get_Tasks()": {
           "Lines": {
-            "13": 329
+            "13": 343
           },
           "Branches": []
         },
@@ -7326,13 +7326,13 @@
         },
         "Microsoft.EntityFrameworkCore.DbSet`1<TaskFlow.Api.Models.JobApplication> TaskFlow.Api.Data.AppDbContext::get_JobApplications()": {
           "Lines": {
-            "15": 108
+            "15": 112
           },
           "Branches": []
         },
         "Microsoft.EntityFrameworkCore.DbSet`1<TaskFlow.Api.Models.ResumeContext> TaskFlow.Api.Data.AppDbContext::get_ResumeContexts()": {
           "Lines": {
-            "16": 94
+            "16": 96
           },
           "Branches": []
         },
@@ -7484,9 +7484,9 @@
         },
         "System.Void TaskFlow.Api.Data.AppDbContext::.ctor(Microsoft.EntityFrameworkCore.DbContextOptions`1<TaskFlow.Api.Data.AppDbContext>)": {
           "Lines": {
-            "8": 145,
-            "9": 145,
-            "10": 145
+            "8": 147,
+            "9": 147,
+            "10": 147
           },
           "Branches": []
         }
@@ -8209,13 +8209,13 @@
       "TaskFlow.Api.Agents.ClaudeAgentBase": {
         "TaskFlow.Api.Services.IClaudeClient TaskFlow.Api.Agents.ClaudeAgentBase::get_Claude()": {
           "Lines": {
-            "36": 75
+            "36": 77
           },
           "Branches": []
         },
         "TaskFlow.Api.Repositories.IAgentLogRepository TaskFlow.Api.Agents.ClaudeAgentBase::get_Logs()": {
           "Lines": {
-            "43": 103
+            "43": 111
           },
           "Branches": []
         },
@@ -8227,13 +8227,13 @@
         },
         "Microsoft.Extensions.Logging.ILogger TaskFlow.Api.Agents.ClaudeAgentBase::get_Logger()": {
           "Lines": {
-            "49": 84
+            "49": 90
           },
           "Branches": []
         },
         "System.Boolean TaskFlow.Api.Agents.ClaudeAgentBase::get_ClaudeConfigured()": {
           "Lines": {
-            "83": 32
+            "83": 34
           },
           "Branches": []
         },
@@ -8365,7 +8365,7 @@
         },
         "System.Threading.Tasks.Task TaskFlow.Api.Agents.ClaudeAgentBase::NotifyCycleStartedAsync(System.Threading.CancellationToken)": {
           "Lines": {
-            "219": 27
+            "219": 29
           },
           "Branches": []
         },
@@ -8383,19 +8383,19 @@
         },
         "System.Void TaskFlow.Api.Agents.ClaudeAgentBase::.ctor(TaskFlow.Api.Services.IClaudeClient,TaskFlow.Api.Repositories.IAgentLogRepository,TaskFlow.Api.Services.IAgentNotifier,Microsoft.Extensions.Configuration.IConfiguration,Microsoft.Extensions.Logging.ILogger)": {
           "Lines": {
-            "51": 59,
-            "52": 59,
-            "53": 59,
-            "54": 59,
-            "55": 59,
-            "56": 59,
-            "57": 59,
-            "58": 59,
-            "59": 59,
-            "60": 59,
-            "61": 59,
-            "62": 59,
-            "63": 59
+            "51": 61,
+            "52": 61,
+            "53": 61,
+            "54": 61,
+            "55": 61,
+            "56": 61,
+            "57": 61,
+            "58": 61,
+            "59": 61,
+            "60": 61,
+            "61": 61,
+            "62": 61,
+            "63": 61
           },
           "Branches": []
         }
@@ -8403,9 +8403,9 @@
       "TaskFlow.Api.Agents.ClaudeAgentBase/<RecordActionAsync>d__27": {
         "System.Void TaskFlow.Api.Agents.ClaudeAgentBase/<RecordActionAsync>d__27::MoveNext()": {
           "Lines": {
-            "201": 46,
-            "202": 46,
-            "203": 46,
+            "201": 50,
+            "202": 50,
+            "203": 50,
             "204": 46,
             "205": 46
           },
@@ -8663,7 +8663,7 @@
       "TaskFlow.Api.Agents.CoverLetterAgent": {
         "System.String TaskFlow.Api.Agents.CoverLetterAgent::get_Name()": {
           "Lines": {
-            "27": 76
+            "27": 83
           },
           "Branches": []
         },
@@ -8675,7 +8675,7 @@
         },
         "TaskFlow.Api.Models.TaskKind TaskFlow.Api.Agents.CoverLetterAgent::get_Kind()": {
           "Lines": {
-            "32": 9
+            "32": 10
           },
           "Branches": []
         },
@@ -8701,9 +8701,9 @@
         },
         "System.Void TaskFlow.Api.Agents.CoverLetterAgent::.ctor(TaskFlow.Api.Services.IClaudeClient,TaskFlow.Api.Repositories.ITaskRepository,TaskFlow.Api.Repositories.IResumeContextRepository,TaskFlow.Api.Repositories.IJobApplicationRepository,TaskFlow.Api.Repositories.IAgentLogRepository,TaskFlow.Api.Services.IAgentNotifier,Microsoft.Extensions.Configuration.IConfiguration,Microsoft.Extensions.Logging.ILogger`1<TaskFlow.Api.Agents.CoverLetterAgent>)": {
           "Lines": {
-            "23": 15,
-            "24": 15,
-            "25": 15
+            "23": 16,
+            "24": 16,
+            "25": 16
           },
           "Branches": []
         }
@@ -9392,7 +9392,7 @@
       "TaskFlow.Api.Agents.ResumeTailoringAgent": {
         "System.String TaskFlow.Api.Agents.ResumeTailoringAgent::get_Name()": {
           "Lines": {
-            "27": 69
+            "27": 76
           },
           "Branches": []
         },
@@ -9404,7 +9404,7 @@
         },
         "TaskFlow.Api.Models.TaskKind TaskFlow.Api.Agents.ResumeTailoringAgent::get_Kind()": {
           "Lines": {
-            "32": 8
+            "32": 9
           },
           "Branches": []
         },
@@ -9431,9 +9431,9 @@
         },
         "System.Void TaskFlow.Api.Agents.ResumeTailoringAgent::.ctor(TaskFlow.Api.Services.IClaudeClient,TaskFlow.Api.Repositories.ITaskRepository,TaskFlow.Api.Repositories.IResumeContextRepository,TaskFlow.Api.Repositories.IJobApplicationRepository,TaskFlow.Api.Repositories.IAgentLogRepository,TaskFlow.Api.Services.IAgentNotifier,Microsoft.Extensions.Configuration.IConfiguration,Microsoft.Extensions.Logging.ILogger`1<TaskFlow.Api.Agents.ResumeTailoringAgent>)": {
           "Lines": {
-            "23": 14,
-            "24": 14,
-            "25": 14
+            "23": 15,
+            "24": 15,
+            "25": 15
           },
           "Branches": []
         }
@@ -10423,33 +10423,33 @@
       "TaskFlow.Api.Agents.TailoringAgentBase": {
         "System.String TaskFlow.Api.Agents.TailoringAgentBase::BuildPrompt(TaskFlow.Api.Models.TaskItem)": {
           "Lines": {
-            "200": 15,
-            "201": 15,
-            "203": 15,
-            "204": 15,
-            "205": 15,
-            "206": 15,
-            "207": 15,
-            "208": 15,
-            "209": 15
+            "213": 15,
+            "214": 15,
+            "216": 15,
+            "217": 15,
+            "218": 15,
+            "219": 15,
+            "220": 15,
+            "221": 15,
+            "222": 15
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Agents.TailoringAgentBase::FormatJobPosting(TaskFlow.Api.Models.TaskItem)": {
           "Lines": {
-            "212": 15,
-            "213": 15,
-            "214": 15,
-            "215": 15,
-            "216": 15,
-            "217": 15,
-            "218": 15,
-            "219": 15,
-            "220": 15
+            "225": 15,
+            "226": 15,
+            "227": 15,
+            "228": 15,
+            "229": 15,
+            "230": 15,
+            "231": 15,
+            "232": 15,
+            "233": 15
           },
           "Branches": [
             {
-              "Line": 215,
+              "Line": 228,
               "Offset": 71,
               "EndOffset": 73,
               "Path": 0,
@@ -10457,7 +10457,7 @@
               "Hits": 15
             },
             {
-              "Line": 215,
+              "Line": 228,
               "Offset": 71,
               "EndOffset": 122,
               "Path": 1,
@@ -10465,7 +10465,7 @@
               "Hits": 15
             },
             {
-              "Line": 217,
+              "Line": 230,
               "Offset": 140,
               "EndOffset": 142,
               "Path": 0,
@@ -10473,7 +10473,7 @@
               "Hits": 15
             },
             {
-              "Line": 217,
+              "Line": 230,
               "Offset": 140,
               "EndOffset": 191,
               "Path": 1,
@@ -10484,19 +10484,6 @@
         },
         "System.Collections.Generic.List`1<Anthropic.SDK.Common.Tool> TaskFlow.Api.Agents.TailoringAgentBase::BuildTools()": {
           "Lines": {
-            "224": 15,
-            "225": 15,
-            "226": 15,
-            "227": 15,
-            "228": 15,
-            "229": 15,
-            "230": 15,
-            "231": 15,
-            "232": 15,
-            "233": 15,
-            "234": 15,
-            "235": 15,
-            "236": 15,
             "237": 15,
             "238": 15,
             "239": 15,
@@ -10507,27 +10494,40 @@
             "244": 15,
             "245": 15,
             "246": 15,
-            "247": 15
+            "247": 15,
+            "248": 15,
+            "249": 15,
+            "250": 15,
+            "251": 15,
+            "252": 15,
+            "253": 15,
+            "254": 15,
+            "255": 15,
+            "256": 15,
+            "257": 15,
+            "258": 15,
+            "259": 15,
+            "260": 15
           },
           "Branches": []
         },
         "Anthropic.SDK.Messaging.ContentBase TaskFlow.Api.Agents.TailoringAgentBase::ReadBaseContext(TaskFlow.Api.Models.ResumeContext,Anthropic.SDK.Messaging.ToolUseContent)": {
           "Lines": {
-            "276": 8,
-            "277": 8,
-            "278": 8,
-            "279": 8
+            "289": 8,
+            "290": 8,
+            "291": 8,
+            "292": 8
           },
           "Branches": []
         },
         "System.Void TaskFlow.Api.Agents.TailoringAgentBase::.ctor(TaskFlow.Api.Services.IClaudeClient,TaskFlow.Api.Repositories.ITaskRepository,TaskFlow.Api.Repositories.IResumeContextRepository,TaskFlow.Api.Repositories.IJobApplicationRepository,TaskFlow.Api.Repositories.IAgentLogRepository,TaskFlow.Api.Services.IAgentNotifier,Microsoft.Extensions.Configuration.IConfiguration,Microsoft.Extensions.Logging.ILogger)": {
           "Lines": {
-            "44": 29,
-            "45": 29,
-            "46": 29,
-            "47": 29,
-            "48": 29,
-            "49": 29
+            "44": 31,
+            "45": 31,
+            "46": 31,
+            "47": 31,
+            "48": 31,
+            "49": 31
           },
           "Branches": []
         }
@@ -10535,7 +10535,7 @@
       "TaskFlow.Api.Agents.TailoringAgentBase/SaveArgs": {
         "System.String TaskFlow.Api.Agents.TailoringAgentBase/SaveArgs::get_Content()": {
           "Lines": {
-            "338": 20
+            "351": 20
           },
           "Branches": []
         }
@@ -10551,22 +10551,22 @@
       "TaskFlow.Api.Agents.TailoringAgentBase/<ExecuteToolAsync>d__17": {
         "System.Void TaskFlow.Api.Agents.TailoringAgentBase/<ExecuteToolAsync>d__17::MoveNext()": {
           "Lines": {
-            "256": 18,
-            "258": 18,
-            "259": 18,
-            "260": 8,
-            "262": 10,
-            "263": 10,
-            "265": 0,
-            "267": 0,
-            "268": 0,
-            "269": 0,
-            "270": 0,
-            "272": 18
+            "269": 18,
+            "271": 18,
+            "272": 18,
+            "273": 8,
+            "275": 10,
+            "276": 10,
+            "278": 0,
+            "280": 0,
+            "281": 0,
+            "282": 0,
+            "283": 0,
+            "285": 18
           },
           "Branches": [
             {
-              "Line": 259,
+              "Line": 272,
               "Offset": 50,
               "EndOffset": 52,
               "Path": 0,
@@ -10574,7 +10574,7 @@
               "Hits": 8
             },
             {
-              "Line": 259,
+              "Line": 272,
               "Offset": 50,
               "EndOffset": 75,
               "Path": 1,
@@ -10582,7 +10582,7 @@
               "Hits": 10
             },
             {
-              "Line": 262,
+              "Line": 275,
               "Offset": 104,
               "EndOffset": 109,
               "Path": 0,
@@ -10590,7 +10590,7 @@
               "Hits": 10
             },
             {
-              "Line": 262,
+              "Line": 275,
               "Offset": 104,
               "EndOffset": 255,
               "Path": 1,
@@ -10603,39 +10603,61 @@
       "TaskFlow.Api.Agents.TailoringAgentBase/<RollBackAsync>d__13": {
         "System.Void TaskFlow.Api.Agents.TailoringAgentBase/<RollBackAsync>d__13::MoveNext()": {
           "Lines": {
-            "176": 17,
-            "177": 17,
-            "178": 17,
+            "176": 19,
+            "177": 19,
+            "178": 19,
             "179": 8,
-            "181": 9,
-            "182": 9,
-            "183": 9,
-            "184": 9,
-            "185": 9,
-            "186": 9,
-            "187": 9,
-            "188": 9,
-            "189": 9,
-            "191": 9,
-            "192": 9,
-            "193": 17
+            "187": 11,
+            "188": 11,
+            "189": 11,
+            "190": 11,
+            "191": 11,
+            "192": 11,
+            "193": 11,
+            "194": 11,
+            "195": 11,
+            "196": 11,
+            "198": 9,
+            "199": 9,
+            "200": 2,
+            "201": 2,
+            "202": 2,
+            "203": 2,
+            "205": 11,
+            "206": 19
           },
           "Branches": [
             {
-              "Line": 178,
-              "Offset": 192,
-              "EndOffset": 194,
+              "Line": 176,
+              "Offset": 16,
+              "EndOffset": 27,
               "Path": 0,
               "Ordinal": 0,
-              "Hits": 8
+              "Hits": 19
             },
             {
               "Line": 178,
-              "Offset": 192,
-              "EndOffset": 201,
+              "Offset": 180,
+              "EndOffset": 182,
+              "Path": 0,
+              "Ordinal": 2,
+              "Hits": 8
+            },
+            {
+              "Line": 176,
+              "Offset": 16,
+              "EndOffset": 189,
               "Path": 1,
               "Ordinal": 1,
-              "Hits": 9
+              "Hits": 11
+            },
+            {
+              "Line": 178,
+              "Offset": 180,
+              "EndOffset": 189,
+              "Path": 1,
+              "Ordinal": 3,
+              "Hits": 11
             }
           ]
         }
@@ -10643,28 +10665,28 @@
       "TaskFlow.Api.Agents.TailoringAgentBase/<RunAsync>d__12": {
         "System.Void TaskFlow.Api.Agents.TailoringAgentBase/<RunAsync>d__12::MoveNext()": {
           "Lines": {
-            "67": 19,
-            "68": 19,
+            "67": 21,
+            "68": 21,
             "69": 2,
             "70": 2,
             "71": 2,
-            "74": 17,
-            "75": 17,
+            "74": 19,
+            "75": 19,
             "76": 0,
             "77": 0,
             "78": 0,
-            "82": 17,
-            "83": 17,
-            "84": 17,
-            "86": 17,
-            "87": 17,
-            "88": 17,
-            "89": 17,
-            "90": 17,
-            "91": 17,
-            "92": 17,
-            "93": 17,
-            "94": 17,
+            "82": 19,
+            "83": 19,
+            "84": 19,
+            "86": 19,
+            "87": 19,
+            "88": 19,
+            "89": 19,
+            "90": 19,
+            "91": 19,
+            "92": 19,
+            "93": 19,
+            "94": 19,
             "96": 17,
             "101": 17,
             "102": 0,
@@ -10703,12 +10725,12 @@
             "157": 4,
             "159": 8,
             "160": 8,
-            "161": 3,
-            "162": 3,
-            "163": 3,
-            "164": 3,
-            "165": 3,
-            "166": 19
+            "161": 5,
+            "162": 5,
+            "163": 5,
+            "164": 5,
+            "165": 5,
+            "166": 21
           },
           "Branches": [
             {
@@ -10725,7 +10747,7 @@
               "EndOffset": 181,
               "Path": 1,
               "Ordinal": 1,
-              "Hits": 17
+              "Hits": 19
             },
             {
               "Line": 75,
@@ -10741,7 +10763,7 @@
               "EndOffset": 431,
               "Path": 1,
               "Ordinal": 3,
-              "Hits": 17
+              "Hits": 19
             },
             {
               "Line": 101,
@@ -10829,49 +10851,49 @@
       "TaskFlow.Api.Agents.TailoringAgentBase/<SaveAsync>d__19": {
         "System.Void TaskFlow.Api.Agents.TailoringAgentBase/<SaveAsync>d__19::MoveNext()": {
           "Lines": {
-            "284": 10,
-            "285": 10,
-            "286": 10,
-            "288": 10,
-            "289": 10,
-            "290": 2,
-            "293": 2,
-            "296": 8,
-            "297": 8,
-            "298": 0,
-            "301": 0,
-            "302": 0,
-            "303": 0,
-            "304": 0,
-            "307": 8,
-            "308": 8,
+            "297": 10,
+            "298": 10,
+            "299": 10,
+            "301": 10,
+            "302": 10,
+            "303": 2,
+            "306": 2,
             "309": 8,
             "310": 8,
-            "311": 8,
-            "312": 8,
-            "313": 8,
-            "314": 8,
-            "315": 8,
-            "317": 8,
+            "311": 0,
+            "314": 0,
+            "315": 0,
+            "316": 0,
+            "317": 0,
             "320": 8,
             "321": 8,
-            "322": 1,
-            "323": 1,
-            "324": 1,
-            "325": 1,
-            "326": 1,
-            "327": 1,
-            "328": 1,
-            "329": 1,
-            "330": 1,
-            "331": 1,
-            "332": 1,
+            "322": 8,
+            "323": 8,
+            "324": 8,
+            "325": 8,
+            "326": 8,
+            "327": 8,
+            "328": 8,
+            "330": 8,
+            "333": 8,
             "334": 8,
-            "335": 10
+            "335": 1,
+            "336": 1,
+            "337": 1,
+            "338": 1,
+            "339": 1,
+            "340": 1,
+            "341": 1,
+            "342": 1,
+            "343": 1,
+            "344": 1,
+            "345": 1,
+            "347": 8,
+            "348": 10
           },
           "Branches": [
             {
-              "Line": 285,
+              "Line": 298,
               "Offset": 80,
               "EndOffset": 82,
               "Path": 0,
@@ -10879,7 +10901,7 @@
               "Hits": 0
             },
             {
-              "Line": 285,
+              "Line": 298,
               "Offset": 80,
               "EndOffset": 115,
               "Path": 1,
@@ -10887,7 +10909,7 @@
               "Hits": 10
             },
             {
-              "Line": 289,
+              "Line": 302,
               "Offset": 163,
               "EndOffset": 165,
               "Path": 0,
@@ -10895,7 +10917,7 @@
               "Hits": 2
             },
             {
-              "Line": 289,
+              "Line": 302,
               "Offset": 163,
               "EndOffset": 204,
               "Path": 1,
@@ -10903,7 +10925,7 @@
               "Hits": 8
             },
             {
-              "Line": 297,
+              "Line": 310,
               "Offset": 369,
               "EndOffset": 374,
               "Path": 0,
@@ -10911,7 +10933,7 @@
               "Hits": 0
             },
             {
-              "Line": 297,
+              "Line": 310,
               "Offset": 369,
               "EndOffset": 529,
               "Path": 1,
@@ -10919,7 +10941,7 @@
               "Hits": 8
             },
             {
-              "Line": 321,
+              "Line": 334,
               "Offset": 1007,
               "EndOffset": 1012,
               "Path": 0,
@@ -10927,7 +10949,7 @@
               "Hits": 1
             },
             {
-              "Line": 321,
+              "Line": 334,
               "Offset": 1007,
               "EndOffset": 1272,
               "Path": 1,

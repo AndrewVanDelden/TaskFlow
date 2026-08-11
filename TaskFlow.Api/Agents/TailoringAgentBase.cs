@@ -178,17 +178,30 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
         if (!released)
             return false;
 
-        await RecordActionAsync(new AgentLog
+        // The claim release above is already atomic and committed — the task is genuinely back in
+        // Todo regardless of what happens next. The log write and notify are best-effort audit
+        // trail, not part of that guarantee, so a failure here must not throw past this point and
+        // turn an already-successful recovery into an unhandled exception (PR #43 review, round 3:
+        // Copilot's automated review).
+        try
         {
-            AgentName = Name,
-            Action = AgentActions.RolledBack,
-            TaskId = task.Id,
-            Details = $"Rolled back to Todo: {reason}",
-            Success = false,
-            CreatedAt = DateTime.UtcNow
-        }, CancellationToken.None);
+            await RecordActionAsync(new AgentLog
+            {
+                AgentName = Name,
+                Action = AgentActions.RolledBack,
+                TaskId = task.Id,
+                Details = $"Rolled back to Todo: {reason}",
+                Success = false,
+                CreatedAt = DateTime.UtcNow
+            }, CancellationToken.None);
 
-        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, CancellationToken.None);
+            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "[{Agent}] Task {Id} was released but recording the rollback failed.", Name, task.Id);
+        }
+
         return true;
     }
 

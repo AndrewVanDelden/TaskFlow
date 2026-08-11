@@ -290,4 +290,36 @@ public class CoverLetterAgentTests
         var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == coverLetterTask.Id);
     }
+
+    // Copilot's automated review (PR #43, round 3) found RollBackAsync's own tail
+    // (RecordActionAsync/NotifyTaskMovedAsync) is unguarded: if the AgentLog write throws after
+    // ReleaseClaimAsync already succeeded, the exception escapes RollBackAsync and the cycle ends
+    // via an unhandled exception instead of cleanly - even though the task itself is already
+    // correctly released. The claim release must not depend on the log write succeeding.
+    [Fact]
+    public async Task RollBackAsync_still_releases_the_claim_even_when_recording_the_rollback_log_fails()
+    {
+        using var db = new SqliteInMemoryContext();
+        var (_, _, coverLetterTask) = await SeedApplicationAsync(db, withResumeContext: false);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var failingLogs = new Mock<IAgentLogRepository>();
+        failingLogs.Setup(l => l.AddAsync(It.IsAny<AgentLog>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        failingLogs.Setup(l => l.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("log write failed"));
+
+        var claude = new Mock<IClaudeClient>();
+        claude.SetupGet(c => c.IsConfigured).Returns(true);
+
+        var sut = CreateSut(claude.Object, tasks, resumeContexts, jobApplications, failingLogs.Object, Mock.Of<IAgentNotifier>());
+
+        await sut.RunAsync(CancellationToken.None); // must not throw
+
+        db.Context.ChangeTracker.Clear();
+        var updated = await tasks.GetByIdAsync(coverLetterTask.Id);
+        updated!.Status.Should().Be(WorkflowStatus.Todo);
+        updated.ClaimedBy.Should().BeNull();
+    }
 }

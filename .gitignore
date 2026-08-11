@@ -49,6 +49,10 @@ Thumbs.db
 coverage/
 *.trx
 test-results.txt
+# Coverlet's JSON report — non-deterministic, embeds absolute local file paths (incl. username).
+# Flagged by Copilot's automated review (PR #43, round 3): it was tracked despite this section's
+# own clear intent to exclude coverage artifacts, since it lives outside coverage/ and isn't *.trx.
+coverage.json
 
 # ─────────────────────────────────────────────────────────────
 # Cloud sync artifacts (Google Drive, OneDrive, Dropbox)
