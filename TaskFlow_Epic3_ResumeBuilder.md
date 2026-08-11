@@ -905,8 +905,41 @@ looks at the pattern across the whole cycle, not any one finding already logged 
 
 ## Sprint 3R — Multi-Agent Generation (Resume and Cover Letter)
 
-**Status: Ready. Architecture only. Fully specifies both agents; does not depend on any
-single-agent Sprint 3.**
+**Status: COMPLETE (2026-08-11).** T3R.1–T3R.5 shipped on
+`feature/epic3-sprint3r-multi-agent-generation` (3 commits: architect decisions, the atomic
+repository layer, then the two agents). Full backend suite green: 189/189 (165 baseline + 9
+repository tests + 15 per-agent tests + 1 integration test that proves T3R.3/T3R.4/T3R.5 together).
+Built by two delegated engineers, sequenced rather than parallel (the repository layer first, then
+the agents on top of it — see the decision below on why), each independently re-verified against the
+real diff and a fresh `dotnet build`/`dotnet test` run rather than taken on the subagent's word.
+The atomic-join SQL claim specifically was re-verified a third way: a standalone throwaway program
+run against a real SQLite context with EF logging enabled, confirming EF Core 10 generates exactly
+one `UPDATE ... WHERE ... (SELECT COUNT(*) ...)` statement, not a check-then-act pair. This section
+is now the historical record for Sprint 3R.
+
+**What shipped, exactly as specified, plus one real bug caught and fixed during implementation:**
+`TailoringAgentBase` (new abstract class) owns the claim → resolve-`JobApplication`/`ResumeContext`
+→ tool-conversation → save-and-promote → rollback flow for both `ResumeTailoringAgent` and
+`CoverLetterAgent`, and owns the `PromptSafety.WrapUntrusted` calls itself (both the job posting,
+wrapped into the initial prompt, and the base resume, wrapped into the `read_base_context` tool's
+result) so a concrete subclass cannot structurally omit either. `ITaskRepository
+.SaveTailoredContentAndMarkForReviewAsync` and `IJobApplicationRepository
+.TryPromoteToReviewReadyAsync` are both single guarded `ExecuteUpdateAsync` calls — no
+check-then-act anywhere in this sprint's write paths. **Bug found and fixed during GREEN, not
+glossed over:** the terminal-state rollback check (did the cycle end without ever saving?)
+originally used a tracked `GetByIdAsync` read, which returned a stale in-memory entity via EF's
+identity map rather than the DB's real current status — fixed by dropping the tracked read entirely
+and calling the existing guarded `ReleaseClaimAsync` unconditionally (it is a harmless no-op if a
+save already moved the task on), which is the same atomic-guard discipline the rest of this sprint
+already used, applied one more place.
+
+**Still open, not part of this sprint's scope:**
+- The branch has not been pushed/PR'd yet — pending user confirmation, consistent with the
+  project's convention that release actions are confirmed, not silent.
+- No config value has been added to `appsettings.json` for `Agents:ResumeTailoringIntervalMinutes`/
+  `Agents:CoverLetterIntervalMinutes` — both default to 5 minutes via `Config.GetValue(..., 5)`,
+  matching the pattern every other agent interval already uses; an explicit override is optional,
+  not required for correctness.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 
