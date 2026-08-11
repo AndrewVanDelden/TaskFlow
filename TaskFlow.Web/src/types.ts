@@ -15,6 +15,9 @@ export interface TaskItem {
   updatedAt: string
   assignedToId: number | null
   assignedToName: string | null
+  kind: string
+  applicationId: number | null
+  tailoredContent: string | null
 }
 
 export interface AuthResponse {
@@ -41,4 +44,21 @@ export interface TaskDraft {
   description: string | null
   kind: string
   section: string
+}
+
+// Mirrors TaskFlow.Api's JobApplicationResponseDto: the approve/reject response shape.
+export interface JobApplicationTaskSummary {
+  id: number
+  title: string
+  kind: string
+  status: string
+}
+
+export interface JobApplicationResponse {
+  id: number
+  state: string
+  ingestionSessionId: string
+  ownerId: number
+  createdAt: string
+  tasks: JobApplicationTaskSummary[]
 }

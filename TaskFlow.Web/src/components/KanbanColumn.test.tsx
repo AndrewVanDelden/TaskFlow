@@ -8,6 +8,7 @@ const task: TaskItem = {
   id: 1, title: 'Ship it', description: null, status: 'Todo',
   priority: 'High', dueDate: null, createdAt: '', updatedAt: '',
   assignedToId: null, assignedToName: null,
+  kind: 'Generic', applicationId: null, tailoredContent: null,
 }
 
 // KanbanColumn uses useDroppable and renders TaskCards (useSortable), so wrap in DndContext.

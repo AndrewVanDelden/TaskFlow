@@ -45,6 +45,9 @@ const card = (id: number, title: string, status: string) => ({
   updatedAt: '',
   assignedToId: null,
   assignedToName: null,
+  kind: 'Generic',
+  applicationId: null,
+  tailoredContent: null,
 })
 
 describe('useBoardTasks', () => {
