@@ -423,11 +423,18 @@ outside any HTTP request — can resolve which `ResumeContext` to read without a
   `JobApplicationResponseDto`/`JobApplicationTaskDto`, the same pattern `TaskResponseDto` already
   uses for `TaskItem` elsewhere in this codebase.
 
-**Still open, not part of this sprint's scope:**
-- The migration (`AddJobApplicationSessionOwnership`, purely additive: two columns + one index) has
-  been generated and reviewed but **not applied to the real dev database**, and the branch has not
-  been pushed/PR'd — both pending user confirmation, consistent with the project's convention that
-  database and release actions are confirmed, not silent.
+**Resolved 2026-08-11 (was "still open" above; Copilot's round-3 review flagged the old text as
+stale):**
+- The branch claim was wrong by the time Copilot read it — the branch has been pushed and is PR #40,
+  with several commits on it since.
+- Migration-application status is now **confirmed, not just inferred**: `dotnet ef migrations list
+  --project TaskFlow.Api` was run directly against the dev DB and printed all twelve migrations,
+  including `20260810224718_AddJobApplicationSessionOwnership` and
+  `20260810233326_MakeResumeContextSessionOwnerUnique`, with none marked `(Pending)` — meaning both
+  are applied. This is the authoritative source; an earlier attempt to answer the same question by
+  grepping the raw `taskflow.db` file directly gave a misleading, contradictory signal (SQLite can
+  leave stale byte content in freed pages after a migration rewrites `sqlite_master`, so raw-file
+  grep is not a reliable way to check applied-migration state — `dotnet ef migrations list` is).
 
 ### Goal
 
@@ -628,6 +635,35 @@ just re-verifying old findings. Cross-checked against Copilot's second automated
 
 This is also the first review round conducted under the "fix now, not forward" rule (`CLAUDE.md`):
 every item above was fixed in the same pass that found it, not deferred.
+
+#### Round 3 (2026-08-11) — Copilot's third automated pass, on round 2's fix commit
+
+**Status: FIXED, confirmed GREEN.** 159/159 backend (+1 test — one added, one updated in place),
+44/44 frontend.
+
+- **Copilot finding, confirmed real:** round 2's fix caught `DbUpdateException` unconditionally in
+  `ResumeContextService.SaveAsync` and always translated it to `Result.Conflict` — which would
+  misreport an unrelated persistence failure (DB unavailable, some other constraint violation) as a
+  concurrency race, hiding the real error. **Fixed:** on catching `DbUpdateException`, re-checks
+  `GetForOwnerAsync` for this exact `(session, owner)` pair — only a genuine race leaves a row there;
+  anything else rethrows the original exception. Deliberately checks business state rather than
+  introspecting provider-specific exception internals (e.g. SQLite error codes), so the fix isn't
+  tied to SQLite specifically. RED test:
+  `ResumeContextServiceTests.SaveAsync_rethrows_when_the_insert_failure_is_not_actually_a_concurrent_row_for_this_pair`;
+  the existing Conflict test was updated to mock `GetForOwnerAsync` returning the race winner's row
+  on its second call.
+- **Copilot finding, confirmed real:** this doc's Sprint 2 "Still open" note claimed the branch
+  "has not been pushed/PR'd" — false by the time Copilot read it; PR #40 already existed with
+  several commits on it. **Fixed:** corrected in place (see that section above). While fixing it,
+  attempted to also verify the migration-application claim by reading the raw `taskflow.db` file
+  directly — got a contradictory signal that a blind file grep couldn't resolve, so it was left
+  genuinely open rather than asserted either way. **Resolved the same day:** the user ran
+  `dotnet ef migrations list --project TaskFlow.Api` directly — the authoritative source, not a raw
+  file read — and confirmed both migrations are applied (neither marked `(Pending)`). Doc updated
+  accordingly.
+- **Copilot finding, confirmed real (grammar):** `CLAUDE.md`'s opening line had a subject/verb
+  mismatch ("... is How we will build everything" — plural subject, singular verb, and a stray
+  mid-sentence capital). **Fixed.**
 
 **Status: FIXED (2026-08-10).** Items 1, 2, 4, 4a, 5, and 6 addressed below, each with a RED test
 confirmed failing against the pre-fix code before the GREEN change, per this doc's standing TDD

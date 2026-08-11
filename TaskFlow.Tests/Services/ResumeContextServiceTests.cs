@@ -45,17 +45,41 @@ public class ResumeContextServiceTests
     // the unique index (added to fix the original duplicate-row bug) means a losing concurrent
     // insert now throws DbUpdateException instead of silently duplicating - but SaveAsync didn't
     // catch it, so it would surface as an unhandled 500. It should return a clean Result instead.
+    // GetForOwnerAsync is called twice here: once before the insert (finds nothing, so we try to
+    // insert), once inside the catch to confirm the failure really was a race (finds the winner's
+    // row this time) before reporting Conflict.
     [Fact]
     public async Task SaveAsync_returns_Conflict_when_a_concurrent_insert_wins_the_unique_index_race()
     {
+        var getForOwnerCallCount = 0;
         _repo.Setup(r => r.GetForOwnerAsync("session-A", 1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ResumeContext?)null);
+            .ReturnsAsync(() => getForOwnerCallCount++ == 0
+                ? null
+                : new ResumeContext { IngestionSessionId = "session-A", OwnerId = 1, Content = "Winner's content." });
         _repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new DbUpdateException("UNIQUE constraint failed"));
 
         var result = await CreateSut().SaveAsync("session-A", 1, "Base resume text.", "text");
 
         result.Status.Should().Be(ResultStatus.Conflict);
+    }
+
+    // Round 3 (Copilot's automated review): catching DbUpdateException unconditionally and always
+    // reporting Conflict would misreport an unrelated persistence failure (DB unavailable, some
+    // other constraint) as a concurrency race, hiding the real error. If a re-check finds no row
+    // for this exact (session, owner) pair, it wasn't a race - the original exception must
+    // propagate, not get swallowed into a misleading Conflict.
+    [Fact]
+    public async Task SaveAsync_rethrows_when_the_insert_failure_is_not_actually_a_concurrent_row_for_this_pair()
+    {
+        _repo.Setup(r => r.GetForOwnerAsync("session-A", 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ResumeContext?)null);
+        _repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateException("some unrelated persistence failure"));
+
+        var act = () => CreateSut().SaveAsync("session-A", 1, "Base resume text.", "text");
+
+        await act.Should().ThrowAsync<DbUpdateException>();
     }
 
     [Fact]

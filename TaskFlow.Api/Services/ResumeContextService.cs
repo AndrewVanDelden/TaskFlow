@@ -59,9 +59,16 @@ public sealed class ResumeContextService : IResumeContextService
         {
             // Check-then-act can still lose a race: a concurrent request for this same
             // (session, owner) inserted first, and the unique index (PR #40 review, round 1)
-            // rejected ours. That's a real, if narrow, gap the index itself introduced - without
-            // this catch, it would surface as an unhandled 500. Report it as a clean Conflict so
-            // the caller can retry, rather than silently swallowing or corrupting the other save.
+            // rejected ours. But DbUpdateException also covers unrelated persistence failures
+            // (DB unavailable, some other constraint) - catching it unconditionally and always
+            // reporting Conflict would misreport those as a race and hide the real error (PR #40
+            // review, round 3). Re-check business state rather than introspect provider-specific
+            // exception internals (SQLite error codes), so this stays correct regardless of the
+            // underlying ADO provider: only a race actually leaves a row for this exact pair.
+            var raceWinner = await _resumeContexts.GetForOwnerAsync(ingestionSessionId, ownerId, ct);
+            if (raceWinner is null)
+                throw;
+
             return Result<bool>.Conflict("Another save for this session is already in progress. Please retry.");
         }
 

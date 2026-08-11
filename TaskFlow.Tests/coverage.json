@@ -496,7 +496,7 @@
       "TaskFlow.Api.Services.ResumeContextService": {
         "System.Void TaskFlow.Api.Services.ResumeContextService::.ctor(TaskFlow.Api.Repositories.IResumeContextRepository)": {
           "Lines": {
-            "16": 42
+            "16": 44
           },
           "Branches": []
         }
@@ -504,118 +504,137 @@
       "TaskFlow.Api.Services.ResumeContextService/<SaveAsync>d__3": {
         "System.Void TaskFlow.Api.Services.ResumeContextService/<SaveAsync>d__3::MoveNext()": {
           "Lines": {
-            "19": 16,
-            "20": 16,
+            "19": 17,
+            "20": 17,
             "21": 3,
             "22": 3,
-            "25": 13,
-            "26": 13,
+            "25": 14,
+            "26": 14,
             "27": 4,
             "28": 4,
-            "35": 9,
-            "36": 9,
+            "35": 10,
+            "36": 10,
             "37": 1,
             "38": 1,
             "39": 1,
             "40": 1,
             "42": 1,
             "43": 1,
-            "46": 8,
-            "47": 8,
-            "48": 8,
-            "49": 8,
-            "50": 8,
-            "51": 8,
-            "52": 8,
-            "55": 8,
-            "56": 8,
+            "46": 9,
+            "47": 9,
+            "48": 9,
+            "49": 9,
+            "50": 9,
+            "51": 9,
+            "52": 9,
+            "55": 9,
+            "56": 9,
             "57": 7,
-            "58": 1,
-            "59": 1,
-            "65": 1,
-            "68": 7,
-            "69": 16
+            "58": 2,
+            "59": 2,
+            "68": 2,
+            "69": 2,
+            "70": 1,
+            "72": 1,
+            "75": 7,
+            "76": 16
           },
           "Branches": [
             {
               "Line": 20,
-              "Offset": 65,
-              "EndOffset": 67,
+              "Offset": 74,
+              "EndOffset": 76,
               "Path": 0,
               "Ordinal": 0,
               "Hits": 3
             },
             {
               "Line": 20,
-              "Offset": 65,
-              "EndOffset": 84,
+              "Offset": 74,
+              "EndOffset": 93,
               "Path": 1,
               "Ordinal": 1,
-              "Hits": 13
+              "Hits": 14
             },
             {
               "Line": 26,
-              "Offset": 122,
-              "EndOffset": 124,
+              "Offset": 131,
+              "EndOffset": 133,
               "Path": 0,
               "Ordinal": 2,
               "Hits": 4
             },
             {
               "Line": 26,
-              "Offset": 122,
-              "EndOffset": 147,
+              "Offset": 131,
+              "EndOffset": 156,
               "Path": 1,
               "Ordinal": 3,
-              "Hits": 9
+              "Hits": 10
             },
             {
               "Line": 36,
-              "Offset": 312,
-              "EndOffset": 317,
+              "Offset": 321,
+              "EndOffset": 326,
               "Path": 0,
               "Ordinal": 4,
               "Hits": 1
             },
             {
               "Line": 39,
-              "Offset": 354,
-              "EndOffset": 356,
+              "Offset": 363,
+              "EndOffset": 365,
               "Path": 0,
               "Ordinal": 6,
               "Hits": 0
             },
             {
               "Line": 39,
-              "Offset": 354,
-              "EndOffset": 362,
+              "Offset": 363,
+              "EndOffset": 371,
               "Path": 1,
               "Ordinal": 7,
               "Hits": 1
             },
             {
               "Line": 36,
-              "Offset": 312,
-              "EndOffset": 513,
+              "Offset": 321,
+              "EndOffset": 522,
               "Path": 1,
               "Ordinal": 5,
-              "Hits": 8
+              "Hits": 9
             },
             {
               "Line": 46,
-              "Offset": 581,
-              "EndOffset": 583,
+              "Offset": 590,
+              "EndOffset": 592,
               "Path": 0,
               "Ordinal": 8,
               "Hits": 5
             },
             {
               "Line": 46,
-              "Offset": 581,
-              "EndOffset": 589,
+              "Offset": 590,
+              "EndOffset": 598,
               "Path": 1,
               "Ordinal": 9,
-              "Hits": 8
+              "Hits": 9
+            },
+            {
+              "Line": 69,
+              "Offset": 1048,
+              "EndOffset": 1050,
+              "Path": 0,
+              "Ordinal": 10,
+              "Hits": 1
+            },
+            {
+              "Line": 69,
+              "Offset": 1048,
+              "EndOffset": 1087,
+              "Path": 1,
+              "Ordinal": 11,
+              "Hits": 1
             }
           ]
         }
@@ -1364,18 +1383,18 @@
       "TaskFlow.Api.Security.ToolOutputValidator": {
         "TaskFlow.Api.Common.Result`1<System.String> TaskFlow.Api.Security.ToolOutputValidator::Validate(System.String,System.Int32)": {
           "Lines": {
-            "19": 20,
-            "20": 20,
+            "19": 21,
+            "20": 21,
             "21": 2,
             "22": 2,
-            "25": 18,
+            "25": 19,
             "26": 6,
             "27": 6,
-            "30": 12,
+            "30": 13,
             "31": 2,
             "32": 2,
-            "35": 10,
-            "36": 20
+            "35": 11,
+            "36": 21
           },
           "Branches": [
             {
@@ -1392,7 +1411,7 @@
               "EndOffset": 29,
               "Path": 1,
               "Ordinal": 1,
-              "Hits": 18
+              "Hits": 19
             },
             {
               "Line": 25,
@@ -1408,7 +1427,7 @@
               "EndOffset": 53,
               "Path": 1,
               "Ordinal": 3,
-              "Hits": 12
+              "Hits": 13
             },
             {
               "Line": 30,
@@ -1424,7 +1443,7 @@
               "EndOffset": 154,
               "Path": 1,
               "Ordinal": 5,
-              "Hits": 10
+              "Hits": 11
             }
           ]
         }
@@ -2045,37 +2064,37 @@
         },
         "System.String TaskFlow.Api.Models.ResumeContext::get_IngestionSessionId()": {
           "Lines": {
-            "16": 40
+            "16": 44
           },
           "Branches": []
         },
         "System.Int32 TaskFlow.Api.Models.ResumeContext::get_OwnerId()": {
           "Lines": {
-            "18": 20
+            "18": 22
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.ResumeContext::get_Content()": {
           "Lines": {
-            "23": 44
+            "23": 48
           },
           "Branches": []
         },
         "System.String TaskFlow.Api.Models.ResumeContext::get_ContentFormat()": {
           "Lines": {
-            "28": 31
+            "28": 34
           },
           "Branches": []
         },
         "System.DateTime TaskFlow.Api.Models.ResumeContext::get_CreatedAt()": {
           "Lines": {
-            "30": 20
+            "30": 22
           },
           "Branches": []
         },
         "System.DateTime TaskFlow.Api.Models.ResumeContext::get_UpdatedAt()": {
           "Lines": {
-            "32": 21
+            "32": 23
           },
           "Branches": []
         }
@@ -7888,19 +7907,19 @@
       "TaskFlow.Api.Common.Result`1": {
         "TaskFlow.Api.Common.ResultStatus TaskFlow.Api.Common.Result`1::get_Status()": {
           "Lines": {
-            "9": 426
+            "9": 429
           },
           "Branches": []
         },
         "System.Boolean TaskFlow.Api.Common.Result`1::get_IsSuccess()": {
           "Lines": {
-            "11": 55
+            "11": 56
           },
           "Branches": []
         },
         "TaskFlow.Api.Common.Result`1<T> TaskFlow.Api.Common.Result`1::Ok(T)": {
           "Lines": {
-            "13": 102
+            "13": 103
           },
           "Branches": []
         },

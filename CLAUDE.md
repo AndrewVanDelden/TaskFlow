@@ -1,6 +1,6 @@
 # Rules to follow for AI who are reading this:
 
-- Strict TDD, clean code, SOLID, and DRY is How we will build everything.
+- Strict TDD, clean code, SOLID, and DRY are how we will build everything.
 - **When adding code, add its test coverage in the same change — up front, not later.**
   If asked to add a method/class/file, deliver the tests that cover it alongside it. Do not
   hand over new implementation code with "tests can come later."
