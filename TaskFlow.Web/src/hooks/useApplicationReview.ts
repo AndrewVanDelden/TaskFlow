@@ -16,6 +16,10 @@ export function useApplicationReview(applicationId: number) {
     let cancelled = false
     setBaseResumeLoading(true)
     setBaseResumeError(null)
+    // Clear the previous application's resume too - otherwise a caller that reuses this hook
+    // across different applicationIds would briefly (or, on error, indefinitely) keep showing the
+    // wrong application's content (PR #45 review finding).
+    setBaseResume(null)
     getApplicationResumeContext(applicationId)
       .then((content) => {
         if (cancelled) return

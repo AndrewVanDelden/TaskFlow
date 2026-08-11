@@ -1333,7 +1333,83 @@ faith) by grepping every production call site and confirming none of them mutate
 `JobApplication`.
 
 **Still open, not part of this sprint's scope:**
-- The branch has not been pushed/PR'd yet — pending user confirmation.
+- **Corrected 2026-08-11:** this originally said the branch had not been pushed/PR'd — it's PR #45.
+
+### Code review findings (2026-08-11) — PR #45
+
+Manual review (against `.github/skills/code-review/SKILL.md`) plus GitHub Copilot's automated
+review. Per this repo's own standing rule, Copilot's claims were independently verified against the
+actual code and reachability, not taken as true — one of its three findings (stale `baseResume` on
+an `applicationId` change) turned out not to be currently reachable, though still worth fixing
+defensively; the other two were confirmed exactly as described, with one turning out to be more
+severe in practice than its own description (see below).
+
+**Status: all findings fixed and confirmed GREEN (249/249 backend, +10 tests; 71/71 frontend, +1
+test).**
+
+- **Manual finding (mine), Critical/Security, confirmed by directly reading the query — not
+  inferred from the DTO change alone:** `TaskResponseDto` (this sprint) added `TailoredContent` to
+  the payload `GET /api/Tasks` returns, but `TaskRepository.GetAllAsync`/`TasksController.GetAll`
+  were never scoped by caller — confirmed by reading the actual EF query
+  (`TaskRepository.cs`: filtered only by `status`/`priority`, no owner check at all) and the
+  controller (`[Authorize]` only, no identity resolution). The generic board has always been shared
+  by design (fine for arbitrary work items), but Epic 3 grafted genuinely personal documents
+  (tailored résumés, cover letters) onto that same unscoped payload — every *new* Sprint 4R endpoint
+  correctly checks ownership; this one didn't, because it's an addition to a pre-existing endpoint
+  that was never scoped to begin with. Concrete impact: any two authenticated users (the seed data
+  ships exactly two) could read each other's tailored documents via the ordinary board fetch, and
+  `ApplicationReviewCard` would render on *every* user's board for *any* user's `ReviewReady`
+  application (only the base-résumé `GET` call would correctly 404 — the tailored resume/cover
+  letter ride the shared, unscoped payload directly). **Fixed:** `ITaskRepository.GetAllAsync`/
+  `ITaskService.GetAllAsync`/`TasksController.GetAll` all now take/resolve `callerId`; the repository
+  query filters to `t.ApplicationId == null || t.Application!.OwnerId == callerId` — generic tasks
+  stay visible to everyone, Epic 3 sibling tasks only to their owner. `TasksController.GetAll` now
+  returns 401 on a missing/invalid identity claim, matching `JobApplicationsController`'s existing
+  convention. RED tests at all three layers plus a real HTTP-level integration test
+  (`TaskWorkflowIntegrationTests.GetAll_hides_another_users_Epic3_sibling_task_but_shows_generic_tasks_to_everyone`)
+  proving the fix end-to-end, not just at the repository layer.
+- **DRY, done proactively while fixing the above:** `TasksController` needed the exact same
+  claim-resolution logic `JobApplicationsController` already had as a private method — duplicating
+  it a second time is exactly the violation this project's standing rules exist to prevent. Extracted
+  `ControllerBaseExtensions.TryGetCurrentUserId`/`UnauthenticatedIdentity`
+  (`TaskFlow.Api/Common/ControllerBaseExtensions.cs`); both controllers now share one
+  implementation. Pure refactor, confirmed via the existing `JobApplicationsController` test suite
+  staying green unchanged.
+- **Copilot's automated review, confirmed real and more severe than its own description implied:**
+  `TryApprovePairAsync`/`TryRejectPairAsync` committed their transaction regardless of whether the
+  `Tasks`-side `ExecuteUpdateAsync` actually affected both expected sibling rows. Copilot named the
+  mechanism precisely: the existing, unrestricted `PATCH /api/Tasks/{id}/status` endpoint (used by
+  this very PR's own integration tests to drive tasks to `Review`) lets any authenticated user move
+  any task to any status independently of the pair flow — so a sibling could be moved away from
+  `Review` while the application was still (incorrectly) `ReviewReady`, and approving/rejecting would
+  then silently move only the *other* sibling while still committing the application's state
+  change. This is the same root gap my own review had already flagged as a doc/code mismatch (the
+  doc claimed the count "is logged," but the code never even captured it) — Copilot's framing made
+  the actual reachable failure mode concrete instead of just a missing diagnostic. **Fixed:** both
+  methods now capture the `Tasks`-side affected-row count and roll back (returning `false`) if it's
+  not exactly the required sibling count, exactly mirroring the existing `JobApplications`-side
+  guard. RED tests simulate the `PATCH`-driven scenario directly against the DB for both approve and
+  reject, proving neither sibling is wrongly advanced when the transaction rolls back.
+- **Copilot's automated review, confirmed real:** `[Required]` on `RejectTaskDto.Reason` rejects
+  `null`/`""` but not whitespace-only strings, so `JobApplicationService.RejectAsync` would log a
+  useless rejection reason like `"   "`. Scoped the fix to the new pair-level `RejectAsync` only —
+  `TaskService.RejectAsync` (the pre-existing single-task reject flow this endpoint's own comment
+  says it mirrors) has the identical gap, but it's a different, already-shipped feature on `develop`;
+  fixing it would mix an unrelated change into this PR, so it's flagged here rather than fixed
+  silently. **Fixed:** explicit `string.IsNullOrWhiteSpace(reason)` check returning
+  `Result.Invalid`, matching this project's established pattern of service-level blank-string checks
+  (e.g. `ResumeContextService.SaveAsync`) rather than relying on the DTO annotation alone. RED tests
+  at the service level (`""` and `"   "`) plus one HTTP-level integration test.
+- **Copilot's automated review, confirmed real but not currently reachable — fixed defensively
+  anyway:** `useApplicationReview`'s effect started a new fetch on `applicationId` change but never
+  cleared the previous `baseResume`, so a caller reusing the hook across ids could briefly (or, on
+  error, indefinitely) show the wrong application's content. Checked the only real caller
+  (`ApplicationReviewCard`, rendered with `key={pair.applicationId}` in `KanbanColumn.tsx`) — React
+  unmounts and remounts on a key change, so this exact scenario can't happen through the app's
+  actual usage today. Still fixed, since the hook should be correct in isolation, not correct by
+  accident of how its only caller happens to use it. RED test renders the hook directly with a
+  changing `id` prop (bypassing the real caller's remount-on-key-change behavior on purpose, to
+  exercise the hook's own effect logic) and asserts `baseResume` clears immediately.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 

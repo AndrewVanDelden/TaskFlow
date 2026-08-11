@@ -181,6 +181,59 @@ public class JobApplicationRepositoryApprovalTests
         secondCall.Should().BeFalse();
     }
 
+    // Copilot's automated review (PR #45) found: the Tasks-side ExecuteUpdateAsync's affected-row
+    // count was never checked, so the transaction committed even if only one sibling actually
+    // transitioned. Reachable via the existing, unrestricted PATCH /api/Tasks/{id}/status endpoint,
+    // which lets any authenticated user move any task to any status independently of the pair
+    // flow - simulated here directly against the DB, matching what that endpoint would do.
+    [Fact]
+    public async Task TryApprovePair_rolls_back_everything_when_a_sibling_was_moved_away_from_Review_independently()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        var application = await SeedReviewReadyApplication(db.Context, OwnerId);
+        var repo = new JobApplicationRepository(db.Context);
+
+        var siblings = await db.Context.Tasks.Where(t => t.ApplicationId == application.Id).ToListAsync();
+        await db.Context.Tasks
+            .Where(t => t.Id == siblings[0].Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, WorkflowStatus.Todo));
+
+        var approved = await repo.TryApprovePairAsync(application.Id, OwnerId);
+
+        approved.Should().BeFalse();
+        db.Context.ChangeTracker.Clear();
+        (await repo.GetByIdAsync(application.Id))!.State.Should().Be(ApplicationState.ReviewReady);
+        var reloaded = await db.Context.Tasks.Where(t => t.ApplicationId == application.Id).ToListAsync();
+        // Neither sibling moved to Done - not even the one still sitting in Review, which the old
+        // code would have wrongly advanced despite the application never actually being approved.
+        reloaded.Should().NotContain(t => t.Status == WorkflowStatus.Done);
+    }
+
+    [Fact]
+    public async Task TryRejectPair_rolls_back_everything_when_a_sibling_was_moved_away_from_Review_independently()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        var application = await SeedReviewReadyApplication(db.Context, OwnerId);
+        var repo = new JobApplicationRepository(db.Context);
+
+        var siblings = await db.Context.Tasks.Where(t => t.ApplicationId == application.Id).ToListAsync();
+        await db.Context.Tasks
+            .Where(t => t.Id == siblings[0].Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, WorkflowStatus.Done));
+
+        var rejected = await repo.TryRejectPairAsync(application.Id, OwnerId);
+
+        rejected.Should().BeFalse();
+        db.Context.ChangeTracker.Clear();
+        (await repo.GetByIdAsync(application.Id))!.State.Should().Be(ApplicationState.ReviewReady);
+        var reloaded = await db.Context.Tasks.Where(t => t.ApplicationId == application.Id).ToListAsync();
+        // The sibling still in Review must not be wrongly sent back to Todo by a reject the
+        // application itself never actually completed.
+        reloaded.Should().NotContain(t => t.Status == WorkflowStatus.Todo);
+    }
+
     private static async Task<JobApplication> SeedReviewReadyApplication(AppDbContext db, int ownerId) =>
         await SeedApplicationInState(db, ownerId, ApplicationState.ReviewReady, WorkflowStatus.Review, WorkflowStatus.Review);
 

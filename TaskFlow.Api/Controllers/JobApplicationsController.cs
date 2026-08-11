@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Api.Common;
@@ -40,8 +39,8 @@ public class JobApplicationsController : ControllerBase
     [HttpPost("resume-context")]
     public async Task<IActionResult> SaveResumeContext([FromBody] SaveResumeContextDto dto)
     {
-        if (!TryGetCurrentUserId(out var ownerId))
-            return UnauthenticatedIdentity();
+        if (!this.TryGetCurrentUserId(out var ownerId))
+            return this.UnauthenticatedIdentity();
 
         return (await _resumeContext.SaveAsync(dto.IngestionSessionId, ownerId, dto.Content, dto.ContentFormat)).ToActionResult();
     }
@@ -54,8 +53,8 @@ public class JobApplicationsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Assemble([FromBody] AssembleJobApplicationDto dto)
     {
-        if (!TryGetCurrentUserId(out var ownerId))
-            return UnauthenticatedIdentity();
+        if (!this.TryGetCurrentUserId(out var ownerId))
+            return this.UnauthenticatedIdentity();
 
         var posting = new TaskDraft(dto.Posting.Title, dto.Posting.Description, TaskKind.ResumeTailoring, dto.Posting.Section);
         return (await _assembly.AssembleAsync(dto.IngestionSessionId, ownerId, posting)).ToActionResult();
@@ -66,8 +65,8 @@ public class JobApplicationsController : ControllerBase
     [HttpGet("{id:int}/resume-context")]
     public async Task<IActionResult> GetResumeContext(int id)
     {
-        if (!TryGetCurrentUserId(out var callerId))
-            return UnauthenticatedIdentity();
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
 
         return (await _resumeContext.GetForApplicationAsync(id, callerId)).ToActionResult();
     }
@@ -76,8 +75,8 @@ public class JobApplicationsController : ControllerBase
     [HttpPost("{id:int}/approve")]
     public async Task<IActionResult> Approve(int id)
     {
-        if (!TryGetCurrentUserId(out var callerId))
-            return UnauthenticatedIdentity();
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
 
         return (await _jobApplicationService.ApproveAsync(id, callerId)).ToActionResult();
     }
@@ -86,18 +85,9 @@ public class JobApplicationsController : ControllerBase
     [HttpPost("{id:int}/reject")]
     public async Task<IActionResult> Reject(int id, [FromBody] RejectTaskDto dto)
     {
-        if (!TryGetCurrentUserId(out var callerId))
-            return UnauthenticatedIdentity();
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
 
         return (await _jobApplicationService.RejectAsync(id, callerId, dto.Reason)).ToActionResult();
     }
-
-    // A missing or non-numeric NameIdentifier claim (misconfigured auth, a token from a different
-    // issuer) must not throw - [Authorize] only proves a valid token was presented, not that its
-    // claims are shaped the way this controller expects.
-    private bool TryGetCurrentUserId(out int userId) =>
-        int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
-
-    private UnauthorizedObjectResult UnauthenticatedIdentity() =>
-        Unauthorized(new { message = "The request's identity claim is missing or invalid." });
 }

@@ -86,6 +86,33 @@ describe('useApplicationReview', () => {
     expect(result.current.actionLoading).toBe(false)
   })
 
+  // Copilot's automated review (PR #45): the effect started a new fetch on applicationId change
+  // but never cleared the previous application's baseResume, so a caller that reuses this hook
+  // across different ids (not the case for ApplicationReviewCard today, which is keyed by
+  // applicationId in KanbanColumn.tsx and so always remounts - but the hook itself should be
+  // correct in isolation, not correct by accident of how its only caller happens to use it) could
+  // briefly show the wrong application's resume while the new one is loading.
+  it("clears the previous application's base resume when applicationId changes", async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('Resume for app 10')),
+    )
+    const { result, rerender } = renderHook(
+      ({ id }: { id: number }) => useApplicationReview(id),
+      { initialProps: { id: 10 } },
+    )
+    await waitFor(() => expect(result.current.baseResume).toBe('Resume for app 10'))
+
+    // A pending (never-resolving) handler lets us observe the state right after the id changes,
+    // before the new fetch would settle.
+    server.use(
+      http.get('*/api/JobApplications/20/resume-context', () => new Promise(() => {})),
+    )
+    rerender({ id: 20 })
+
+    await waitFor(() => expect(result.current.baseResumeLoading).toBe(true))
+    expect(result.current.baseResume).toBeNull()
+  })
+
   it('sets an action error when reject fails', async () => {
     server.use(
       http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),

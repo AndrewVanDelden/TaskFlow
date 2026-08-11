@@ -255,7 +255,7 @@ public class TaskServiceTests
     [Fact]
     public async Task GetAll_rejects_an_invalid_status_string()
     {
-        var result = await CreateSut().GetAllAsync("Nonsense", null);
+        var result = await CreateSut().GetAllAsync("Nonsense", null, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.Validation);
     }
@@ -263,7 +263,7 @@ public class TaskServiceTests
     [Fact]
     public async Task GetAll_rejects_an_invalid_priority_string()
     {
-        var result = await CreateSut().GetAllAsync(null, "Ultra");
+        var result = await CreateSut().GetAllAsync(null, "Ultra", callerId: 1);
 
         result.Status.Should().Be(ResultStatus.Validation);
     }
@@ -271,13 +271,29 @@ public class TaskServiceTests
     [Fact]
     public async Task GetAll_returns_the_mapped_list()
     {
-        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<CancellationToken>()))
+        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync(new List<TaskItem> { SampleTask(1), SampleTask(2) });
 
-        var result = await CreateSut().GetAllAsync(null, null);
+        var result = await CreateSut().GetAllAsync(null, null, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Should().HaveCount(2);
+    }
+
+    // PR #45 review finding: GetAllAsync must forward the caller's id to the repository so Epic 3
+    // sibling tasks can be scoped by owner there - the service is a thin pass-through for this
+    // parameter, not where the filtering logic lives (that's proven at the repository layer, see
+    // TaskRepositoryTests.GetAllAsync_hides_another_owners_Epic3_sibling_task...).
+    [Fact]
+    public async Task GetAll_forwards_the_callerId_to_the_repository()
+    {
+        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), 7, It.IsAny<CancellationToken>()))
+              .ReturnsAsync(new List<TaskItem>());
+
+        var result = await CreateSut().GetAllAsync(null, null, callerId: 7);
+
+        result.IsSuccess.Should().BeTrue();
+        _tasks.Verify(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), 7, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // Sprint 4R, Task 1: TaskResponseDto gains Kind, ApplicationId, TailoredContent so a second
@@ -290,10 +306,10 @@ public class TaskServiceTests
         task.Kind = TaskKind.ResumeTailoring;
         task.ApplicationId = 5;
         task.TailoredContent = "Tailored resume markdown.";
-        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<CancellationToken>()))
+        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync(new List<TaskItem> { task });
 
-        var result = await CreateSut().GetAllAsync(null, null);
+        var result = await CreateSut().GetAllAsync(null, null, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         var dto = result.Value!.Single();

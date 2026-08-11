@@ -64,6 +64,12 @@ public class JobApplicationService : IJobApplicationService
             return Result<JobApplicationResponseDto>.Invalid(
                 $"JobApplication {applicationId} is {application.State}; only ReviewReady can be rejected.");
 
+        // [Required] on RejectTaskDto.Reason rejects null/"" but not whitespace-only strings (PR
+        // #45 review: Copilot's automated review) - checked explicitly here so a blank reason
+        // never reaches the atomic repository call or produces a useless audit log entry.
+        if (string.IsNullOrWhiteSpace(reason))
+            return Result<JobApplicationResponseDto>.Invalid("A rejection reason is required.");
+
         var rejected = await _jobApplications.TryRejectPairAsync(applicationId, callerId, ct);
         if (!rejected)
             return Result<JobApplicationResponseDto>.Conflict(

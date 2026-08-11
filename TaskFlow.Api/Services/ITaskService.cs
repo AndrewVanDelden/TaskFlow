@@ -16,6 +16,10 @@ public interface ITaskService
     /// <summary>Human rejection: sends a <c>Review</c> task back to <c>Todo</c> with a reason. Only valid from Review.</summary>
     Task<Result<TaskResponseDto>> RejectAsync(int id, string reason, CancellationToken ct = default);
     Task<Result<TaskResponseDto>> GetByIdAsync(int id, CancellationToken ct = default);
-    Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, CancellationToken ct = default);
+
+    /// <summary>Lists tasks visible to <paramref name="callerId"/> — generic tasks unconditionally,
+    /// Epic 3 sibling tasks only when owned by the caller (see
+    /// <see cref="TaskFlow.Api.Repositories.ITaskRepository.GetAllAsync"/>).</summary>
+    Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, int callerId, CancellationToken ct = default);
     Task<Result<bool>> DeleteAsync(int id, CancellationToken ct = default);
 }

@@ -55,6 +55,17 @@ public class JobApplicationRepository : IJobApplicationRepository
             .Where(BothRequiredSiblingsAreReview)
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, ApplicationState.ReviewReady), ct);
 
+    // ReviewReady can only ever be set by TryPromoteToReviewReadyAsync/
+    // PromotePendingReviewReadyApplicationsAsync, both of which already require both required
+    // sibling kinds to be Review - so at the moment ReviewReady is set, this invariant holds by
+    // construction. But nothing prevents a sibling being moved independently afterward: the
+    // existing, unrestricted PATCH /api/Tasks/{id}/status endpoint lets any authenticated user move
+    // any task to any status with no awareness of the pair flow. So by the time
+    // TryApprovePairAsync/TryRejectPairAsync actually runs, the invariant is not guaranteed to
+    // still hold - the Tasks-side affected-row count must be checked and rolled back on, not
+    // assumed (PR #45 review: Copilot's automated review, confirmed reachable via that endpoint).
+    private const int RequiredSiblingCount = 2;
+
     public async Task<bool> TryApprovePairAsync(int applicationId, int ownerId, CancellationToken ct = default)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
@@ -69,18 +80,17 @@ public class JobApplicationRepository : IJobApplicationRepository
             return false;
         }
 
-        // ReviewReady can only ever be set by TryPromoteToReviewReadyAsync/
-        // PromotePendingReviewReadyApplicationsAsync, both of which already require both required
-        // sibling kinds to be Review - so this invariant already holds by construction and does not
-        // need re-deriving here. If the affected-row count below is ever not exactly 2, the
-        // JobApplications half above has already committed correctly, which is the state that
-        // actually matters; this repository has no ILogger dependency today and adding one solely
-        // for this defensive diagnostic isn't justified (see the service/report notes).
-        await _db.Tasks
+        var movedTasks = await _db.Tasks
             .Where(t => t.ApplicationId == applicationId && t.Status == WorkflowStatus.Review)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.Status, WorkflowStatus.Done)
                 .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+
+        if (movedTasks != RequiredSiblingCount)
+        {
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
 
         await transaction.CommitAsync(ct);
         return true;
@@ -100,14 +110,18 @@ public class JobApplicationRepository : IJobApplicationRepository
             return false;
         }
 
-        // Same reasoning as TryApprovePairAsync: the "both siblings are Review" invariant already
-        // holds by construction once State == ReviewReady, so no re-derivation is needed here.
-        await _db.Tasks
+        var movedTasks = await _db.Tasks
             .Where(t => t.ApplicationId == applicationId && t.Status == WorkflowStatus.Review)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(t => t.Status, WorkflowStatus.Todo)
                 .SetProperty(t => t.ClaimedBy, (string?)null)
                 .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
+
+        if (movedTasks != RequiredSiblingCount)
+        {
+            await transaction.RollbackAsync(ct);
+            return false;
+        }
 
         await transaction.CommitAsync(ct);
         return true;

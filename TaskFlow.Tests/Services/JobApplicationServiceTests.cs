@@ -188,4 +188,22 @@ public class JobApplicationServiceTests
         _tasks.Verify(t => t.GetByApplicationIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
         _logs.Verify(l => l.AddAsync(It.IsAny<AgentLog>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // Copilot's automated review (PR #45) found: [Required] on RejectTaskDto.Reason rejects null
+    // and "" but not whitespace-only strings, so a reason of "   " passed model validation and
+    // reached this service, producing a useless audit log entry. Checked explicitly here rather
+    // than relying on the DTO annotation alone, matching this project's established pattern
+    // (e.g. ResumeContextService.SaveAsync's explicit IsNullOrWhiteSpace checks).
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task RejectAsync_returns_Invalid_when_the_reason_is_blank(string reason)
+    {
+        _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>())).ReturnsAsync(ReviewReadyApplication());
+
+        var result = await CreateSut().RejectAsync(ApplicationId, OwnerId, reason);
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _applications.Verify(a => a.TryRejectPairAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

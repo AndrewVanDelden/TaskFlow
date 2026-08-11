@@ -240,6 +240,37 @@ public class JobApplicationsIntegrationTests
         approve.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // Copilot's automated review (PR #45): [Required] on RejectTaskDto.Reason lets a whitespace-
+    // only reason through model validation. Proves the real HTTP-level 400, not just the service
+    // unit test.
+    [Fact]
+    public async Task Rejecting_with_a_whitespace_only_reason_returns_400()
+    {
+        var client = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+
+        await client.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+        var assemble = await client.PostAsJsonAsync("/api/JobApplications",
+            new
+            {
+                ingestionSessionId = sessionId,
+                posting = new { title = "Backend Engineer", description = "Great role", section = "Job Posting" }
+            });
+        var application = await assemble.Content.ReadFromJsonAsync<JobApplicationDto>();
+
+        foreach (var task in application!.Tasks)
+        {
+            var move = await client.PatchAsJsonAsync($"/api/Tasks/{task.Id}/status", new { status = "Review" });
+            move.EnsureSuccessStatusCode();
+        }
+        await PromoteToReviewReadyAsync();
+
+        var reject = await client.PostAsJsonAsync($"/api/JobApplications/{application.Id}/reject", new { reason = "   " });
+
+        reject.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     private async Task PromoteToReviewReadyAsync()
     {
         using var scope = _factory.Services.CreateScope();
