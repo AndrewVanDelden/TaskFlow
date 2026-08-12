@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TaskFlow.Api.Common;
 using TaskFlow.Api.DTOs;
+using TaskFlow.Api.Export;
 using TaskFlow.Api.Ingestion;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Services;
@@ -17,17 +18,20 @@ public class JobApplicationsController : ControllerBase
     private readonly IResumeContextService _resumeContext;
     private readonly IJobApplicationAssemblyService _assembly;
     private readonly IJobApplicationService _jobApplicationService;
+    private readonly IExportService _exportService;
 
     public JobApplicationsController(
         IJobPostingIngestionParser parser,
         IResumeContextService resumeContext,
         IJobApplicationAssemblyService assembly,
-        IJobApplicationService jobApplicationService)
+        IJobApplicationService jobApplicationService,
+        IExportService exportService)
     {
         _parser = parser;
         _resumeContext = resumeContext;
         _assembly = assembly;
         _jobApplicationService = jobApplicationService;
+        _exportService = exportService;
     }
 
     // Parse a pasted job posting into title/company/requirements (no persistence).
@@ -89,5 +93,31 @@ public class JobApplicationsController : ControllerBase
             return this.UnauthenticatedIdentity();
 
         return (await _jobApplicationService.RejectAsync(id, callerId, dto.Reason)).ToActionResult();
+    }
+
+    // Downloadable PDF/Markdown of the approved tailored resume (Sprint 5, T5.2).
+    [HttpGet("{id:int}/export/resume")]
+    public async Task<IActionResult> ExportResume(int id, [FromQuery] string format)
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        if (!Enum.TryParse<ExportFormat>(format, ignoreCase: true, out var parsedFormat))
+            return BadRequest(new { message = $"Invalid format '{format}'. Valid values: pdf, markdown." });
+
+        return (await _exportService.ExportResumeAsync(id, callerId, parsedFormat)).ToFileActionResult();
+    }
+
+    // Downloadable PDF/Markdown of the approved tailored cover letter (Sprint 5, T5.2).
+    [HttpGet("{id:int}/export/cover-letter")]
+    public async Task<IActionResult> ExportCoverLetter(int id, [FromQuery] string format)
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        if (!Enum.TryParse<ExportFormat>(format, ignoreCase: true, out var parsedFormat))
+            return BadRequest(new { message = $"Invalid format '{format}'. Valid values: pdf, markdown." });
+
+        return (await _exportService.ExportCoverLetterAsync(id, callerId, parsedFormat)).ToFileActionResult();
     }
 }

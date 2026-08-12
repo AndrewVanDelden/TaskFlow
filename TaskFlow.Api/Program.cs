@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using TaskFlow.Api.Agents;
 using TaskFlow.Api.Data;
+using TaskFlow.Api.Export;
 using TaskFlow.Api.Ingestion;
 using TaskFlow.Api.Services;
 using TaskFlow.Api.Hubs;
@@ -124,6 +125,16 @@ builder.Services.AddScoped<IDraftCommitService, DraftCommitService>();
 builder.Services.AddScoped<IResumeContextService, ResumeContextService>();
 builder.Services.AddScoped<IJobApplicationAssemblyService, JobApplicationAssemblyService>();
 builder.Services.AddScoped<IJobApplicationService, JobApplicationService>();
+// ── Artifact export (Sprint 5) ──────────────────────────────────────────────────
+// ITypstCompiler has no per-request state beyond its constructor-created sandbox directory
+// (created once) - Singleton, matching IExecutorSwitch's precedent for a stateful-at-the-process-
+// level, not per-request, service. TailoredContentTypstRenderer is fully stateless (pure
+// Markdown-in/Typst-out) - Singleton, registered as itself since it has no interface.
+// IExportService depends on the scoped repositories, so it's Scoped like every other service in
+// this file that touches them.
+builder.Services.AddSingleton<ITypstCompiler, ProcessTypstCompiler>();
+builder.Services.AddSingleton<TailoredContentTypstRenderer>();
+builder.Services.AddScoped<IExportService, ExportService>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();
