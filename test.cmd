@@ -8,7 +8,10 @@ set NO_COLOR=1
 set FORCE_COLOR=0
 
 > test-results.txt echo ===== BACKEND (dotnet test + coverage) =====
-dotnet test /p:CollectCoverage=true >> test-results.txt 2>&1
+REM RequiresTypstBinary tests shell out to the real `typst` CLI (Sprint 5) and are excluded from
+REM the default run since typst isn't guaranteed to be installed on every machine. Opt in with
+REM `dotnet test --filter "RequiresTypstBinary=true"` on a machine that has it on PATH.
+dotnet test /p:CollectCoverage=true --filter "RequiresTypstBinary!=true" >> test-results.txt 2>&1
 
 >> test-results.txt echo.
 >> test-results.txt echo ===== FRONTEND (vitest run --coverage) =====

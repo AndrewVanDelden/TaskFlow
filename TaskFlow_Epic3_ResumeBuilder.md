@@ -1831,6 +1831,23 @@ the process and returns a failure `Result` within bounds. (Real-binary tests, tr
 testing decision above.) GREEN: `ProcessTypstCompiler` — stdin/stdout piping, `--root` sandbox,
 timeout, config-driven binary path.
 
+**T5.1a implementation finding (2026-08-11): `Result<T>.Error` as specified collides with the
+record's own `Error` property — renamed to `Result<T>.InternalError`.** `Result<T>` is declared as
+`record Result<T>(ResultStatus Status, T? Value, string? Error)` — the third positional parameter
+already generates an instance property named `Error`, the same property every other factory
+(`NotFound`, `Conflict`, `Invalid`, `Unauthorized`) populates with its message. Confirmed by an
+actual `dotnet build`, not inferred: adding `public static Result<T> Error(string message) => ...`
+produces `CS0102: The type 'Result<T>' already contains a definition for 'Error'` — C# does not
+allow a static method and an instance property to share a name in the same type. `result.Error` (the
+property) already has real callers (`ResultExtensions.cs`, `ResumeContextService.cs`,
+`TailoringAgentBase.cs`, confirmed via grep), so renaming it would ripple outside this slice; the
+brand-new factory has zero callers yet, so it was renamed instead, per the standing rule to fix
+collisions by renaming at the source, not aliasing. **Decision: the factory is
+`Result<T>.InternalError(string message)`, not `Result<T>.Error(...)`.** `ResultStatus.Error` (the
+enum member) is unaffected — it's a different type, no collision — and keeps that exact name.
+Any later Sprint 5 code that needs to construct this status (`ProcessTypstCompiler`, and eventually
+`ExportService`) must call `Result<T>.InternalError(...)`.
+
 **T5.1b — `TailoredContentTypstRenderer`.** RED: given Markdown with headings/bullets/bold,
 produces the expected Typst markup; given content containing `#`, `@`, backslash, and other
 Typst-significant characters (in prose, mid-sentence, at line-start), every instance appears
