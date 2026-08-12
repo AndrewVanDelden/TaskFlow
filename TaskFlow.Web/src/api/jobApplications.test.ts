@@ -6,6 +6,8 @@ import {
   getApplicationResumeContext,
   approveApplication,
   rejectApplication,
+  exportResume,
+  exportCoverLetter,
 } from './jobApplications'
 
 describe('saveResumeContext', () => {
@@ -88,5 +90,77 @@ describe('rejectApplication', () => {
     )
 
     await expect(rejectApplication(10, '   ')).rejects.toThrow()
+  })
+})
+
+describe('exportResume', () => {
+  it('requests the resume export with format=pdf', async () => {
+    let capturedUrl = ''
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', ({ request }) => {
+        capturedUrl = request.url
+        return new HttpResponse('file bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })
+      }),
+    )
+
+    const result = await exportResume(10, 'pdf')
+
+    expect(capturedUrl).toContain('/api/JobApplications/10/export/resume')
+    expect(capturedUrl).toContain('format=pdf')
+    expect(result.filename).toBe('resume.pdf')
+  })
+
+  it('requests the resume export with format=markdown', async () => {
+    let capturedUrl = ''
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', ({ request }) => {
+        capturedUrl = request.url
+        return new HttpResponse('file bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.md"' },
+        })
+      }),
+    )
+
+    await exportResume(10, 'markdown')
+
+    expect(capturedUrl).toContain('format=markdown')
+  })
+})
+
+describe('exportCoverLetter', () => {
+  it('requests the cover-letter export with format=pdf', async () => {
+    let capturedUrl = ''
+    server.use(
+      http.get('*/api/JobApplications/10/export/cover-letter', ({ request }) => {
+        capturedUrl = request.url
+        return new HttpResponse('file bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="cover-letter.pdf"' },
+        })
+      }),
+    )
+
+    const result = await exportCoverLetter(10, 'pdf')
+
+    expect(capturedUrl).toContain('/api/JobApplications/10/export/cover-letter')
+    expect(capturedUrl).toContain('format=pdf')
+    expect(result.filename).toBe('cover-letter.pdf')
+  })
+
+  it('requests the cover-letter export with format=markdown', async () => {
+    let capturedUrl = ''
+    server.use(
+      http.get('*/api/JobApplications/10/export/cover-letter', ({ request }) => {
+        capturedUrl = request.url
+        return new HttpResponse('file bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="cover-letter.md"' },
+        })
+      }),
+    )
+
+    await exportCoverLetter(10, 'markdown')
+
+    expect(capturedUrl).toContain('format=markdown')
   })
 })

@@ -1,5 +1,5 @@
 import type { JobApplicationResponse } from '../types'
-import { request } from './client'
+import { request, requestBlob, type DownloadedFile } from './client'
 
 // Saves the user's base resume server-side, scoped to one ingestion session — never localStorage,
 // since a server-side agent (Sprint 3R) cannot read browser storage.
@@ -29,4 +29,16 @@ export function rejectApplication(applicationId: number, reason: string): Promis
     method: 'POST',
     body: JSON.stringify({ reason }),
   })
+}
+
+export type ExportFormat = 'pdf' | 'markdown'
+
+// Downloads the tailored resume (PDF or Markdown) for an Approved application's Done task.
+export function exportResume(applicationId: number, format: ExportFormat): Promise<DownloadedFile> {
+  return requestBlob(`/api/JobApplications/${applicationId}/export/resume?format=${format}`)
+}
+
+// Downloads the tailored cover letter (PDF or Markdown) for an Approved application's Done task.
+export function exportCoverLetter(applicationId: number, format: ExportFormat): Promise<DownloadedFile> {
+  return requestBlob(`/api/JobApplications/${applicationId}/export/cover-letter?format=${format}`)
 }

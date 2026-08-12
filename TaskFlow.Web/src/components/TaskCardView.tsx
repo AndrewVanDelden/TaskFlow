@@ -2,6 +2,7 @@ import type { TaskItem } from '../types'
 import { priorityStyles } from '../lib/styles'
 import { formatDate } from '../lib/formatting'
 import { ReviewActions } from './ReviewActions'
+import { ExportDownloadControls } from './ExportDownloadControls'
 
 // Presentational card with no drag behavior, so it can render both inside the sortable TaskCard
 // and inside the DragOverlay (which has no SortableContext). On Review cards it shows the executor's
@@ -51,6 +52,10 @@ export function TaskCardView({
       )}
 
       {onApprove && onReject && <ReviewActions onApprove={onApprove} onReject={onReject} />}
+
+      {task.status === 'Done' && task.applicationId !== null && (
+        <ExportDownloadControls applicationId={task.applicationId} kind={task.kind} />
+      )}
     </div>
   )
 }
