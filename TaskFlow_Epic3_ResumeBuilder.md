@@ -2129,6 +2129,166 @@ approval rules.
 - `KanbanBoard.tsx` uses dnd-kit with `BOARD_COLUMNS`; no sibling-card grouping; no kind shown on a
   card.
 
+### Decisions owned here, before dispatching any engineer (2026-08-12)
+
+Confirmed against the repo first (`IngestDocument.tsx`, `useIngestion.ts`, `useBaseResumeCapture.ts`,
+`useApplicationReview.ts`, `KanbanBoard.tsx`, `KanbanColumn.tsx`, `TaskCard.tsx`, `TaskCardView.tsx`,
+`ApplicationReviewCard.tsx`, `lib/board.ts`, `useBoardTasks.ts`, `useAgentFeed.ts`, `hubEvents.ts`,
+`agentHub.tsx`, `App.tsx`, `types.ts`, `IResumeContextRepository.cs`, `ResumeContextRepository.cs`,
+`IResumeContextService.cs`, `ResumeContextService.cs`, `ResumeContext.cs`, `JobApplication.cs`,
+`JobApplicationsController.cs`, `SaveResumeContextDto.cs`, `AssembleJobApplicationDto.cs`,
+`AgentConstants.cs`, `TailoringAgentBase.cs`, `ControllerBaseExtensions.cs`) rather than designed
+from scratch. **Real gap confirmed first: `IngestDocument.tsx`'s "Parse" button and draft list are
+still Epic 2's generic `/api/Ingestion` path (`useIngestion`) — nothing in the current UI calls
+`JobApplicationsController`'s `parse`/`resume-context`/assemble (`POST /api/JobApplications`) at
+all.** T2.3 only ever added the base-resume save box alongside the untouched generic form. Sprint 6
+is not "polish an existing job-posting flow" — it is wiring one up against three endpoints that have
+sat unused since Sprint 2.
+
+- **Session id home: `/ingest/:sessionId`, closing PR #40 review finding #7.** `App.tsx` gets a new
+  route, `/ingest/:sessionId`, rendering `IngestDocument`, which reads the id via `useParams`
+  instead of generating its own. Bare `/ingest` (the nav link's target, and every existing test's
+  target — `Navigation.test.tsx` renders at `/ingest` and expects the Ingest page) becomes a tiny
+  redirect component, `IngestRedirect`, that generates one `crypto.randomUUID()` and
+  `<Navigate to={`/ingest/${id}`} replace />`s to it — so every existing bare-`/ingest` test and the
+  nav link keep working unchanged, and a bookmarked/shared `/ingest/:id` URL now survives an
+  unmount/remount (the actual gap PR #40 flagged), because the id lives in the URL, not component
+  state. **PII reasoning, stated explicitly per the standing instruction to reason about this, not
+  assume it away:** the session id itself is an opaque random UUID with no PII content and no
+  server-side authorization weight of its own (every backend read/write it touches is *also*
+  compound-scoped by `OwnerId`, per Sprint 0's `T0.5` — a session id alone, even leaked via browser
+  history/referrer, cannot read or write another owner's data). Putting it in the URL is therefore
+  not a `localStorage`-for-PII violation in disguise; it is exactly the same category of value a
+  path/resource id already is elsewhere in this app (`/api/JobApplications/{id}`).
+- **Resume reuse is genuine new backend surface — an owner-only read path, no session id
+  involved.** `IResumeContextRepository` only supports `GetForOwnerAsync(sessionId, ownerId)`; there
+  is no way to ask "the caller's own most recent saved resume, from any session." **Decision:**
+  - `IResumeContextRepository.GetMostRecentForOwnerAsync(int ownerId, CancellationToken ct = default)`
+    — one query, `Where(r => r.OwnerId == ownerId).OrderByDescending(r => r.UpdatedAt).FirstOrDefaultAsync()`.
+    Ownership-scoped by construction the same way every other `ResumeContext` read is: `ownerId` is
+    never a client-supplied value, it is always the caller's own id resolved server-side via
+    `TryGetCurrentUserId()` — there is no parameter here a caller could substitute to reach another
+    owner's row, so this new query shape carries the same IDOR-safety property as
+    `GetForOwnerAsync`, just with one fewer dimension (no session id to also match, because none
+    is available yet at this point in the flow — the user hasn't picked one for *this* intake
+    attempt).
+  - `IResumeContextService.GetMostRecentForCallerAsync(int callerId, CancellationToken ct = default)`
+    → `Result<ResumeContextSummaryDto>` (new DTO: `Content`, `ContentFormat`, `UpdatedAt`). `NotFound`
+    when the caller has never saved a resume in any session — a real, expected case (first-time
+    user), not an error.
+  - New DTO `TaskFlow.Api/DTOs/ResumeContextSummaryDto.cs` (no `FromEntity` factory needed — no
+    navigation properties, no serialization-cycle risk the way `JobApplicationResponseDto` had).
+  - New controller action, same controller (consistent with every other `ResumeContext`/
+    `JobApplication` action living on `JobApplicationsController`, not a new controller for one
+    read): `[HttpGet("resume-context/latest")]` `GetMostRecentResumeContext()`. No route collision
+    with the existing `[HttpGet("{id:int}/resume-context")]` — `"resume-context"` is a literal first
+    segment, never matched by the `{id:int}` constraint, so ASP.NET routing disambiguates cleanly.
+  - **RED tests first, ownership scoping checked from the start (per the standing instruction, since
+    this is a genuinely new query shape):** repository test seeding two `ResumeContext` rows for the
+    *same* owner across two sessions with different `UpdatedAt`, asserting the newer one wins;
+    repository test seeding rows for two *different* owners, asserting `GetMostRecentForOwnerAsync`
+    for owner B never returns owner A's row even though A's is newer; service test mapping
+    zero-rows → `NotFound`; controller-level integration test asserting an authenticated caller with
+    no saved resume gets 404, one with a saved resume gets 200 with the right content, and a missing/
+    invalid identity claim gets 401 (matching every other action's convention).
+  - **Frontend is optional-enhancement, not blocking:** `useBaseResumeReuse()` (new hook) fetches once
+    on mount and exposes `{ available, content, updatedAt }` only — a 404 or any other failure both
+    resolve to `available: false` with no error surfaced. This is a nicety ("offer reuse instead of
+    re-pasting"), not a required capability; failing to check it must never block or alarm the user
+    during intake. A "Use previously saved base resume (updated `<date>`)" affordance appears only
+    when `available` is true and lets the user accept it, still editable afterward.
+- **T6.2's stage model — one discriminated field, not several booleans:**
+  `type IntakeStage = 'provide' | 'parsing' | 'review' | 'starting' | 'building' | 'ready'`, owned by
+  a new hook, `useIntakeFlow(sessionId)`. Transitions: `provide` → `parsing` (Parse clicked, job
+  posting non-empty) → `review` (parse resolves; drafts shown) or back to `provide` (parse fails,
+  error shown, retry). `review` → `starting` (Start tailoring clicked; requires non-empty base resume
+  text, typed or reused) — `starting` performs `POST resume-context` (save) then `POST /` (assemble)
+  in sequence, since `AssembleAsync` already refuses `NotFound` without a saved `ResumeContext` for
+  the session — then → `building` (assemble resolves; the two new sibling task ids are captured
+  from the response) or back to `review` (either call fails, error shown, retry without re-parsing).
+  `building` → `ready` once both sibling task ids reach a terminal per-item stage (T6.3's `saved`) via
+  the live feed. **Progressive disclosure, concretely:** only the current stage's controls are
+  interactive; a completed earlier stage collapses to a compact read-only summary line (e.g. the
+  parsed job title) rather than vanishing, so the user can see what they submitted without more than
+  one actionable control-set on screen at a time.
+- **Scope boundary, stated explicitly per the standing rule against silently dropping or inventing
+  scope: the existing generic paste/file/parse/approve flow (`useIngestion`, `/api/Ingestion`) is
+  kept, not removed, and not touched behaviorally.** None of T6.1–T6.5's task text asks for its
+  removal, and Epic 2's generic ingestion (arbitrary `TaskKind.Generic` documents) is still a real,
+  separately-tested capability this app offers — silently deleting its UI would be exactly the kind
+  of unscoped change `CLAUDE.md` prohibits, and would orphan `useIngestion`/`useIngestion.test.ts`
+  and `IngestDocument.test.tsx`'s existing generic-flow coverage. **Decision:** the redesigned
+  `IngestDocument` makes the guided job-application flow (`useIntakeFlow`) the primary, always-visible
+  content, and moves the existing generic form under a collapsed, native `<details><summary>Other:
+  paste a generic document</summary>...</details>` section below it — native `<details>` is keyboard-
+  reachable and exposes its own expanded/collapsed state to assistive tech for free, which also
+  contributes to T6.5 without extra code. The generic flow's backend, hook, and tests are unchanged.
+- **T6.3 needs no new SignalR event type — confirmed, not assumed, by reading `TailoringAgentBase.cs`
+  and `AgentConstants.cs` directly.** The tailoring agents' only per-task `AgentLog` actions are
+  `Claimed`, `TailoredContentSaved`, and `RolledBack` (no `ProgressRecorded` — that action is
+  `GenericExecutorAgent`-only, via `record_progress`, which these agents never call). That is exactly
+  enough to derive a per-item stage: a new pure helper, `taskStage(logs: AgentLog[], taskId: number):
+  'pending' | 'in-progress' | 'saved' | 'rolled-back'`, added to `lib/board.ts` alongside the existing
+  `taskOutput`/`reviewReadyPairs` pure functions (same file, same pattern — scoped to the most recent
+  `Claimed` for that task id, mirroring `taskOutput`'s own "current cycle" scoping so a stale prior
+  cycle's log entries never leak in). A new presentational component, `IntakeProgress.tsx`, takes the
+  two task ids from `useIntakeFlow`'s `building` stage and the already-shared `logs` array (from
+  `useAgentFeed`, the same hook `KanbanBoard` already consumes — `IngestDocument` starts consuming it
+  too, no second SignalR subscription) and renders one row per item using `taskStage`.
+- **T6.4's grouping only ever needs to operate within one column's own task list, not across
+  columns.** Siblings can legitimately be in different statuses at once (one `Review`, one still
+  `InProgress`) — dnd-kit's columns are separate drop containers, so a cross-column visual merge has
+  no sound drag semantic and isn't asked for by the task text ("preserve existing drag/Review
+  affordances" implies the opposite). **Decision:** a new pure helper,
+  `groupSiblingCards(tasks: TaskItem[]): TaskItem[][]`, added to `lib/board.ts`, clusters *adjacent*
+  same-`applicationId` tasks within the column's own already-filtered list (KanbanBoard.tsx already
+  filters `pairedTaskIds` — full `ReviewReady` pairs — out of the per-column list before it reaches
+  `KanbanColumn`, so this helper only ever sees partial/non-`ReviewReady` siblings, never conflicting
+  with `ApplicationReviewCard`). `KanbanColumn.tsx` renders each 2-item group inside a shared
+  bordered wrapper `div`, each `TaskCard` still individually rendered (still inside the same
+  `SortableContext`, still individually draggable — wrapping div nesting between `SortableContext`
+  and its sortable children is a normal dnd-kit pattern and does not affect drag behavior). A 1-item
+  "group" (sibling elsewhere, or a `Generic` task) renders exactly as today, no wrapper. Separately,
+  **every** `TaskCardView` (not just grouped ones) gains a small `kind` badge, shown whenever
+  `kind !== 'Generic'` — showing kind is unconditional per T6.4's own text, grouping is the
+  conditional part.
+- **T6.5's accessibility bar, stated concretely:** every new input has a `<label htmlFor>` pointing
+  at a real id (matching the existing `base-resume` input's own pattern); every stage transition
+  moves focus to the new stage's primary heading or first control (a `ref` + `.focus()` in
+  `useIntakeFlow`'s stage-change effect) so a keyboard/screen-reader user is not left focused on a
+  control that just disappeared; the file input gets a real visible label and styled focus ring
+  (today it has neither); loading states use `aria-busy`/visible "Parsing…"/"Starting…" text (already
+  this app's convention, e.g. the existing Parse button); the reuse-offer and per-item progress rows
+  both render explicit empty/loading/error states rather than silently rendering nothing.
+- **File/slice boundaries, confirmed zero overlap before parallelizing (per the standing rule):**
+  - **Slice A (backend, standalone):** `IResumeContextRepository.cs`/`ResumeContextRepository.cs`,
+    `IResumeContextService.cs`/`ResumeContextService.cs`, new `ResumeContextSummaryDto.cs`,
+    `JobApplicationsController.cs` (new action only). Own RED tests in
+    `ResumeContextRepositoryTests.cs`, `ResumeContextServiceTests.cs`,
+    `JobApplicationsIntegrationTests.cs` (or equivalent existing controller test file).
+  - **Slice B (frontend routing, small, isolated on purpose):** `App.tsx` (new `IngestRedirect` +
+    `/ingest/:sessionId` route), `IngestDocument.tsx`'s session-id source only (reads `useParams`
+    instead of generating its own) — deliberately kept separate from Slice C below because it touches
+    component lifecycle/routing, a different risk class than the guided-flow rewrite, per the doc's
+    own instruction to isolate it.
+  - **Slice C (frontend, the guided flow itself — depends on Slice A's endpoint contract and Slice
+    B's session-id plumbing landing first):** `useIntakeFlow.ts` (new), `useBaseResumeReuse.ts` (new),
+    `IngestDocument.tsx` (rewritten body — the primary guided flow plus the collapsed generic-`<details>`
+    section), `api/jobApplications.ts` (add `getMostRecentResumeContext`, `parseJobPosting`,
+    `assembleApplication` — the parse/assemble calls the current frontend never makes), `types.ts`
+    (add `ResumeContextSummary`).
+  - **Slice D (frontend, T6.3 — can run parallel to Slice C once Slice C's task-id-capturing contract
+    from `useIntakeFlow` is fixed, since it only reads `logs` + two task ids as props, never
+    `useIntakeFlow` internals):** `lib/board.ts` (`taskStage` only), `IntakeProgress.tsx` (new).
+  - **Slice E (frontend, T6.4 — fully disjoint files from C/D, can run parallel to both):**
+    `lib/board.ts` (`groupSiblingCards` only — same file as Slice D's `taskStage`, but additive,
+    non-overlapping functions; sequenced one immediately after the other rather than truly
+    simultaneous to avoid a merge on the same file), `KanbanColumn.tsx`, `TaskCardView.tsx` (kind
+    badge).
+  - Dispatch order: Slice A and Slice B in parallel first (zero file overlap, both are prerequisites);
+    then Slice C; then Slice D and Slice E in parallel (D and E both touch `lib/board.ts` — sequenced
+    within that pair rather than truly concurrent, per the note above).
+
 ### Tasks
 
 **T6.1 — Two clear inputs with labels.** Labeled job-posting and base-resume inputs; a styled file
