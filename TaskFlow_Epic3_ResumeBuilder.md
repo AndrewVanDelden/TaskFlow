@@ -180,7 +180,7 @@ The first bullet below is this project's most serious finding to date, not a nit
 | **2** | Job Posting Ingestion | Ready — architecture below, no code yet |
 | **3R** | Multi-Agent Generation | Ready — architecture below, no code yet |
 | **4R** | Combined Review and Approval | Ready — architecture below, no code yet |
-| **5** | Artifact Export | Ready — architecture below, no code yet |
+| **5** | Artifact Export | Ready — architecture decided 2026-08-11, no code yet |
 | **6** | Intake Experience Redesign | Ready — architecture below, no code yet |
 
 ## Definition of Done (Epic 3)
@@ -1662,7 +1662,136 @@ affordance.
 
 ## Sprint 5 — Artifact Export
 
-**Status: Ready. Architecture only.**
+**Status: Ready — architecture decided (2026-08-11), no code yet.** Full architecture review
+conducted before any engineer starts (see "Decisions owned here" below), confirmed against the
+actual repo (ownership patterns, `Result` type, `JobApplicationService` conventions, existing
+controllers) rather than designed from the source docs' assumptions alone. Applying the Sprint 4R
+retrospective's own standing rule — "before shipping a new Epic 3 invariant, ask which existing
+generic endpoints can reach these same rows outside the new code path" — surfaced a live,
+pre-existing gap (T5.0 below), not introduced by this sprint but required to close before it, the
+same way Sprint 0 gated the rest of Epic 3.
+
+### Decisions owned here, before dispatching any engineer (2026-08-11)
+
+Confirmed against the repo first (`IJobApplicationRepository`, `JobApplicationService`,
+`TasksController`, `Common/Result.cs`, `ControllerBaseExtensions`, `MarkdownPreview.tsx`,
+`PromptSafety.cs`) rather than designed from scratch. Also confirmed via research, not assumed: no
+mature, officially-maintained .NET binding for Typst exists — the closest community options
+(`Typst.Native`, `Typst.Net`) are early-stage (2 GitHub stars, tagged "hatchling" in the community
+registry), not something to build a security-sensitive path on.
+
+- **T5.0, a real gap found while designing this sprint, not introduced by it: `TasksController`'s
+  single-item actions (`GetById`, `Update`, `UpdateStatus`, `Approve`, `Reject`, `Delete`) are not
+  ownership-scoped** — confirmed by reading the actual code, none of the six call
+  `TryGetCurrentUserId` or filter by owner. Sprint 4R's round-1 fix scoped only `GET /api/Tasks`
+  (the list endpoint); these six single-item actions still let any authenticated user read or
+  mutate any other user's `TaskItem` by id, including `TailoredContent`, via `GET /api/Tasks/{id}`
+  — reachable even before an application is `Approved`, since `GetById` checks neither ownership
+  nor state. Same root cause as Sprint 4R's most serious finding to date, on a different set of
+  actions the round-1 fix didn't reach. **Decision (2026-08-11): fix this first, as its own change,
+  before the Sprint 5 branch starts** — not folded into Sprint 5's own scope and not deferred past
+  it, the same way Sprint 0 gated everything after it. T5.0 below is that fix.
+- **Direct Typst invocation, not Pandoc.** `pandoc --pdf-engine=typst` only swaps Typst in as
+  Pandoc's PDF backend; Pandoc still does its own generic Markdown-to-Typst translation first,
+  which gives up per-template control over layout for exactly two fixed document types — the whole
+  reason a real typesetting engine was chosen over a naive library. It would also mean deploying
+  and invoking two external binaries instead of one. Typst's own markup syntax is deliberately
+  close to Markdown, which makes a small, purpose-built, auditable converter tractable without a
+  general-purpose conversion tool in the loop.
+- **No .NET binding — shell out to the official `typst` CLI via `ITypstCompiler`.** Confirmed via
+  research (not assumed): no mature, officially-maintained .NET SDK/binding exists.
+  `ITypstCompiler` (`TaskFlow.Api/Export/ITypstCompiler.cs`) exposes one method,
+  `Task<Result<byte[]>> CompilePdfAsync(string typstSource, CancellationToken ct = default)`.
+  `ProcessTypstCompiler` shells out via `System.Diagnostics.Process`, writing the composed source
+  to the child process's **stdin** and reading the PDF back from **stdout**
+  (`typst compile - -`, confirmed supported) — no temp files written or cleaned up anywhere.
+  `--root` is pinned to a dedicated, empty, never-written-to sandbox directory (created once at
+  startup), not the real filesystem — defense in depth for the security design below, not just
+  hygiene. A configured timeout (`Export:TypstCompileTimeoutSeconds`, default 15s) kills the
+  process tree (`Process.Kill(entireProcessTree: true)`) rather than letting a pathological input
+  hang a request. A non-zero exit logs stderr server-side and returns a failure `Result` — stderr
+  detail (which could include absolute paths) never reaches the client. Binary path
+  (`Export:TypstBinaryPath`, default `"typst"` on `PATH`) and timeout are both config-driven,
+  matching the existing `Agents:*IntervalMinutes` pattern already used by the background services.
+- **`Result`/`ResultStatus` gains a new `Error` status for this kind of internal failure —
+  decided, not left open.** None of the existing statuses (`Ok`/`NotFound`/`Conflict`/
+  `Validation`/`Unauthorized`) correctly represent "the compiler subprocess failed or timed out" —
+  it isn't a bad client request, so mapping it to `Validation` (400) would be actively misleading,
+  and having `ITypstCompiler`/`ExportService` throw instead would make this the one internal-
+  failure path in the whole app that doesn't route through `Result`, breaking a convention every
+  other service follows. **Decision: add `ResultStatus.Error` and `Result<T>.Error(string message)`
+  to `Common/Result.cs`, mapping to HTTP 500** in `ResultExtensions.ToActionResult` (already the
+  switch's existing default arm) — the only option that is both semantically correct and
+  consistent with SOLID/DRY as already applied everywhere else in this codebase.
+- **Typst binary packaging: was deferred, now has a real answer — see Epic 5,
+  `TaskFlow_Epic5_DeploymentInfrastructure.md` (2026-08-11).** That doc architects two real deploy
+  targets (a standalone Windows exe, and a Docker/Kubernetes track) and settles packaging for both:
+  a sibling `typst.exe` copied into the publish output for the exe track, `typst` baked into the
+  Docker image for the container track. Neither is built yet — this section's earlier reasoning
+  (the interface boundary, `Export:TypstBinaryPath`, is exactly what made deferring this safe) still
+  holds and is why no code changed as a result of that doc existing now.
+- **Template design: two trusted, hand-authored Typst files, composed by string concatenation,
+  not `#import`.** `resume.typ` and `cover-letter.typ` (`TaskFlow.Api/Export/Templates/`) each
+  define page setup (margins, fonts, heading/spacing rules) as a `#let document(body) = { ... }`
+  function around one content slot. The export service reads the template text (cached in memory)
+  and concatenates exactly two strings for the stdin payload: the trusted template preamble,
+  verbatim, then the converted/escaped content for this request. Deliberately not `#import`, which
+  would require exposing a real directory as `--root` and reopens the file-access question the
+  empty sandbox root above exists to close.
+- **Markdown-to-Typst-content conversion is the security-critical piece, and is a new, separate
+  concern from `PromptSafety.WrapUntrusted` — not a reuse of it.** `PromptSafety` (confirmed, read
+  in full) defends against prompt injection: text steering Claude's behavior. Typst's risk is
+  structurally different — a `#` enters Typst's own code mode, which can call functions, `#import`
+  packages, and `read()` files relative to `--root` (confirmed via Typst's own docs). Reusing
+  `WrapUntrusted` here would apply the wrong defense to the wrong boundary, the same way
+  `dangerouslySetInnerHTML` would be wrong for agent markdown regardless of what `PromptSafety`
+  already does upstream. **Decision:** `TailoredContentTypstRenderer`
+  (`TaskFlow.Api/Export/`) parses `TailoredContent` with **Markdig** (new backend dependency —
+  approved 2026-08-11; this is the first Markdown parser added to `TaskFlow.Api`, the existing
+  `react-markdown`/`rehype-sanitize` pair is frontend-only) into an AST and walks **only** an
+  allow-listed node set (heading, paragraph, list/list-item, emphasis/strong, line break, plain
+  text) — anything outside that allow-list (raw HTML, links, images) is flattened to inert text or
+  dropped, mirroring `rehype-sanitize`'s allow-list-not-deny-list approach on the frontend. Every
+  leaf text run is backslash-escaped for Typst's syntactically significant characters (`#`, `*`,
+  `_`, `` ` ``, `$`, `<`, `>`, `@`, and list/heading markers at line start — the exact set to be
+  verified against Typst's syntax reference when T5.1b's RED tests are written, not asserted as
+  exhaustive here) **before** any of our own controlled formatting syntax is wrapped around it, so
+  content can never introduce new unescaped Typst syntax — only our own code ever emits live
+  syntax.
+- **`ExportService`, not `PdfExportService`.** Renamed from the original source docs' naming — the
+  implementation produces both PDF and Markdown (Markdown is a trivial pass-through of the raw
+  `TailoredContent`, no Typst involved), and the old name would mislead a future reader into
+  thinking it handles only one format, or worse, invite a second class next to it for the other
+  format. Confirmed this is a correctness/DRY fix, not just a style preference, before renaming.
+- **Export actions live on the existing `JobApplicationsController`, not a new controller.**
+  Export is a read-only projection of an existing `JobApplication` resource; reuses the
+  already-shared `TryGetCurrentUserId`/`UnauthenticatedIdentity` helpers
+  (`ControllerBaseExtensions`, confirmed) with no duplication, and matches this repo's established
+  one-controller-per-resource convention instead of fragmenting it for two thin actions.
+- **Ownership and state guard follow `JobApplicationService.ApproveAsync`'s exact convention,
+  confirmed against its actual code, not re-derived.** `IJobApplicationRepository.GetByIdAsync` has
+  no owner filter in the query (confirmed) — `ExportService` fetches then checks, collapsing
+  missing-and-wrong-owner into the same `Result.NotFound`, exactly matching
+  `if (application is null || application.OwnerId != callerId) return Result<T>.NotFound(...)`. A
+  non-`Approved` application returns `Result.Invalid` (400) — the caller is a confirmed owner at
+  that point, so there's nothing to hide, matching `ApproveAsync`'s own wrong-state handling.
+- **No reconciliation sweep for export, reasoned about, not just pattern-matched.** The Sprint
+  3R/4R sweep pattern exists for a multi-part completion trigger a background agent's
+  silently-swallowed exception could skip. Export is a stateless, synchronous, human-initiated read
+  producing a derived artifact fresh on every request — there's no state transition to miss, and a
+  failure surfaces directly to the person who clicked the button, who can retry. Same reasoning
+  Sprint 4R already used to correctly not add a sweep to approve/reject, applied here rather than
+  copied reflexively.
+- **Testing: `ITypstCompiler` is faked for `ExportService`/renderer unit tests; a small number of
+  real-binary end-to-end tests are trait-gated out of the default run.**
+  `TailoredContentTypstRenderer` is pure (Markdown in, Typst markup out) and fully unit-testable
+  with no binary at all — this is where the escaping RED tests live. `ExportService` is tested
+  against a fake `ITypstCompiler`. A handful of real end-to-end tests
+  (`[Trait("RequiresTypstBinary", "true")]`) actually shell out and assert a well-formed PDF comes
+  back (`%PDF-` magic bytes); `test.cmd` is updated to pass
+  `--filter "RequiresTypstBinary!=true"` on the default run so `.\test` doesn't require `typst` to
+  be installed, while `dotnet test --filter "RequiresTypstBinary=true"` opts in explicitly on a
+  machine that has it.
 
 ### Goal
 
@@ -1670,35 +1799,95 @@ Turn an approved resume and cover letter into downloadable PDF and Markdown file
 
 ### Files involved
 
-- `TaskFlow.Api/Export/IExportService.cs`, `PdfExportService.cs` (new)
+- `TaskFlow.Api/Export/IExportService.cs`, `ExportService.cs` (new)
+- `TaskFlow.Api/Export/ITypstCompiler.cs`, `ProcessTypstCompiler.cs` (new)
+- `TaskFlow.Api/Export/TailoredContentTypstRenderer.cs` (new)
+- `TaskFlow.Api/Export/Templates/resume.typ`, `cover-letter.typ` (new)
+- `TaskFlow.Api/Common/Result.cs` (edit — add `ResultStatus.Error`/`Result<T>.Error`)
+- `TaskFlow.Api/Controllers/JobApplicationsController.cs` (edit — two new export actions)
+- `TaskFlow.Api/Controllers/TasksControllers.cs` (edit — T5.0 ownership fix)
+- `TaskFlow.Api/TaskFlow.Api.csproj` (edit — add Markdig)
+- `test.cmd` (edit — exclude `RequiresTypstBinary` trait from the default run)
 - `TaskFlow.Web/src/features/KanbanBoard.tsx` or the Done card component (download action)
-- Tests: `ExportServiceTests.cs`, a download action test
+- Tests: `TasksControllerOwnershipTests.cs` (or extend existing),
+  `TailoredContentTypstRendererTests.cs`, `ExportServiceTests.cs`, `ProcessTypstCompilerTests.cs`,
+  a download action test
 
 ### Tasks
 
-**T5.1 — Export service.** `IExportService` renders a `TailoredContent` markdown document to PDF
-and to a Markdown file, for both the resume and the cover letter. **Open decision, not yet made:
-which PDF library** (candidates named in the source docs: QuestPDF, or an HTML-to-PDF path — no
-choice has been verified against the repo or its licensing; confirmed no such package exists yet).
-RED: given approved resume and cover letter content, the service returns a PDF and Markdown
-artifact for each, and rejects content not from an `Approved` application. GREEN:
-`PdfExportService` behind `IExportService`. Security: export reads only content the requesting
-session owns, through the Sprint 0 ownership guard.
+**T5.0 — Close the pre-existing `TasksController` ownership gap.** Lands first, before any other
+task below, as its own change gating the rest of this sprint the same way Sprint 0 gated the rest
+of Epic 3. RED: a non-owner hitting `GET/PUT/PATCH/POST/DELETE /api/Tasks/{id}` for another user's
+Epic-3-linked task (one with a non-null `ApplicationId`) is refused (404, matching `GetAll`'s
+existing convention), while a generic (`ApplicationId == null`) task stays visible/mutable to
+everyone as today. GREEN: scope `GetById`, `Update`, `UpdateStatus`, `Approve`, `Reject`, `Delete`
+the same way `GetAll` already is
+(`t.ApplicationId == null || t.Application!.OwnerId == callerId`).
 
-**T5.2 — Download action.** Cards in the `Done` column for an approved application expose a
-download for the resume and for the cover letter. RED: a `Done` application shows downloads that
-return the artifacts. GREEN: the download action wired to `IExportService`.
+**T5.1a — `ITypstCompiler` seam.** RED: given a trivial valid Typst source, returns PDF bytes
+starting with `%PDF-`; given a source that makes the compiler exit non-zero, returns a failure
+`Result` without throwing; given a source designed to run long, a short configured timeout kills
+the process and returns a failure `Result` within bounds. (Real-binary tests, trait-gated per the
+testing decision above.) GREEN: `ProcessTypstCompiler` — stdin/stdout piping, `--root` sandbox,
+timeout, config-driven binary path.
+
+**T5.1b — `TailoredContentTypstRenderer`.** RED: given Markdown with headings/bullets/bold,
+produces the expected Typst markup; given content containing `#`, `@`, backslash, and other
+Typst-significant characters (in prose, mid-sentence, at line-start), every instance appears
+backslash-escaped in the output and never as live syntax; given a disallowed construct (raw HTML,
+an image), it's dropped or flattened, never passed through. GREEN: Markdig-based AST walk over the
+allow-listed node set, escape-then-emit.
+
+**T5.1c — Typst templates.** `resume.typ`, `cover-letter.typ` — static assets, verified via a
+smoke-test real compile with fixed sample content rather than conventional TDD, following this
+repo's existing precedent (`StaleClaimReaperService` itself has no unit test file; the
+logic-bearing collaborator it calls does).
+
+**T5.1d — `IExportService`/`ExportService`.** RED: given an `Approved` application owned by the
+caller, `ExportResumeAsync`/`ExportCoverLetterAsync` return the right bytes/content-type for both
+`Pdf` and `Markdown` formats; a `ReviewReady`-or-earlier application is refused (`Invalid`); a
+different owner's application is refused (`NotFound`, same as missing). GREEN: ties T5.1a–c
+together, following `JobApplicationService`'s exact ownership/state-check convention.
+
+**T5.2 — Controller actions.** RED: HTTP-level integration tests for both new
+`GET /api/JobApplications/{id}/export/resume?format=pdf|markdown` and
+`GET /api/JobApplications/{id}/export/cover-letter?format=pdf|markdown` routes — 200 with correct
+`Content-Type`/`Content-Disposition` for an owned `Approved` application, 404 for wrong owner, 400
+for wrong state, 401 for missing identity. GREEN: two actions on `JobApplicationsController`,
+returning `FileContentResult` via `File(bytes, contentType, fileName)`.
+
+**T5.3 — Frontend download action.** RED: a `Done`-column card for an approved application shows
+resume/cover-letter download controls; clicking triggers a fetch to the new endpoints and a browser
+download. GREEN: wired into the `Done` card component.
 
 ### Definition of Done
 
+- T5.0 is merged before any other task in this sprint starts: no `TasksController` single-item
+  action can read or mutate another owner's Epic-3-linked task.
 - Approved resume and cover letter export to PDF and Markdown.
-- Export refuses content that is not from an `Approved` application and is scoped by session
-  ownership.
-- No change to the board core or agents beyond the added service and the download action.
+- Export refuses content that is not from an `Approved` application, and is scoped by ownership
+  (`NotFound` for both missing and wrong-owner, matching `JobApplicationService`'s convention).
+- Tailored content can never be interpreted as executable Typst markup — every Typst-significant
+  character in converted content is escaped before insertion, verified by tests written against
+  adversarial input, not just the happy path.
+- `Result`/`ResultStatus` gains `Error` for internal/subprocess failures, mapped to HTTP 500 — no
+  internal failure path in this sprint bypasses `Result`.
+- `.\test` runs without requiring `typst` to be installed; a trait-gated subset of real
+  end-to-end tests opts in explicitly on a machine that has it.
+- No change to the board core or agents beyond the added service, controller actions, and the
+  download action.
 
 ### Prerequisites
 
 - Sprint 4R (an `Approved` application with both outputs) and Sprint 0 (ownership guard).
+- T5.0 (this sprint's own gating fix) before T5.1 onward.
+
+### Still open, not part of this sprint's scope
+
+- **Typst binary packaging** — now architected in Epic 5, `TaskFlow_Epic5_DeploymentInfrastructure.md`
+  (2026-08-11), not built yet. Sprint 5's own implementation doesn't block on that doc's tracks
+  landing; `ITypstCompiler`/`Export:TypstBinaryPath` work the same regardless of which deploy target
+  ships first.
 
 ---
 
@@ -1772,8 +1961,13 @@ starts:
    **Settled and shipped in Sprint 0:** `react-markdown` + `rehype-sanitize` (confirmed installed
    in `TaskFlow.Web/package.json`). This log entry was stale — the decision was made and shipped
    in Sprint 0's own section but never reflected back here.
-3. **Sprint 5, T5.1 — which PDF library?** QuestPDF vs. an HTML-to-PDF path. Not yet decided, and
-   licensing hasn't been checked.
+3. **Sprint 5, T5.1 — which PDF library?** ~~QuestPDF vs. an HTML-to-PDF path. Not yet decided, and
+   licensing hasn't been checked.~~ **Settled 2026-08-11** — direct Typst invocation via a
+   shelled-out `ITypstCompiler` (no .NET binding exists mature enough to use, confirmed via
+   research), not Pandoc, not QuestPDF, not a hosted API. See Sprint 5's "Decisions owned here"
+   subsection for the full reasoning, the `Result.Error` addition, and the T5.0 gating fix found
+   while designing it. ~~Typst binary packaging itself is separately and deliberately left open.~~
+   **Also settled 2026-08-11** — see Epic 5, `TaskFlow_Epic5_DeploymentInfrastructure.md`.
 4. **Sprint 2, T2.1/T2.4 — exact controller/endpoint shape for the job-posting flow.** ~~Decided in
    principle~~ **Settled 2026-08-10** — see Sprint 2's "Decisions owned here" subsection:
    `JobApplicationsController` (`api/JobApplications`), `IJobPostingIngestionParser` DI seam,
