@@ -1,6 +1,7 @@
 namespace TaskFlow.Api.Services;
 
 using TaskFlow.Api.Common;
+using TaskFlow.Api.DTOs;
 
 /// <summary>
 /// Captures a user's base resume server-side for one ingestion session (never localStorage — a
@@ -18,4 +19,11 @@ public interface IResumeContextService
     /// this project's IDOR-safe convention.
     /// </summary>
     Task<Result<string>> GetForApplicationAsync(int applicationId, int callerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sprint 6: the caller's own most recently saved base resume, from any session — lets the
+    /// intake UI offer reuse instead of forcing a re-paste. NotFound if the caller has never saved
+    /// one (a real, expected case for a first-time user, not an error).
+    /// </summary>
+    Task<Result<ResumeContextSummaryDto>> GetMostRecentForCallerAsync(int callerId, CancellationToken ct = default);
 }

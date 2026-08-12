@@ -227,4 +227,41 @@ public class ResumeContextServiceTests
 
         result.Status.Should().Be(ResultStatus.NotFound);
     }
+
+    // ── GetMostRecentForCallerAsync (Sprint 6: "reuse your last resume" for the intake UI) ──────
+    // Pure mapping logic over IResumeContextRepository.GetMostRecentForOwnerAsync, so mocked like
+    // the rest of this file's non-persistence-behavior tests.
+
+    [Fact]
+    public async Task GetMostRecentForCallerAsync_returns_NotFound_when_the_repository_has_nothing()
+    {
+        _repo.Setup(r => r.GetMostRecentForOwnerAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ResumeContext?)null);
+
+        var result = await CreateSut().GetMostRecentForCallerAsync(callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
+    [Fact]
+    public async Task GetMostRecentForCallerAsync_maps_the_found_context_to_the_summary_dto()
+    {
+        var updatedAt = new DateTime(2026, 8, 12, 10, 0, 0, DateTimeKind.Utc);
+        _repo.Setup(r => r.GetMostRecentForOwnerAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ResumeContext
+            {
+                IngestionSessionId = "session-A",
+                OwnerId = 1,
+                Content = "Base resume text.",
+                ContentFormat = "markdown",
+                UpdatedAt = updatedAt
+            });
+
+        var result = await CreateSut().GetMostRecentForCallerAsync(callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Content.Should().Be("Base resume text.");
+        result.Value.ContentFormat.Should().Be("markdown");
+        result.Value.UpdatedAt.Should().Be(updatedAt);
+    }
 }

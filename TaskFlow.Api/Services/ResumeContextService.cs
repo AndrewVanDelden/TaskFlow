@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TaskFlow.Api.Common;
+using TaskFlow.Api.DTOs;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Repositories;
 using TaskFlow.Api.Security;
@@ -94,6 +95,20 @@ public sealed class ResumeContextService : IResumeContextService
             return Result<string>.NotFound("No base resume has been saved for this application's session.");
 
         return Result<string>.Ok(context.Content);
+    }
+
+    public async Task<Result<ResumeContextSummaryDto>> GetMostRecentForCallerAsync(int callerId, CancellationToken ct = default)
+    {
+        var context = await _resumeContexts.GetMostRecentForOwnerAsync(callerId, ct);
+        if (context is null)
+            return Result<ResumeContextSummaryDto>.NotFound("No base resume has been saved yet.");
+
+        return Result<ResumeContextSummaryDto>.Ok(new ResumeContextSummaryDto
+        {
+            Content = context.Content,
+            ContentFormat = context.ContentFormat,
+            UpdatedAt = context.UpdatedAt
+        });
     }
 
     // ContentFormat is an enum-like discriminator ("text"/"markdown"), not free text - null,

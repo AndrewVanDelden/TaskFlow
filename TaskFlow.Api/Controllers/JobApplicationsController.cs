@@ -75,6 +75,17 @@ public class JobApplicationsController : ControllerBase
         return (await _resumeContext.GetForApplicationAsync(id, callerId)).ToActionResult();
     }
 
+    // The caller's own most recently saved base resume, from any session (Sprint 6: lets the
+    // intake UI offer reuse instead of forcing a re-paste every time).
+    [HttpGet("resume-context/latest")]
+    public async Task<IActionResult> GetMostRecentResumeContext()
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        return (await _resumeContext.GetMostRecentForCallerAsync(callerId)).ToActionResult();
+    }
+
     // Human sign-off on the pair: moves both sibling tasks to Done and the application to Approved.
     [HttpPost("{id:int}/approve")]
     public async Task<IActionResult> Approve(int id)

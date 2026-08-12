@@ -17,6 +17,15 @@ public class ResumeContextRepository : IResumeContextRepository
         await _db.ResumeContexts.FirstOrDefaultAsync(
             r => r.IngestionSessionId == ingestionSessionId && r.OwnerId == ownerId, ct);
 
+    // ownerId here is never a client-supplied value in the real call path (the controller resolves
+    // it from the JWT) — that's what makes this query ownership-safe despite having no session-id
+    // dimension to pair it with, unlike GetForOwnerAsync above.
+    public async Task<ResumeContext?> GetMostRecentForOwnerAsync(int ownerId, CancellationToken ct = default) =>
+        await _db.ResumeContexts
+            .Where(r => r.OwnerId == ownerId)
+            .OrderByDescending(r => r.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+
     public async Task AddAsync(ResumeContext context, CancellationToken ct = default) =>
         await _db.ResumeContexts.AddAsync(context, ct);
 

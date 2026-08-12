@@ -95,4 +95,79 @@ public class ResumeContextRepositoryTests
         stillReadableByRealOwner.Should().NotBeNull();
         stillReadableByRealOwner!.Content.Should().Be("Base resume text goes here.");
     }
+
+    // ── Sprint 6: GetMostRecentForOwnerAsync — owner-only read, no session id ──────────────────
+    // New query shape: "the caller's own most recently saved resume, from any session" (needed so
+    // the intake UI can offer "reuse your last resume" instead of forcing a re-paste). Unlike
+    // GetForOwnerAsync, there is no session-id dimension to scope on, so ownership scoping rests
+    // entirely on the OwnerId filter — the second test below is the one that actually proves that.
+
+    [Fact]
+    public async Task GetMostRecentForOwnerAsync_returns_the_most_recently_updated_row_for_that_owner()
+    {
+        using var db = new SqliteInMemoryContext();
+        var repo = new ResumeContextRepository(db.Context);
+
+        await repo.AddAsync(new ResumeContext
+        {
+            IngestionSessionId = "session-A",
+            OwnerId = 1,
+            Content = "Older draft.",
+            UpdatedAt = DateTime.UtcNow.AddDays(-1)
+        });
+        await repo.AddAsync(new ResumeContext
+        {
+            IngestionSessionId = "session-B",
+            OwnerId = 1,
+            Content = "Newer draft.",
+            UpdatedAt = DateTime.UtcNow
+        });
+        await repo.SaveChangesAsync();
+
+        var mostRecent = await repo.GetMostRecentForOwnerAsync(ownerId: 1);
+
+        mostRecent.Should().NotBeNull();
+        mostRecent!.Content.Should().Be("Newer draft.");
+    }
+
+    // This is the test that actually proves the ownership scoping, not just the ordering: owner
+    // 2's row is newer, but a lookup for owner 1 must never return it.
+    [Fact]
+    public async Task GetMostRecentForOwnerAsync_never_returns_another_owners_row_even_if_it_is_newer()
+    {
+        using var db = new SqliteInMemoryContext();
+        var repo = new ResumeContextRepository(db.Context);
+
+        await repo.AddAsync(new ResumeContext
+        {
+            IngestionSessionId = "session-A",
+            OwnerId = 1,
+            Content = "Owner 1's older draft.",
+            UpdatedAt = DateTime.UtcNow.AddDays(-1)
+        });
+        await repo.AddAsync(new ResumeContext
+        {
+            IngestionSessionId = "session-B",
+            OwnerId = 2,
+            Content = "Owner 2's newer draft.",
+            UpdatedAt = DateTime.UtcNow
+        });
+        await repo.SaveChangesAsync();
+
+        var mostRecentForOwner1 = await repo.GetMostRecentForOwnerAsync(ownerId: 1);
+
+        mostRecentForOwner1.Should().NotBeNull();
+        mostRecentForOwner1!.Content.Should().Be("Owner 1's older draft.");
+    }
+
+    [Fact]
+    public async Task GetMostRecentForOwnerAsync_returns_null_when_the_owner_has_no_saved_resume()
+    {
+        using var db = new SqliteInMemoryContext();
+        var repo = new ResumeContextRepository(db.Context);
+
+        var mostRecent = await repo.GetMostRecentForOwnerAsync(ownerId: 1);
+
+        mostRecent.Should().BeNull();
+    }
 }
