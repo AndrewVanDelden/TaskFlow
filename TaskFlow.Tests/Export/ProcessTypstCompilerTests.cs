@@ -18,9 +18,13 @@ namespace TaskFlow.Tests.Export;
 /// <c>dotnet test --filter "RequiresTypstBinary=true"</c> on a machine that has <c>typst</c> on
 /// PATH.
 ///
-/// NOT EXECUTED as of T5.1a: the `typst` binary is not installed on this machine, so these tests
-/// were written carefully against Typst's documented CLI/scripting contract but could not actually
-/// be run to confirm RED-then-GREEN. See the T5.1a report for exactly what was and wasn't verified.
+/// Executed for real (2026-08-11, after the T5.1a commit): the `typst` binary was installed and
+/// these tests were run against it directly, confirming RED-then-GREEN rather than leaving them
+/// unverified. One real bug surfaced during that run, since fixed and recorded above and in
+/// TaskFlow_Epic3_ResumeBuilder.md - the invalid-syntax and timeout tests originally asserted only
+/// `IsSuccess == false`, which also holds if the binary is simply unresolvable (Process.Start
+/// fails near-instantly), so both weakly passed even when typst couldn't be found at all. Now they
+/// assert the exact failure message, which does distinguish those cases.
 /// </summary>
 [Trait("RequiresTypstBinary", "true")]
 public class ProcessTypstCompilerTests
@@ -65,23 +69,39 @@ public class ProcessTypstCompilerTests
 
         result.IsSuccess.Should().BeFalse();
         result.Value.Should().BeNull();
+        // Confirmed by direct observation (2026-08-11, once typst was installed mid-session): with
+        // the binary unresolvable, this assertion alone still passed, because ProcessTypstCompiler
+        // also reports IsSuccess == false when Process.Start itself fails to find the executable -
+        // "PDF compilation failed to start." vs. this test's real target, "PDF compilation failed."
+        // (the non-zero-exit path). Asserting the exact message is what actually proves typst ran
+        // and rejected the source, rather than never having been invoked at all.
+        result.Error.Should().Be("PDF compilation failed.");
     }
 
     [Fact]
     public async Task Long_running_source_is_killed_by_the_configured_timeout_and_returns_failure_within_bounds()
     {
-        // Typst's scripting layer supports `while` loops (confirmed against Typst's documented
-        // syntax); `#while true { }` should never terminate on its own. UNVERIFIED: this has not
-        // been executed to confirm it actually hangs the real typst process rather than, say, being
-        // rejected at parse/compile time some other way - flagged explicitly in the T5.1a report
-        // rather than asserted as fact.
+        // The originally-flagged-as-unverified premise turned out to be wrong when actually run
+        // (2026-08-11): `#while true { }` does NOT hang typst - it's statically rejected at compile
+        // time ("error: condition is always true"), confirmed by running it directly against the
+        // real binary, so it exercised the non-zero-exit path, not the timeout path, and the test
+        // was silently passing for the wrong reason. A large but genuinely finite nested loop does
+        // not trip that static check and was confirmed, by direct manual probing with a plain
+        // `timeout` wrapper outside this test, to still be running past an 8s budget - a real,
+        // observed long-running computation, not a hang trick relying on typst's own scripting
+        // limits.
         var sut = CreateSut(timeoutSeconds: 1);
 
         var stopwatch = Stopwatch.StartNew();
-        var result = await sut.CompilePdfAsync("#while true { }");
+        var result = await sut.CompilePdfAsync("#for i in range(100000000) { for j in range(1000) { } }");
         stopwatch.Stop();
 
         result.IsSuccess.Should().BeFalse();
+        // Same reasoning as the invalid-syntax test above: IsSuccess == false alone would also pass
+        // if typst were simply unresolvable (a near-instant Process.Start failure), which would
+        // trivially satisfy the "under 15s" bound below too without ever proving a timeout actually
+        // happened. The exact message distinguishes "timed out" from "failed to start."
+        result.Error.Should().Be("PDF compilation timed out.");
         // Generous upper bound relative to the 1s configured timeout - proves the call returns
         // instead of hanging the test suite, without being a flaky tight timing assertion.
         stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(15));
