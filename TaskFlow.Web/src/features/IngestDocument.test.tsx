@@ -2,12 +2,25 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { server } from '../test/server'
 import { IngestDocument } from './IngestDocument'
 
+// IngestDocument reads its ingestion session id from the :sessionId route param (App.tsx's
+// /ingest/:sessionId route), so every render needs a routing wrapper that supplies one.
+function renderIngestDocument() {
+  return render(
+    <MemoryRouter initialEntries={['/ingest/test-session-id']}>
+      <Routes>
+        <Route path="/ingest/:sessionId" element={<IngestDocument />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 describe('IngestDocument', () => {
   it('parses pasted text and shows the returned drafts', async () => {
-    render(<IngestDocument />)
+    renderIngestDocument()
 
     await userEvent.type(screen.getByPlaceholderText('Paste a document'), '# doc')
     await userEvent.click(screen.getByRole('button', { name: /parse/i }))
@@ -16,7 +29,7 @@ describe('IngestDocument', () => {
   })
 
   it('approves the previewed drafts and reports how many were added', async () => {
-    render(<IngestDocument />)
+    renderIngestDocument()
 
     await userEvent.type(screen.getByPlaceholderText('Paste a document'), '# doc')
     await userEvent.click(screen.getByRole('button', { name: /parse/i }))
@@ -28,7 +41,7 @@ describe('IngestDocument', () => {
   })
 
   it('saves the base resume and shows a confirmation message', async () => {
-    render(<IngestDocument />)
+    renderIngestDocument()
 
     await userEvent.type(screen.getByLabelText(/base resume/i), 'My resume text')
     await userEvent.click(screen.getByRole('button', { name: /save base resume/i }))
@@ -46,7 +59,7 @@ describe('IngestDocument', () => {
       }),
     )
 
-    render(<IngestDocument />)
+    renderIngestDocument()
 
     const field = screen.getByLabelText(/base resume/i)
     const saveBtn = screen.getByRole('button', { name: /save base resume/i })
@@ -67,7 +80,7 @@ describe('IngestDocument', () => {
   it('never writes to localStorage while saving the base resume', async () => {
     const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
 
-    render(<IngestDocument />)
+    renderIngestDocument()
 
     await userEvent.type(screen.getByLabelText(/base resume/i), 'Secret resume contents')
     await userEvent.click(screen.getByRole('button', { name: /save base resume/i }))

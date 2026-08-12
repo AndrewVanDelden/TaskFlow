@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent } from 'react'
+import { useParams } from 'react-router-dom'
 import { useIngestion } from '../hooks/useIngestion'
 import { useBaseResumeCapture } from '../hooks/useBaseResumeCapture'
 
@@ -10,10 +11,13 @@ export function IngestDocument() {
   const { drafts, loading, error, committedCount, submit, approve } = useIngestion()
 
   // Separate, independent capture: a base resume saved server-side (never localStorage) and
-  // scoped to one ingestion session id, generated once per component instance and reused on
-  // every save so a later save updates the same session's resume context instead of creating a
-  // new one.
-  const [ingestionSessionId] = useState(() => crypto.randomUUID())
+  // scoped to one ingestion session id. The id lives in the route (App.tsx's /ingest/:sessionId
+  // route), not component state, so it survives an unmount/remount and every save still updates
+  // the same session's resume context instead of creating a new one (PR #40 review finding #7).
+  const { sessionId } = useParams<{ sessionId: string }>()
+  // Non-null assertion is safe here: this component only ever renders behind the
+  // /ingest/:sessionId route, which cannot match without a :sessionId segment.
+  const ingestionSessionId = sessionId!
   const [baseResumeText, setBaseResumeText] = useState('')
   const baseResumeCapture = useBaseResumeCapture()
 
