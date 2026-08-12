@@ -12,7 +12,12 @@ public class TaskRepository : ITaskRepository
 
     public async Task<TaskItem?> GetByIdAsync(int id, bool includeAssignee = false, CancellationToken ct = default)
     {
-        var query = _db.Tasks.AsQueryable();
+        // Application is always included (unconditionally, unlike AssignedTo) so every caller of
+        // this method gets the navigation populated when ApplicationId is set - TaskService's six
+        // single-item actions need task.Application!.OwnerId for the ownership check (T5.0). A LEFT
+        // JOIN on a nullable FK is cheap and behavior-preserving for rows where ApplicationId is
+        // null, so this is safe for existing callers (agents) that never read .Application.
+        var query = _db.Tasks.Include(t => t.Application).AsQueryable();
         if (includeAssignee) query = query.Include(t => t.AssignedTo);
         return await query.FirstOrDefaultAsync(t => t.Id == id, ct);
     }

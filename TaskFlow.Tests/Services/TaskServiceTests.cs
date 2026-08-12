@@ -33,6 +33,21 @@ public class TaskServiceTests
         _tasks.Setup(t => t.GetByIdAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync(task);
 
+    // T5.0: an Epic 3 sibling task (ApplicationId set) owned by someone other than the caller.
+    // Status defaults to Review so Approve/Reject's own status guard would otherwise let the call
+    // through - proving the NotFound comes from the ownership check, not the status check.
+    private static TaskItem Epic3TaskOwnedBy(int ownerId, int id = 1) => new()
+    {
+        Id = id,
+        Title = "Sample",
+        Status = WorkflowStatus.Review,
+        Priority = TaskPriority.Medium,
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+        ApplicationId = 5,
+        Application = new JobApplication { Id = 5, OwnerId = ownerId }
+    };
+
     // ── Create ────────────────────────────────────────────────────────────────
     [Fact]
     public async Task Create_fails_validation_when_assignee_does_not_exist()
@@ -64,7 +79,7 @@ public class TaskServiceTests
     {
         SetupGetById(null);
 
-        var result = await CreateSut().UpdateAsync(5, new UpdateTaskDto { Title = "x" });
+        var result = await CreateSut().UpdateAsync(5, new UpdateTaskDto { Title = "x" }, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.NotFound);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
@@ -76,7 +91,7 @@ public class TaskServiceTests
         SetupGetById(SampleTask());
         _users.Setup(u => u.ExistsAsync(77, It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
-        var result = await CreateSut().UpdateAsync(1, new UpdateTaskDto { Title = "x", AssignedToId = 77 });
+        var result = await CreateSut().UpdateAsync(1, new UpdateTaskDto { Title = "x", AssignedToId = 77 }, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
@@ -92,12 +107,26 @@ public class TaskServiceTests
             Title = "New title",
             Status = WorkflowStatus.Review,
             Priority = TaskPriority.High
-        });
+        }, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Title.Should().Be("New title");
         result.Value!.Status.Should().Be(nameof(WorkflowStatus.Review));
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // T5.0: fresh architecture review (Sprint 5) found the round-1 PR #45 ownership-scoping fix only
+    // covered GET /api/Tasks (the list). The same six single-item actions never checked ownership at
+    // all - any authenticated user could read or mutate another user's Epic 3 sibling task by id.
+    [Fact]
+    public async Task Update_returns_NotFound_when_caller_is_not_the_owner_of_an_Epic3_sibling_task()
+    {
+        SetupGetById(Epic3TaskOwnedBy(ownerId: 99));
+
+        var result = await CreateSut().UpdateAsync(1, new UpdateTaskDto { Title = "Hacked" }, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── UpdateStatus ──────────────────────────────────────────────────────────
@@ -106,7 +135,7 @@ public class TaskServiceTests
     {
         SetupGetById(null);
 
-        var result = await CreateSut().UpdateStatusAsync(9, new UpdateTaskStatusDto { Status = WorkflowStatus.Done });
+        var result = await CreateSut().UpdateStatusAsync(9, new UpdateTaskStatusDto { Status = WorkflowStatus.Done }, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.NotFound);
         // No move happened, so nothing is broadcast.
@@ -120,7 +149,7 @@ public class TaskServiceTests
     {
         SetupGetById(SampleTask());
 
-        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.Done });
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.Done }, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Status.Should().Be(nameof(WorkflowStatus.Done));
@@ -132,12 +161,26 @@ public class TaskServiceTests
     {
         SetupGetById(SampleTask());
 
-        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.InProgress });
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.InProgress }, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         _notifier.Verify(
             n => n.TaskMovedAsync(1, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_returns_NotFound_when_caller_is_not_the_owner_of_an_Epic3_sibling_task()
+    {
+        SetupGetById(Epic3TaskOwnedBy(ownerId: 99));
+
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.Done }, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ── Approve (Review -> Done, human only) ──────────────────────────────────
@@ -148,7 +191,7 @@ public class TaskServiceTests
         task.Status = WorkflowStatus.Review;
         SetupGetById(task);
 
-        var result = await CreateSut().ApproveAsync(1);
+        var result = await CreateSut().ApproveAsync(1, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Status.Should().Be(nameof(WorkflowStatus.Done));
@@ -163,7 +206,7 @@ public class TaskServiceTests
         task.Status = WorkflowStatus.Todo;
         SetupGetById(task);
 
-        var result = await CreateSut().ApproveAsync(1);
+        var result = await CreateSut().ApproveAsync(1, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
@@ -177,9 +220,25 @@ public class TaskServiceTests
     {
         SetupGetById(null);
 
-        var result = await CreateSut().ApproveAsync(9);
+        var result = await CreateSut().ApproveAsync(9, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
+    [Fact]
+    public async Task Approve_returns_NotFound_when_caller_is_not_the_owner_of_an_Epic3_sibling_task()
+    {
+        // Status is Review (see Epic3TaskOwnedBy), so an unguarded call would otherwise succeed -
+        // this proves the block is the ownership check, not the status guard above.
+        SetupGetById(Epic3TaskOwnedBy(ownerId: 99));
+
+        var result = await CreateSut().ApproveAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ── Reject (Review -> Todo with a reason) ─────────────────────────────────
@@ -191,7 +250,7 @@ public class TaskServiceTests
         task.ClaimedBy = "GenericExecutor";
         SetupGetById(task);
 
-        var result = await CreateSut().RejectAsync(1, "Needs a better haiku.");
+        var result = await CreateSut().RejectAsync(1, "Needs a better haiku.", callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Status.Should().Be(nameof(WorkflowStatus.Todo));
@@ -210,7 +269,7 @@ public class TaskServiceTests
         task.Status = WorkflowStatus.Todo;
         SetupGetById(task);
 
-        var result = await CreateSut().RejectAsync(1, "reason");
+        var result = await CreateSut().RejectAsync(1, "reason", callerId: 1);
 
         result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
@@ -224,9 +283,24 @@ public class TaskServiceTests
     {
         SetupGetById(null);
 
-        var result = await CreateSut().RejectAsync(9, "reason");
+        var result = await CreateSut().RejectAsync(9, "reason", callerId: 1);
 
         result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
+    [Fact]
+    public async Task Reject_returns_NotFound_when_caller_is_not_the_owner_of_an_Epic3_sibling_task()
+    {
+        SetupGetById(Epic3TaskOwnedBy(ownerId: 99));
+
+        var result = await CreateSut().RejectAsync(1, "reason", callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _logs.Verify(l => l.AddAsync(It.IsAny<AgentLog>(), It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ── GetById ───────────────────────────────────────────────────────────────
@@ -235,7 +309,7 @@ public class TaskServiceTests
     {
         SetupGetById(null);
 
-        var result = await CreateSut().GetByIdAsync(3);
+        var result = await CreateSut().GetByIdAsync(3, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.NotFound);
     }
@@ -245,10 +319,22 @@ public class TaskServiceTests
     {
         SetupGetById(SampleTask(7));
 
-        var result = await CreateSut().GetByIdAsync(7);
+        var result = await CreateSut().GetByIdAsync(7, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Id.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task GetById_returns_NotFound_when_caller_is_not_the_owner_of_an_Epic3_sibling_task()
+    {
+        // The IDOR this task exists to close: GET /api/Tasks/{id} was leaking TailoredContent
+        // (a personal résumé/cover letter) to any authenticated user who knew or guessed the id.
+        SetupGetById(Epic3TaskOwnedBy(ownerId: 99, id: 1));
+
+        var result = await CreateSut().GetByIdAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
     }
 
     // ── GetAll ────────────────────────────────────────────────────────────────
@@ -324,7 +410,7 @@ public class TaskServiceTests
     {
         SetupGetById(null);
 
-        var result = await CreateSut().DeleteAsync(4);
+        var result = await CreateSut().DeleteAsync(4, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.NotFound);
         _tasks.Verify(t => t.Remove(It.IsAny<TaskItem>()), Times.Never);
@@ -336,10 +422,22 @@ public class TaskServiceTests
         var task = SampleTask();
         SetupGetById(task);
 
-        var result = await CreateSut().DeleteAsync(1);
+        var result = await CreateSut().DeleteAsync(1, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         _tasks.Verify(t => t.Remove(task), Times.Once);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Delete_returns_NotFound_when_caller_is_not_the_owner_of_an_Epic3_sibling_task()
+    {
+        SetupGetById(Epic3TaskOwnedBy(ownerId: 99));
+
+        var result = await CreateSut().DeleteAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.Remove(It.IsAny<TaskItem>()), Times.Never);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }
