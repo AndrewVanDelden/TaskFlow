@@ -180,7 +180,7 @@ The first bullet below is this project's most serious finding to date, not a nit
 | **2** | Job Posting Ingestion | Ready — architecture below, no code yet |
 | **3R** | Multi-Agent Generation | Ready — architecture below, no code yet |
 | **4R** | Combined Review and Approval | Ready — architecture below, no code yet |
-| **5** | Artifact Export | **COMPLETE** — 327/327 backend, 93/93 frontend |
+| **5** | Artifact Export | Ready — architecture decided 2026-08-11, no code yet |
 | **6** | Intake Experience Redesign | Ready — architecture below, no code yet |
 
 ## Definition of Done (Epic 3)
@@ -1662,78 +1662,14 @@ affordance.
 
 ## Sprint 5 — Artifact Export
 
-**Status: COMPLETE (2026-08-11).** T5.0–T5.3 shipped on `feature/epic3-sprint5-artifact-export`
-(7 commits: decisions doc, T5.0, T5.1a, T5.1b/T5.1c, T5.1d/T5.2, T5.3). Full suite green via
-`.\test`: 327/327 backend, 93/93 frontend, both with coverage. Built by five delegated engineers —
-three run in parallel with zero file overlap for the first round (T5.0's `TasksController` fix,
-T5.1a's `ITypstCompiler` seam, T5.1b/T5.1c's renderer+templates), then two more run in parallel for
-the second round (T5.1d/T5.2's `ExportService`+controller actions, which depend on all three
-round-1 pieces; T5.3's frontend download action, which only needed the already-locked HTTP
-contract) — each independently re-verified against the actual diff and a fresh `dotnet build`/
-`dotnet test`/`npx vitest run`/`npx tsc -b` run rather than taken on any subagent's self-report.
-
-Applying the Sprint 4R retrospective's own standing rule — "before shipping a new Epic 3 invariant,
-ask which existing generic endpoints can reach these same rows outside the new code path" —
-surfaced a live, pre-existing gap (T5.0) during the architecture pass, not introduced by this
-sprint but required to close before it, the same way Sprint 0 gated the rest of Epic 3.
-
-**What shipped, exactly as specified, plus one real design flaw caught and fixed during
-implementation:** `TasksController`'s six single-item actions (`GetById`, `Update`,
-`UpdateStatus`, `Approve`, `Reject`, `Delete`) now enforce the same owner-only scoping as the PR #45
-`GetAll` fix (T5.0). `ITypstCompiler`/`ProcessTypstCompiler` shell out to the `typst` CLI via
-stdin/stdout with a sandboxed `--root`, a configured timeout that kills the whole process tree, and
-stderr that never reaches the client (T5.1a). `TailoredContentTypstRenderer` walks a Markdig AST
-and emits only our own fixed Typst syntax for an allow-listed node set, backslash-escaping every
-Typst-significant character in content text first — proven against adversarial input (`#import`
-injection attempts, raw `<script>` tags, prose starting with `-`/`=`), not just the happy path
-(T5.1b), alongside two hand-authored Typst templates (T5.1c). `ExportService` ties all three
-together behind the exact ownership/state-guard convention `JobApplicationService.ApproveAsync`
-already established, with Markdown export never touching Typst at all — proven structurally via a
-`Times.Never` assertion on the compiler mock (T5.1d), exposed as two new `JobApplicationsController`
-actions returning a real file download via a new `ToFileActionResult` (T5.2). A Done-column card
-for a task with an `applicationId` now shows PDF/Markdown download buttons wired against that
-contract (T5.3).
-
-**Bug found and fixed during T5.1a, not glossed over:** the architecture decision specified a
-static factory `Result<T>.Error(string message)`, but `Result<T>` is a record whose own third
-positional parameter is already a property named `Error` — a real `CS0102` compile collision, not a
-style concern. Renamed the new factory to `Result<T>.InternalError` per the standing rule to fix
-collisions by renaming at the source, not aliasing; the enum member `ResultStatus.Error` was
-unaffected and kept its designed name. Recorded in this doc under T5.1a at the time it was found.
-
-**Resolved same day (2026-08-11): the `typst` binary gap above was closed and closing it found two
-real bugs.** The user installed the `typst` CLI mid-session (`winget install --id Typst.Typst`,
-v0.15.1) and asked to close the gap. Running the three `RequiresTypstBinary`-trait tests for real
-for the first time surfaced:
-- **A genuine environment issue, not a code bug:** the first real run of
-  `Valid_Typst_source_compiles_to_PDF_bytes` failed (`IsSuccess` was `false`) because the
-  just-installed binary's directory wasn't yet on the test process's `PATH` (a fresh shell restart
-  was needed, or an explicit `PATH`/`Export:TypstBinaryPath` override for the one-off verification
-  run).
-- **A real test-quality gap, found by that same failed run:** the other two tests
-  (invalid-syntax, timeout) both asserted only `IsSuccess == false` — which is equally true when the
-  binary is simply unresolvable. Direct proof: both incidentally passed during the very run where
-  `PATH` was broken and typst was never actually invoked at all, while only the valid-source test
-  (the one asserting `IsSuccess == true`) caught the problem. **Fixed:** both now assert the exact
-  failure message (`"PDF compilation failed."` / `"PDF compilation timed out."`), which does
-  distinguish "typst ran and rejected this" from "typst was never invoked."
-- **A wrong premise, flagged as unverified when the test was written and confirmed wrong once
-  actually run:** `#while true { }` does not hang typst — it's statically rejected at compile time
-  (`error: condition is always true`), confirmed by running it directly against the real binary. The
-  timeout test was exercising the non-zero-exit path, not the timeout path, passing for the wrong
-  reason. **Fixed:** replaced with a large but genuinely finite nested loop
-  (`range(100000000)` × `range(1000)`), independently confirmed via a manual `timeout`-wrapped probe
-  outside the test to actually run past an 8-second budget without being statically rejected.
-
-All three tests now pass for real against typst 0.15.1, for the right reasons. `resume.typ`/
-`cover-letter.typ` were also smoke-tested directly (template text concatenated with sample content,
-compiled to a real PDF) — both succeed; a benign `unknown font family: linux libertine` warning
-falls back to New Computer Modern and never reaches stderr logging (`ProcessTypstCompiler` only logs
-stderr on a non-zero exit, not on success). Default backend suite unaffected: 327/327 still green.
-
-**Still open, not part of this sprint's scope:**
-- The branch has not been pushed or PR'd — pending user confirmation, consistent with this
-  project's convention that release actions are confirmed, not silent.
+**Status: Ready — architecture decided (2026-08-11), no code yet.** Full architecture review
+conducted before any engineer starts (see "Decisions owned here" below), confirmed against the
+actual repo (ownership patterns, `Result` type, `JobApplicationService` conventions, existing
+controllers) rather than designed from the source docs' assumptions alone. Applying the Sprint 4R
+retrospective's own standing rule — "before shipping a new Epic 3 invariant, ask which existing
+generic endpoints can reach these same rows outside the new code path" — surfaced a live,
+pre-existing gap (T5.0 below), not introduced by this sprint but required to close before it, the
+same way Sprint 0 gated the rest of Epic 3.
 
 ### Decisions owned here, before dispatching any engineer (2026-08-11)
 
@@ -1894,23 +1830,6 @@ starting with `%PDF-`; given a source that makes the compiler exit non-zero, ret
 the process and returns a failure `Result` within bounds. (Real-binary tests, trait-gated per the
 testing decision above.) GREEN: `ProcessTypstCompiler` — stdin/stdout piping, `--root` sandbox,
 timeout, config-driven binary path.
-
-**T5.1a implementation finding (2026-08-11): `Result<T>.Error` as specified collides with the
-record's own `Error` property — renamed to `Result<T>.InternalError`.** `Result<T>` is declared as
-`record Result<T>(ResultStatus Status, T? Value, string? Error)` — the third positional parameter
-already generates an instance property named `Error`, the same property every other factory
-(`NotFound`, `Conflict`, `Invalid`, `Unauthorized`) populates with its message. Confirmed by an
-actual `dotnet build`, not inferred: adding `public static Result<T> Error(string message) => ...`
-produces `CS0102: The type 'Result<T>' already contains a definition for 'Error'` — C# does not
-allow a static method and an instance property to share a name in the same type. `result.Error` (the
-property) already has real callers (`ResultExtensions.cs`, `ResumeContextService.cs`,
-`TailoringAgentBase.cs`, confirmed via grep), so renaming it would ripple outside this slice; the
-brand-new factory has zero callers yet, so it was renamed instead, per the standing rule to fix
-collisions by renaming at the source, not aliasing. **Decision: the factory is
-`Result<T>.InternalError(string message)`, not `Result<T>.Error(...)`.** `ResultStatus.Error` (the
-enum member) is unaffected — it's a different type, no collision — and keeps that exact name.
-Any later Sprint 5 code that needs to construct this status (`ProcessTypstCompiler`, and eventually
-`ExportService`) must call `Result<T>.InternalError(...)`.
 
 **T5.1b — `TailoredContentTypstRenderer`.** RED: given Markdown with headings/bullets/bold,
 produces the expected Typst markup; given content containing `#`, `@`, backslash, and other
