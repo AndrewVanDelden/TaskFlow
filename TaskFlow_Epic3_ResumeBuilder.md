@@ -180,7 +180,7 @@ The first bullet below is this project's most serious finding to date, not a nit
 | **2** | Job Posting Ingestion | Ready — architecture below, no code yet |
 | **3R** | Multi-Agent Generation | Ready — architecture below, no code yet |
 | **4R** | Combined Review and Approval | Ready — architecture below, no code yet |
-| **5** | Artifact Export | **COMPLETE** — 341/341 backend, 95/95 frontend (incl. PR #48 review fixes) |
+| **5** | Artifact Export | **COMPLETE** — 343/343 backend, 95/95 frontend (incl. PR #48 review fixes) |
 | **6** | Intake Experience Redesign | Ready — architecture below, no code yet |
 
 ## Definition of Done (Epic 3)
@@ -1982,9 +1982,9 @@ concurrent-download bug) independently found first by the manual review too — 
 not noise. One additional finding (the `TaskService` DRY violation) was manual-only; Copilot did not
 flag it.
 
-**Status: all 11 findings fixed and confirmed GREEN (341/341 backend, +14 tests; 95/95 frontend,
-+2 tests; all 5 real-binary `RequiresTypstBinary` tests re-run against actual `typst 0.15.1`,
-+2 tests).**
+**Status: all 12 findings (across both review rounds) fixed and confirmed GREEN (343/343 backend,
++16 tests; 95/95 frontend, +2 tests; all 5 real-binary `RequiresTypstBinary` tests re-run against
+actual `typst 0.15.1`, +2 tests).**
 
 - **Manual finding (mine), DRY:** `TaskService.cs`'s six single-item methods (`UpdateAsync`,
   `UpdateStatusAsync`, `ApproveAsync`, `RejectAsync`, `GetByIdAsync`, `DeleteAsync`) repeated the
@@ -2083,6 +2083,21 @@ flag it.
   mapping, and — most convincingly — a real HTTP-level integration test that drives a lone sibling
   through the actual individual-approve endpoint and asserts `GET /api/Tasks` reports its true,
   non-Approved state.
+
+**Round 2 (2026-08-12) — Copilot's automated review, on the fix commit above:**
+
+- **Copilot, confirmed real via Typst's own syntax rules, Security:** `SignificantChars` omitted
+  `/`, even though it's significant two distinct ways — a leading `/ Term: ...` creates a live
+  Typst term-list item, and `//` starts a line comment recognized even in ordinary markup mode (not
+  only inside `#` code mode), letting untrusted content silently drop whatever follows it on that
+  rendered line. Neither escalates to code execution/file access by itself, but both are exactly
+  the "content introduces live Typst syntax" violation this class's own allow-list boundary exists
+  to prevent — the same category already reasoned about for `[`/`]` in this file's own doc comment.
+  **Fixed:** added `/` to `SignificantChars`, so every occurrence (not just leading ones) is
+  backslash-escaped — `\/\/` is not the `//` comment token, and a leading `\/ ` is not a term-list
+  marker. RED tests added for both forms (leading term-marker, mid-paragraph comment attempt); the
+  existing `#import` adversarial test's expected string was updated to reflect the now-also-escaped
+  path separators (fallout, not a new bug — confirmed by re-running before and after).
 
 **Process note, in the interest of not overstating discipline:** two of the fixes above
 (`HttpContext.RequestAborted` forwarding, and the `TaskCardView`/`types.ts` gating change) were

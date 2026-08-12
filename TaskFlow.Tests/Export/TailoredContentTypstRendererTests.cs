@@ -110,6 +110,29 @@ public class TailoredContentTypstRendererTests
         result.Should().NotContain("\n= this isn't actually a heading");
     }
 
+    // Copilot review finding (PR #48, round 2): '/' was absent from SignificantChars, so untrusted
+    // content could still introduce live Typst markup - a leading "/ " creates a term-list item,
+    // and "//" starts a line comment recognized even in markup mode (not just inside "#" code mode).
+    // Both are a live-syntax leak this class's own allow-list boundary exists to prevent, even
+    // though neither is itself code execution.
+    [Fact]
+    public void Slash_term_list_marker_at_start_of_a_text_run_is_escaped_not_read_as_a_Typst_term_list()
+    {
+        var result = _renderer.Render("/ Term: this could become a live definition-list item");
+
+        result.Should().Contain(@"\/ Term: this could become a live definition-list item");
+        result.Should().NotContain("\n/ Term:");
+    }
+
+    [Fact]
+    public void Double_slash_comment_attempt_does_not_swallow_the_rest_of_the_line()
+    {
+        var result = _renderer.Render("Visible before. // this must not become a Typst comment. Visible after.");
+
+        result.Should().Contain(@"\/\/");
+        result.Should().Contain("Visible after.");
+    }
+
     [Fact]
     public void Raw_HTML_script_and_img_tags_are_never_passed_through_as_Typst_or_HTML()
     {
@@ -131,8 +154,12 @@ public class TailoredContentTypstRendererTests
         var result = _renderer.Render(
             "Skills: #import(\"/etc/passwd\") was listed on the fraudulent posting.");
 
-        result.Should().Contain("\\#import(\"/etc/passwd\")");
+        // Both the '#' that would enter code mode and every '/' in the path are escaped - the
+        // slashes matter too (PR #48 review finding): unescaped, "//" anywhere reads as a Typst
+        // line comment, not just a leading "#import(" that would enter code mode.
+        result.Should().Contain("\\#import(\"\\/etc\\/passwd\")");
         result.Should().NotContain("\n#import(\"/etc/passwd\")");
+        result.Should().NotContain("#import(\"/etc/passwd\")");
     }
 
     [Fact]

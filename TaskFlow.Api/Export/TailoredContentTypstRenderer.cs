@@ -38,14 +38,17 @@ public class TailoredContentTypstRenderer
     /// delimiters; '`' opens raw/code spans; '$' opens math mode; '@' begins a label reference;
     /// '&lt;' / '&gt;' are used in label syntax; '[' / ']' delimit content blocks (function
     /// arguments) -- an unescaped stray bracket in content could unbalance the surrounding Typst
-    /// source's block structure even though it is not, by itself, code execution. This list is a
-    /// verified starting point, not asserted exhaustive; expand it if another significant character
-    /// is found. Backslash itself is handled separately below, not in this array, because it must be
-    /// escaped independently and first.
+    /// source's block structure even though it is not, by itself, code execution; '/' is
+    /// significant two ways (PR #48 review finding) -- a leading "/ " creates a term-list item, and
+    /// "//" starts a line comment recognized even in markup mode, letting content silently drop
+    /// whatever follows it on that line. Escaping every '/' (not just leading ones) neutralizes both,
+    /// since "\/\/" is not the "//" token. This list is a verified starting point, not asserted
+    /// exhaustive; expand it if another significant character is found. Backslash itself is handled
+    /// separately below, not in this array, because it must be escaped independently and first.
     /// </summary>
     private static readonly char[] SignificantChars =
     {
-        '#', '*', '_', '`', '$', '<', '>', '@', '[', ']',
+        '#', '*', '_', '`', '$', '<', '>', '@', '[', ']', '/',
     };
 
     /// <summary>
