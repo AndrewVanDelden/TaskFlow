@@ -54,10 +54,7 @@ public class TaskService : ITaskService
         if (task is null)
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
-        // T5.0: an Epic 3 sibling task is visible/mutable only to its JobApplication's owner. A
-        // non-owner gets the same NotFound a missing id would - never a distinguishable error that
-        // reveals the task exists (the same IDOR class the PR #45 GetAll fix closed for the list).
-        if (task.ApplicationId != null && task.Application!.OwnerId != callerId)
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         if (dto.AssignedToId.HasValue && !await _users.ExistsAsync(dto.AssignedToId.Value, ct))
@@ -83,7 +80,7 @@ public class TaskService : ITaskService
         if (task is null)
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
-        if (task.ApplicationId != null && task.Application!.OwnerId != callerId)
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         task.Status = dto.Status;
@@ -103,7 +100,7 @@ public class TaskService : ITaskService
         if (task is null)
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
-        if (task.ApplicationId != null && task.Application!.OwnerId != callerId)
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         // Guardrail: Done is a human sign-off reachable only from Review. Agents stop at Review.
@@ -126,7 +123,7 @@ public class TaskService : ITaskService
         if (task is null)
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
-        if (task.ApplicationId != null && task.Application!.OwnerId != callerId)
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         if (task.Status != WorkflowStatus.Review)
@@ -162,7 +159,7 @@ public class TaskService : ITaskService
         if (task is null)
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
-        if (task.ApplicationId != null && task.Application!.OwnerId != callerId)
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
@@ -199,11 +196,19 @@ public class TaskService : ITaskService
         if (task is null)
             return Result<bool>.NotFound($"Task {id} not found.");
 
-        if (task.ApplicationId != null && task.Application!.OwnerId != callerId)
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<bool>.NotFound($"Task {id} not found.");
 
         _tasks.Remove(task);
         await _tasks.SaveChangesAsync(ct);
         return Result<bool>.Ok(true);
     }
+
+    // T5.0: an Epic 3 sibling task is visible/mutable only to its JobApplication's owner. A generic
+    // task (ApplicationId == null) is the shared board and is never forbidden. Every single-item
+    // action returns the same NotFound a missing id would for a forbidden sibling task - never a
+    // distinguishable error that reveals the task exists (the same IDOR class the PR #45 GetAll fix
+    // closed for the list). Extracted once here (was duplicated verbatim across all six methods).
+    private static bool IsOwnedByAnotherUser(TaskItem task, int callerId) =>
+        task.ApplicationId != null && task.Application!.OwnerId != callerId;
 }

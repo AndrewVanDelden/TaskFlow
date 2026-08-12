@@ -84,4 +84,21 @@ describe('requestBlob', () => {
     await expect(requestBlob('/api/JobApplications/10/export/resume?format=pdf')).rejects.toThrow()
     expect(getToken()).toBeNull()
   })
+
+  // Copilot review finding (PR #48): real server error responses (from ToActionResult /
+  // ToFileActionResult) are JSON objects shaped { "message": "..." }, but the test above uses a
+  // plain-text body that doesn't match that real shape - it was masking that the raw JSON string
+  // was being used verbatim as ApiError.message, so a failed export showed literal JSON text in
+  // the UI's error alert instead of the actual message.
+  it('extracts the message field from a JSON error body, matching the real server response shape', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        HttpResponse.json({ message: 'JobApplication 10 is ReviewReady; only Approved applications can be exported.' }, { status: 400 })),
+    )
+
+    await expect(requestBlob('/api/JobApplications/10/export/resume?format=pdf')).rejects.toMatchObject({
+      status: 400,
+      message: 'JobApplication 10 is ReviewReady; only Approved applications can be exported.',
+    })
+  })
 })

@@ -41,6 +41,19 @@ function buildHeaders(extraHeaders?: Record<string, string>): Record<string, str
   return headers
 }
 
+// The server's error responses (ToActionResult / ToFileActionResult) are JSON objects shaped
+// { "message": "..." } - extracts that field so the UI shows the real message instead of the raw
+// JSON text. Returns null (rather than throwing) for a non-JSON or differently-shaped body, so the
+// caller can fall back to the raw text.
+function extractErrorMessage(body: string): string | null {
+  try {
+    const parsed = JSON.parse(body)
+    return typeof parsed?.message === 'string' ? parsed.message : null
+  } catch {
+    return null
+  }
+}
+
 // Shared by request() and requestBlob(): the same 401-clears-token behavior, and the same
 // status+message ApiError for every other non-OK response.
 async function throwForErrorResponse(response: Response): Promise<never> {
@@ -50,7 +63,7 @@ async function throwForErrorResponse(response: Response): Promise<never> {
   }
 
   const body = await response.text()
-  throw new ApiError(response.status, body || response.statusText)
+  throw new ApiError(response.status, extractErrorMessage(body) ?? (body || response.statusText))
 }
 
 // Single place where every JSON request gets its Authorization header.

@@ -463,6 +463,47 @@ public class JobApplicationsControllerTests
         _exportService.Verify(e => e.ExportResumeAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // Copilot review finding (PR #48): Enum.TryParse<ExportFormat> also accepts the numeric backing
+    // value as a string, so "0"/"1" would otherwise silently succeed as undocumented aliases for
+    // Pdf/Markdown even though the documented contract is pdf/markdown only.
+    [Fact]
+    public async Task ExportResume_returns_400_and_never_calls_the_service_for_a_numeric_format_value()
+    {
+        var controller = CreateSut(currentUserId: 1);
+
+        var result = await controller.ExportResume(5, "0");
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+        _exportService.Verify(e => e.ExportResumeAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Copilot review finding (PR #48): the export call used the default CancellationToken, so a
+    // client disconnect never cancelled a potentially long-running Typst subprocess. Proven by
+    // asserting the service is called with this exact token, not It.IsAny - a loose mock's default
+    // Task<null> return on a non-matching setup would throw when ToFileActionResult() dereferences
+    // it, so this only passes when HttpContext.RequestAborted is actually forwarded.
+    [Fact]
+    public async Task ExportResume_forwards_HttpContext_RequestAborted_as_the_cancellation_token()
+    {
+        var file = new ExportedFile(new byte[] { 1 }, "application/pdf", "resume.pdf");
+        using var cts = new CancellationTokenSource();
+        _exportService.Setup(e => e.ExportResumeAsync(5, 1, ExportFormat.Pdf, cts.Token))
+            .ReturnsAsync(Result<ExportedFile>.Ok(file));
+
+        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = PrincipalFor(1), RequestAborted = cts.Token }
+            }
+        };
+
+        var result = await controller.ExportResume(5, "pdf");
+
+        result.Should().BeOfType<FileContentResult>();
+        _exportService.Verify(e => e.ExportResumeAsync(5, 1, ExportFormat.Pdf, cts.Token), Times.Once);
+    }
+
     [Fact]
     public async Task ExportResume_returns_401_when_the_identity_claim_is_missing()
     {
@@ -520,6 +561,41 @@ public class JobApplicationsControllerTests
 
         result.Should().BeOfType<BadRequestObjectResult>();
         _exportService.Verify(e => e.ExportCoverLetterAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Copilot review finding (PR #48): same numeric-alias gap as ExportResume - "1" would otherwise
+    // silently succeed as an undocumented alias for Markdown.
+    [Fact]
+    public async Task ExportCoverLetter_returns_400_and_never_calls_the_service_for_a_numeric_format_value()
+    {
+        var controller = CreateSut(currentUserId: 1);
+
+        var result = await controller.ExportCoverLetter(5, "1");
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+        _exportService.Verify(e => e.ExportCoverLetterAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExportCoverLetter_forwards_HttpContext_RequestAborted_as_the_cancellation_token()
+    {
+        var file = new ExportedFile(new byte[] { 1 }, "application/pdf", "cover-letter.pdf");
+        using var cts = new CancellationTokenSource();
+        _exportService.Setup(e => e.ExportCoverLetterAsync(5, 1, ExportFormat.Pdf, cts.Token))
+            .ReturnsAsync(Result<ExportedFile>.Ok(file));
+
+        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = PrincipalFor(1), RequestAborted = cts.Token }
+            }
+        };
+
+        var result = await controller.ExportCoverLetter(5, "pdf");
+
+        result.Should().BeOfType<FileContentResult>();
+        _exportService.Verify(e => e.ExportCoverLetterAsync(5, 1, ExportFormat.Pdf, cts.Token), Times.Once);
     }
 
     [Fact]

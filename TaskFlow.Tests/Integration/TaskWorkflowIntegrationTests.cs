@@ -236,6 +236,38 @@ public class TaskWorkflowIntegrationTests
         reject.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    // Copilot review finding (PR #48): TaskCardView's new export buttons (Sprint 5, T5.3) gate on
+    // task.status === 'Done' && applicationId != null, assuming that implies the JobApplication is
+    // Approved. But the individual per-task approve endpoint used here is reachable through the
+    // real Review-column UI whenever a sibling isn't also Review-ready yet (KanbanBoard.tsx's
+    // pairedTaskIds only excludes a task from solo rendering once BOTH siblings are Review) - so an
+    // owner can approve one sibling alone, reaching Done while the application itself is still
+    // ReviewReady/Building. Proves GET /api/Tasks reports the real ApplicationState for that task,
+    // which the frontend needs to gate correctly instead of assuming Done implies Approved.
+    [Fact]
+    public async Task GetAll_reports_the_real_ApplicationState_for_an_Epic3_sibling_task_approved_individually_before_its_pair()
+    {
+        var owner = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await owner.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+        var assemble = await owner.PostAsJsonAsync("/api/JobApplications",
+            new { ingestionSessionId = sessionId, posting = new { title = "Backend Engineer", section = "Job Posting" } });
+        assemble.EnsureSuccessStatusCode();
+        var application = await assemble.Content.ReadFromJsonAsync<JobApplicationDto>();
+        var resumeTaskId = application!.Tasks[0].Id;
+
+        await MoveToReviewAsync(owner, resumeTaskId);
+        var approve = await owner.PostAsync($"/api/Tasks/{resumeTaskId}/approve", null);
+        approve.EnsureSuccessStatusCode();
+
+        var tasks = await owner.GetFromJsonAsync<List<TaskResponseDto>>("/api/Tasks");
+
+        var resumeTask = tasks!.Should().ContainSingle(t => t.Id == resumeTaskId).Subject;
+        resumeTask.Status.Should().Be(nameof(WorkflowStatus.Done));
+        resumeTask.ApplicationState.Should().NotBe(nameof(ApplicationState.Approved));
+    }
+
     // Local shapes: read the switch state, and read drafts/tasks with their enum fields as plain
     // strings so the test's default (non-enum-aware) deserializer does not choke - the server side
     // serializes enums as strings via JsonStringEnumConverter (Program.cs), but HttpContent's

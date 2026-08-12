@@ -53,7 +53,7 @@ export function TaskCardView({
 
       {onApprove && onReject && <ReviewActions onApprove={onApprove} onReject={onReject} />}
 
-      {task.status === 'Done' && task.applicationId !== null && (
+      {task.status === 'Done' && task.applicationId !== null && task.applicationState === 'Approved' && (
         <ExportDownloadControls applicationId={task.applicationId} kind={task.kind} />
       )}
     </div>

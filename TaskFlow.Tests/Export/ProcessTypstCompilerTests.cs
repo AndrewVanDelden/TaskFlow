@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TaskFlow.Api.Export;
 using Xunit;
@@ -29,17 +30,37 @@ namespace TaskFlow.Tests.Export;
 [Trait("RequiresTypstBinary", "true")]
 public class ProcessTypstCompilerTests
 {
-    private static IConfiguration Config(int? timeoutSeconds = null)
+    private static IConfiguration Config(int? timeoutSeconds = null, int? maxConcurrent = null)
     {
         var values = new Dictionary<string, string?>();
         if (timeoutSeconds is not null)
             values["Export:TypstCompileTimeoutSeconds"] = timeoutSeconds.Value.ToString();
+        if (maxConcurrent is not null)
+            values["Export:MaxConcurrentTypstCompiles"] = maxConcurrent.Value.ToString();
 
         return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
     }
 
-    private static ProcessTypstCompiler CreateSut(int? timeoutSeconds = null) =>
-        new(Config(timeoutSeconds), NullLogger<ProcessTypstCompiler>.Instance);
+    private static ProcessTypstCompiler CreateSut(int? timeoutSeconds = null, int? maxConcurrent = null, ILogger<ProcessTypstCompiler>? logger = null) =>
+        new(Config(timeoutSeconds, maxConcurrent), logger ?? NullLogger<ProcessTypstCompiler>.Instance);
+
+    // A minimal ILogger test double that captures formatted messages, so a test can assert on
+    // exactly what did (and did not) get logged, without a mocking library's ILogger extension-
+    // method awkwardness (LogError etc. are extension methods over the single Log<TState> method).
+    private sealed class CapturingLogger : ILogger<ProcessTypstCompiler>
+    {
+        public List<string> Messages { get; } = new();
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Messages.Add(formatter(state, exception));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
+        }
+    }
 
     [Fact]
     public async Task Valid_Typst_source_compiles_to_PDF_bytes()
@@ -76,6 +97,44 @@ public class ProcessTypstCompilerTests
         // (the non-zero-exit path). Asserting the exact message is what actually proves typst ran
         // and rejected the source, rather than never having been invoked at all.
         result.Error.Should().Be("PDF compilation failed.");
+    }
+
+    // Copilot review finding (PR #48): stderr can carry Typst's own diagnostic source excerpts,
+    // which for real usage would be the (mostly-escaped) resume/cover-letter content - logging it
+    // raw risks persisting PII in server logs even though it never reaches the HTTP response. The
+    // literal marker below would appear in Typst's error output if stderr content ever leaked into
+    // a logged message.
+    [Fact]
+    public async Task Invalid_Typst_source_logs_the_exit_code_but_never_the_raw_stderr_content()
+    {
+        var logger = new CapturingLogger();
+        var sut = CreateSut(logger: logger);
+
+        await sut.CompilePdfAsync("#this_marker_should_never_appear_in_logs()");
+
+        logger.Messages.Should().NotContain(m => m.Contains("this_marker_should_never_appear_in_logs"));
+        logger.Messages.Should().Contain(m => m.Contains("exited with code"));
+    }
+
+    // Copilot review finding (PR #48): every export request spawned an unbounded, CPU-intensive
+    // typst subprocess with no concurrency cap - an authenticated client could exhaust CPU/memory
+    // by firing many concurrent exports. Proven via timing (matching this file's own timeout test's
+    // style): with the limit set to 1, a second long-running compile cannot even start until the
+    // first's timeout releases its slot, so two concurrent calls take roughly 2x one call's
+    // timeout - not ~1x, as they would if allowed to race in parallel.
+    [Fact]
+    public async Task Concurrent_compiles_beyond_the_configured_limit_are_queued_not_run_in_parallel()
+    {
+        var sut = CreateSut(timeoutSeconds: 2, maxConcurrent: 1);
+        const string longRunningSource = "#for i in range(100000000) { for j in range(1000) { } }";
+
+        var stopwatch = Stopwatch.StartNew();
+        await Task.WhenAll(
+            sut.CompilePdfAsync(longRunningSource),
+            sut.CompilePdfAsync(longRunningSource));
+        stopwatch.Stop();
+
+        stopwatch.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(3.5));
     }
 
     [Fact]

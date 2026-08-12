@@ -18,6 +18,12 @@ export interface TaskItem {
   kind: string
   applicationId: number | null
   tailoredContent: string | null
+  // Sprint 5 review finding: a lone Epic-3 sibling task can reach 'Done' via the individual
+  // per-task approve path while its own JobApplication never reaches Approved (only both siblings
+  // approved together does that) - export-download gating needs this real state, not just Status.
+  // Optional so existing fixtures that don't care about it don't need updating; absent/undefined
+  // correctly fails an === 'Approved' check, matching the safe default (don't assume approved).
+  applicationState?: string | null
 }
 
 export interface AuthResponse {

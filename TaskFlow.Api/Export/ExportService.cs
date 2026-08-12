@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text;
 using TaskFlow.Api.Common;
 using TaskFlow.Api.Models;
@@ -9,10 +8,10 @@ namespace TaskFlow.Api.Export;
 /// <summary>
 /// EF/repository-backed implementation of <see cref="IExportService"/>. Ties T5.1a-c together:
 /// ITypstCompiler (the compiler seam), TailoredContentTypstRenderer (Markdown -> escaped Typst
-/// markup), and the resume/cover-letter .typ templates. Ownership and state guards mirror
-/// JobApplicationService.ApproveAsync's exact convention (Sprint 5 "Decisions owned here" in
-/// TaskFlow_Epic3_ResumeBuilder.md): missing and wrong-owner both collapse into NotFound; a
-/// non-Approved application is Invalid.
+/// markup), ITemplateProvider (template read + cache), and the resume/cover-letter .typ templates.
+/// Ownership and state guards mirror JobApplicationService.ApproveAsync's exact convention (Sprint
+/// 5 "Decisions owned here" in TaskFlow_Epic3_ResumeBuilder.md): missing and wrong-owner both
+/// collapse into NotFound; a non-Approved application is Invalid.
 /// </summary>
 public class ExportService : IExportService
 {
@@ -20,24 +19,20 @@ public class ExportService : IExportService
     private readonly ITaskRepository _tasks;
     private readonly ITypstCompiler _compiler;
     private readonly TailoredContentTypstRenderer _renderer;
-
-    // Template text is trusted, hand-authored, and static for the process lifetime - read from
-    // disk once per file name (not on every request) and cached here. A static, process-wide
-    // cache rather than an instance field: ExportService is registered Scoped (it depends on the
-    // scoped repositories), so an instance-level cache would be re-populated once per request
-    // scope, defeating the point.
-    private static readonly ConcurrentDictionary<string, Lazy<string>> TemplateCache = new();
+    private readonly ITemplateProvider _templates;
 
     public ExportService(
         IJobApplicationRepository jobApplications,
         ITaskRepository tasks,
         ITypstCompiler compiler,
-        TailoredContentTypstRenderer renderer)
+        TailoredContentTypstRenderer renderer,
+        ITemplateProvider templates)
     {
         _jobApplications = jobApplications;
         _tasks = tasks;
         _compiler = compiler;
         _renderer = renderer;
+        _templates = templates;
     }
 
     public Task<Result<ExportedFile>> ExportResumeAsync(int applicationId, int callerId, ExportFormat format, CancellationToken ct = default) =>
@@ -89,11 +84,14 @@ public class ExportService : IExportService
 
     private async Task<Result<ExportedFile>> BuildPdfFileAsync(TaskItem task, string templateFileName, string baseFileName, CancellationToken ct)
     {
+        var templateResult = _templates.GetTemplateText(templateFileName);
+        if (!templateResult.IsSuccess)
+            return Result<ExportedFile>.InternalError(templateResult.Error!);
+
         var typstContent = _renderer.Render(task.TailoredContent);
-        var templateText = GetTemplateText(templateFileName);
         // Verbatim concatenation, not #import: the template's trailing "#show: document" picks up
         // everything appended after it as its body argument.
-        var fullSource = templateText + typstContent;
+        var fullSource = templateResult.Value + typstContent;
 
         var compileResult = await _compiler.CompilePdfAsync(fullSource, ct);
         if (!compileResult.IsSuccess)
@@ -112,8 +110,4 @@ public class ExportService : IExportService
         ResultStatus.Unauthorized => Result<ExportedFile>.Unauthorized(failed.Error!),
         _ => Result<ExportedFile>.InternalError(failed.Error ?? "PDF compilation failed.")
     };
-
-    private static string GetTemplateText(string fileName) =>
-        TemplateCache.GetOrAdd(fileName, f => new Lazy<string>(
-            () => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Export", "Templates", f)))).Value;
 }

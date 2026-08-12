@@ -337,6 +337,31 @@ public class TaskServiceTests
         result.Status.Should().Be(ResultStatus.NotFound);
     }
 
+    // Copilot review finding (PR #48): the frontend's export-download gating needs the real
+    // JobApplication state, not just Status == "Done", since a lone Epic-3 sibling can reach Done
+    // via the individual per-task approve path while its own application never reaches Approved.
+    [Fact]
+    public async Task GetById_returns_the_owning_applications_real_ApplicationState_for_an_Epic3_sibling_task()
+    {
+        var task = Epic3TaskOwnedBy(ownerId: 1, id: 1);
+        task.Application!.State = ApplicationState.Approved;
+        SetupGetById(task);
+
+        var result = await CreateSut().GetByIdAsync(1, callerId: 1);
+
+        result.Value!.ApplicationState.Should().Be("Approved");
+    }
+
+    [Fact]
+    public async Task GetById_returns_null_ApplicationState_for_a_generic_task()
+    {
+        SetupGetById(SampleTask());
+
+        var result = await CreateSut().GetByIdAsync(1, callerId: 1);
+
+        result.Value!.ApplicationState.Should().BeNull();
+    }
+
     // ── GetAll ────────────────────────────────────────────────────────────────
     [Fact]
     public async Task GetAll_rejects_an_invalid_status_string()

@@ -446,6 +446,27 @@ public class JobApplicationsIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    // Copilot review finding (PR #48): browsers hide response headers from JS on a cross-origin
+    // response unless the server explicitly lists them via Access-Control-Expose-Headers - without
+    // it, every download in the supported cross-origin VITE_API_BASE_URL deployment mode would
+    // silently lose Content-Disposition and fall back to the extensionless filename "download".
+    // Masked locally by the Vite dev proxy (same-origin), so this can only be caught by actually
+    // sending a cross-origin request (an Origin header) and reading the real CORS response header.
+    [Fact]
+    public async Task Export_response_exposes_ContentDisposition_via_CORS_for_cross_origin_downloads()
+    {
+        var (client, applicationId) = await ApprovedApplicationAsync(_factory);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/JobApplications/{applicationId}/export/resume?format=markdown");
+        request.Headers.Add("Origin", "http://localhost:5173");
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Headers.TryGetValues("Access-Control-Expose-Headers", out var exposedHeaders).Should().BeTrue();
+        string.Join(",", exposedHeaders!).Should().Contain("Content-Disposition");
+    }
+
     // Fixed, non-empty bytes stand in for a real PDF - these tests exercise routing/headers/status
     // (T5.2), not PDF validity, which is covered separately by ExportServiceTests and the
     // trait-gated ProcessTypstCompilerTests.

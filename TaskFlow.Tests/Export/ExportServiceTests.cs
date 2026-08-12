@@ -29,7 +29,11 @@ public class ExportServiceTests
     private readonly Mock<ITypstCompiler> _compiler = new();
     private readonly TailoredContentTypstRenderer _renderer = new();
 
-    private ExportService CreateSut() => new(_applications.Object, _tasks.Object, _compiler.Object, _renderer);
+    // A real FileTemplateProvider by default, so the existing "Pdf" tests below keep proving
+    // composition against the actual resume.typ/cover-letter.typ content. Tests that need to
+    // simulate a template load failure pass a mocked ITemplateProvider instead.
+    private ExportService CreateSut(ITemplateProvider? templates = null) =>
+        new(_applications.Object, _tasks.Object, _compiler.Object, _renderer, templates ?? new FileTemplateProvider());
 
     private static JobApplication Application(ApplicationState state, int ownerId = OwnerId) => new()
     {
@@ -137,6 +141,27 @@ public class ExportServiceTests
         result.Status.Should().Be(ResultStatus.Error);
         result.Value.Should().BeNull();
         result.Error.Should().Be("PDF compilation failed.");
+    }
+
+    // ── Template load failure surfaces as a Result, never an unhandled exception ─
+    // Copilot review finding (PR #48): the old private GetTemplateText threw straight out of a
+    // static Lazy<string> on a read failure. Proven here via a mocked ITemplateProvider so no real
+    // file needs to be broken - FileTemplateProviderTests covers the provider's own caching/retry
+    // behavior in isolation.
+    [Fact]
+    public async Task ExportResumeAsync_Pdf_surfaces_a_template_load_failure_as_an_Error_result_instead_of_throwing()
+    {
+        SetUpApprovedApplication();
+        var templates = new Mock<ITemplateProvider>();
+        templates.Setup(t => t.GetTemplateText("resume.typ"))
+            .Returns(Result<string>.InternalError("Failed to load export template 'resume.typ'."));
+
+        var result = await CreateSut(templates.Object).ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Pdf);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Status.Should().Be(ResultStatus.Error);
+        result.Error.Should().Be("Failed to load export template 'resume.typ'.");
+        _compiler.Verify(c => c.CompilePdfAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── State guard ──────────────────────────────────────────────────────────────

@@ -16,15 +16,18 @@ namespace TaskFlow.Api.Export;
 ///   real files even if the caller's own escaping ever has a bug.
 /// - A configured timeout (<c>Export:TypstCompileTimeoutSeconds</c>, default 15s) kills the entire
 ///   process tree rather than letting a pathological input hang a request.
-/// - A non-zero exit or any subprocess failure logs the detail (which may include absolute paths)
-///   server-side only; the <see cref="Result{T}"/> returned to the caller carries a generic message,
-///   never stderr content.
+/// - A non-zero exit logs only the exit code and stderr's length, never its content (which can
+///   include absolute paths and, for real usage, source excerpts of the resume/cover-letter text
+///   being compiled). The <see cref="Result{T}"/> returned to the caller carries a generic message.
+/// - Concurrent compiles are bounded by a config-driven semaphore (<c>Export:MaxConcurrentTypstCompiles</c>),
+///   so an authenticated client cannot exhaust CPU/memory by firing unbounded concurrent exports.
 /// </summary>
 public class ProcessTypstCompiler : ITypstCompiler
 {
     private readonly IConfiguration _config;
     private readonly ILogger<ProcessTypstCompiler> _logger;
     private readonly string _sandboxRoot;
+    private readonly SemaphoreSlim _concurrencyLimiter;
 
     public ProcessTypstCompiler(IConfiguration config, ILogger<ProcessTypstCompiler> logger)
     {
@@ -37,9 +40,32 @@ public class ProcessTypstCompiler : ITypstCompiler
         // an empty --root.
         _sandboxRoot = Path.Combine(Path.GetTempPath(), "taskflow-typst-sandbox");
         Directory.CreateDirectory(_sandboxRoot);
+
+        // Every compile spawns a CPU-intensive external process; without a cap, an authenticated
+        // client could exhaust CPU/memory by firing many concurrent exports (Sprint 5 Copilot review
+        // finding). Registered Singleton, so one limiter instance really does bound the whole
+        // process's concurrent typst invocations, not just per-request.
+        var maxConcurrent = Math.Max(1, _config.GetValue("Export:MaxConcurrentTypstCompiles", 4));
+        _concurrencyLimiter = new SemaphoreSlim(maxConcurrent, maxConcurrent);
     }
 
     public async Task<Result<byte[]>> CompilePdfAsync(string typstSource, CancellationToken ct = default)
+    {
+        // Waiting for a free slot is bounded only by the caller's own cancellation (e.g. the HTTP
+        // request being aborted) - the per-compile timeout below hasn't started yet and must not
+        // apply to time spent queued behind other compiles.
+        await _concurrencyLimiter.WaitAsync(ct);
+        try
+        {
+            return await CompilePdfCoreAsync(typstSource, ct);
+        }
+        finally
+        {
+            _concurrencyLimiter.Release();
+        }
+    }
+
+    private async Task<Result<byte[]>> CompilePdfCoreAsync(string typstSource, CancellationToken ct)
     {
         var binaryPath = _config.GetValue("Export:TypstBinaryPath", "typst") ?? "typst";
         var timeoutSeconds = Math.Max(1, _config.GetValue("Export:TypstCompileTimeoutSeconds", 15));
@@ -71,15 +97,19 @@ public class ProcessTypstCompiler : ITypstCompiler
             return Result<byte[]>.InternalError("PDF compilation failed to start.");
         }
 
-        // Write stdin and read stdout/stderr concurrently, not sequentially - Typst may start
-        // writing to stdout before it has finished reading stdin, and stdout/stderr pipes have a
-        // bounded OS buffer, so writing all of stdin first (while nothing drains stdout) can deadlock.
-        var stdoutTask = ReadAllBytesAsync(process.StandardOutput.BaseStream, ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-        var stdinTask = WriteStdinAsync(process, typstSource, ct);
-
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+        // Write stdin and read stdout/stderr concurrently, not sequentially - Typst may start
+        // writing to stdout before it has finished reading stdin, and stdout/stderr pipes have a
+        // bounded OS buffer, so writing all of stdin first (while nothing drains stdout) can
+        // deadlock. Built on the linked token (not the bare caller token) so our own configured
+        // timeout actually bounds these too: if KillSafely below ever fails to terminate the
+        // process (it intentionally swallows failures), these still unblock via cancellation
+        // instead of ObserveAsync waiting on them forever (PR #48 Copilot review finding).
+        var stdoutTask = ReadAllBytesAsync(process.StandardOutput.BaseStream, linkedCts.Token);
+        var stderrTask = process.StandardError.ReadToEndAsync(linkedCts.Token);
+        var stdinTask = WriteStdinAsync(process, typstSource, linkedCts.Token);
 
         try
         {
@@ -119,10 +149,13 @@ public class ProcessTypstCompiler : ITypstCompiler
 
         if (process.ExitCode != 0)
         {
-            // stderr may contain absolute paths - log server-side only, never in the returned Result.
+            // Typst's diagnostics can include a source excerpt - for real usage, that source is the
+            // (mostly-escaped) resume/cover-letter content, so logging it raw risks persisting PII
+            // in server logs even though it never reaches the HTTP response (PR #48 Copilot review
+            // finding). Log only the exit code and how much stderr there was, never its content.
             _logger.LogError(
-                "Typst compile exited with code {ExitCode}. stderr: {Stderr}",
-                process.ExitCode, stderrText);
+                "Typst compile exited with code {ExitCode}. stderr length: {StderrLength} chars.",
+                process.ExitCode, stderrText.Length);
             return Result<byte[]>.InternalError("PDF compilation failed.");
         }
 

@@ -22,6 +22,12 @@ public class TaskResponseDto
     public int? ApplicationId { get; set; }
     public string? TailoredContent { get; set; }
 
+    // Sprint 5 review finding: a lone Epic-3 sibling task can reach Done via the individual
+    // per-task approve path while its own JobApplication never reaches Approved (that only happens
+    // when both siblings are approved together). The frontend's export-download gating needs this
+    // real state - Status == "Done" alone does not imply the application is Approved.
+    public string? ApplicationState { get; set; }
+
     // Static factory method — converts a TaskItem entity into this DTO
     public static TaskResponseDto FromEntity(TaskItem task) => new()
     {
@@ -37,6 +43,7 @@ public class TaskResponseDto
         AssignedToName = task.AssignedTo?.Name,
         Kind = task.Kind.ToString(),
         ApplicationId = task.ApplicationId,
-        TailoredContent = task.TailoredContent
+        TailoredContent = task.TailoredContent,
+        ApplicationState = task.Application?.State.ToString()
     };
 }

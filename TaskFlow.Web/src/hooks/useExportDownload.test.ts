@@ -33,7 +33,7 @@ describe('useExportDownload', () => {
     expect(clickSpy).toHaveBeenCalledOnce()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
     expect(result.current.error).toBeNull()
-    expect(result.current.downloading).toBeNull()
+    expect(result.current.downloading.size).toBe(0)
 
     clickSpy.mockRestore()
   })
@@ -68,31 +68,52 @@ describe('useExportDownload', () => {
     )
 
     const { result } = renderHook(() => useExportDownload(10))
-    expect(result.current.downloading).toBeNull()
+    expect(result.current.downloading.size).toBe(0)
 
     act(() => {
       void result.current.download('resume', 'pdf')
     })
 
-    await waitFor(() => expect(result.current.downloading).toBe('resume-pdf'))
+    await waitFor(() => expect(result.current.downloading.has('resume-pdf')).toBe(true))
   })
 
-  it('does not let one in-flight download block a different one', async () => {
+  // PR #48 review finding (found independently and by Copilot): downloading used to be a single
+  // string|null, but both buttons for a task (PDF and Markdown) can be clicked before either
+  // resolves - whichever finishes first cleared the *shared* state via `finally`, wiping out the
+  // other download's still-in-flight indicator even though it was still running. Proven here with
+  // two calls sharing one route (resume) distinguished only by the format query param: pdf never
+  // resolves, markdown resolves immediately - if the old bug were present, awaiting the markdown
+  // download would incorrectly clear the pdf download's in-flight state too.
+  it('keeps a different download key in-flight after another one completes', async () => {
     server.use(
-      http.get('*/api/JobApplications/10/export/resume', () => new Promise(() => {})),
+      http.get('*/api/JobApplications/10/export/resume', ({ request }) => {
+        const format = new URL(request.url).searchParams.get('format')
+        if (format === 'markdown') {
+          return new HttpResponse('resume md bytes', {
+            headers: { 'Content-Disposition': 'attachment; filename="resume.md"' },
+          })
+        }
+        return new Promise(() => {}) // pdf: never resolves
+      }),
     )
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
     const { result } = renderHook(() => useExportDownload(10))
 
     act(() => {
       void result.current.download('resume', 'pdf')
     })
-    await waitFor(() => expect(result.current.downloading).toBe('resume-pdf'))
+    await waitFor(() => expect(result.current.downloading.has('resume-pdf')).toBe(true))
 
-    // A second, distinct download key should be representable too - the hook tracks "which"
-    // download is in flight, not just a boolean, so a caller can gate buttons independently.
-    expect(result.current.downloading).not.toBe('resume-markdown')
-    expect(result.current.downloading).not.toBe('coverLetter-pdf')
+    await act(async () => {
+      await result.current.download('resume', 'markdown')
+    })
+
+    // The still-pending pdf download must still be reported as in-flight - it did not resolve.
+    expect(result.current.downloading.has('resume-pdf')).toBe(true)
+    expect(result.current.downloading.has('resume-markdown')).toBe(false)
+
+    clickSpy.mockRestore()
   })
 
   it('sets an error and does not throw when the download fails', async () => {
@@ -108,6 +129,6 @@ describe('useExportDownload', () => {
     })
 
     expect(result.current.error).not.toBeNull()
-    expect(result.current.downloading).toBeNull()
+    expect(result.current.downloading.size).toBe(0)
   })
 })

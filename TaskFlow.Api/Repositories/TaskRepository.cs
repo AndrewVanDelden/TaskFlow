@@ -27,8 +27,10 @@ public class TaskRepository : ITaskRepository
         // Generic tasks (no ApplicationId) are the shared board, visible to everyone. Epic 3
         // sibling tasks carry personal document content (TailoredContent) and are visible only to
         // the JobApplication's own owner - a caller with the wrong id must not see them at all,
-        // not just be blocked from acting on them (PR #45 review finding).
-        var query = _db.Tasks.Include(t => t.AssignedTo)
+        // not just be blocked from acting on them (PR #45 review finding). Application is also
+        // explicitly Included (not just referenced in the Where) so TaskResponseDto.ApplicationState
+        // is populated for the frontend's export-download gating (PR #48 review finding).
+        var query = _db.Tasks.Include(t => t.AssignedTo).Include(t => t.Application)
             .Where(t => t.ApplicationId == null || t.Application!.OwnerId == callerId);
         if (status.HasValue)   query = query.Where(t => t.Status == status.Value);
         if (priority.HasValue) query = query.Where(t => t.Priority == priority.Value);

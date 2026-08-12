@@ -18,17 +18,17 @@ export function ExportDownloadControls({
       <div className="flex gap-2">
         <button
           onClick={() => download(exportKind, 'pdf')}
-          disabled={downloading === `${exportKind}-pdf`}
+          disabled={downloading.has(`${exportKind}-pdf`)}
           className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold px-2 py-1 rounded"
         >
-          {downloading === `${exportKind}-pdf` ? 'Downloading…' : 'Download PDF'}
+          {downloading.has(`${exportKind}-pdf`) ? 'Downloading…' : 'Download PDF'}
         </button>
         <button
           onClick={() => download(exportKind, 'markdown')}
-          disabled={downloading === `${exportKind}-markdown`}
+          disabled={downloading.has(`${exportKind}-markdown`)}
           className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold px-2 py-1 rounded"
         >
-          {downloading === `${exportKind}-markdown` ? 'Downloading…' : 'Download Markdown'}
+          {downloading.has(`${exportKind}-markdown`) ? 'Downloading…' : 'Download Markdown'}
         </button>
       </div>
       {error && (

@@ -180,7 +180,7 @@ The first bullet below is this project's most serious finding to date, not a nit
 | **2** | Job Posting Ingestion | Ready — architecture below, no code yet |
 | **3R** | Multi-Agent Generation | Ready — architecture below, no code yet |
 | **4R** | Combined Review and Approval | Ready — architecture below, no code yet |
-| **5** | Artifact Export | **COMPLETE** — 327/327 backend, 93/93 frontend |
+| **5** | Artifact Export | **COMPLETE** — 341/341 backend, 95/95 frontend (incl. PR #48 review fixes) |
 | **6** | Intake Experience Redesign | Ready — architecture below, no code yet |
 
 ## Definition of Done (Epic 3)
@@ -1969,6 +1969,128 @@ download. GREEN: wired into the `Done` card component.
   (2026-08-11), not built yet. Sprint 5's own implementation doesn't block on that doc's tracks
   landing; `ITypstCompiler`/`Export:TypstBinaryPath` work the same regardless of which deploy target
   ships first.
+
+### Code review findings (2026-08-12) — PR #48
+
+A full independent manual review (against `.github/skills/code-review/SKILL.md`) was completed
+**before** looking at GitHub Copilot's automated review at all, per explicit instruction, so the two
+would be genuinely independent rather than one anchoring the other. Copilot's review was then
+fetched (`gh api repos/.../pulls/48/reviews` + `.../comments`) and every one of its 10 comments was
+verified against the actual code and its real reachability — none taken as true on description
+alone. Result: all 10 Copilot findings confirmed real, one of them (the `useExportDownload`
+concurrent-download bug) independently found first by the manual review too — strong corroboration,
+not noise. One additional finding (the `TaskService` DRY violation) was manual-only; Copilot did not
+flag it.
+
+**Status: all 11 findings fixed and confirmed GREEN (341/341 backend, +14 tests; 95/95 frontend,
++2 tests; all 5 real-binary `RequiresTypstBinary` tests re-run against actual `typst 0.15.1`,
++2 tests).**
+
+- **Manual finding (mine), DRY:** `TaskService.cs`'s six single-item methods (`UpdateAsync`,
+  `UpdateStatusAsync`, `ApproveAsync`, `RejectAsync`, `GetByIdAsync`, `DeleteAsync`) repeated the
+  exact same two-line ownership check verbatim six times — the same security-critical invariant
+  this project's own convention (see `BothRequiredSiblingsAreReview` in `JobApplicationRepository`)
+  would extract once. **Fixed:** extracted a private `IsOwnedByAnotherUser(TaskItem, int)` helper;
+  pure refactor under the existing passing test suite (no behavior change, so no new RED test was
+  needed — the existing ownership tests already lock the behavior).
+- **Copilot, confirmed real:** `ProcessTypstCompiler`'s stdout/stderr/stdin pipe tasks were built on
+  the bare caller token, not the linked timeout token — if `KillSafely` ever failed to actually
+  terminate the process (it intentionally swallows failures), `ObserveAsync` could wait on those
+  pipes forever, silently defeating the configured timeout. **Fixed:** the linked `CancellationTokenSource`
+  is now created before the pipe tasks start, and all three use its token. Not independently
+  RED-tested in isolation (reproducing a `KillSafely` failure deterministically would need injecting
+  a fake process, disproportionate for a defensive fix) — covered by the existing real-binary timeout
+  test continuing to pass, proving no regression to the common case.
+- **Copilot, confirmed real, Security/DoS:** every export request spawned an unbounded, CPU-intensive
+  `typst` subprocess with no concurrency cap — an authenticated client could exhaust CPU/memory by
+  firing many concurrent exports. **Fixed:** a config-driven `SemaphoreSlim`
+  (`Export:MaxConcurrentTypstCompiles`, default 4) gates `CompilePdfAsync`, waited on with the
+  caller's own token (not the per-compile timeout, which must not start until a slot is actually
+  acquired). RED-then-GREEN proven for real against the actual binary: with the limit set to 1, two
+  concurrent long-running compiles took >3.5s total (serialized), not ~1x one compile's timeout as
+  they would running in parallel.
+- **Copilot, confirmed real, Security/PII:** a non-zero `typst` exit logged the raw `stderr` text,
+  which can include Typst's own diagnostic source excerpts — for real usage, that source is the
+  (mostly-escaped) résumé/cover-letter content, so a failure could persist PII in server logs even
+  though it never reached the HTTP response. **Fixed:** logs only the exit code and `stderr`'s
+  *length*, never its content. RED-then-GREEN proven for real: a captured-logger test asserts a
+  literal marker from the triggering source never appears in any logged message.
+- **Copilot, confirmed real:** `Enum.TryParse<ExportFormat>` also accepts the enum's numeric backing
+  value as a string, so `format=0`/`format=1` silently succeeded as undocumented aliases for
+  pdf/markdown despite the documented contract being pdf/markdown only. Also DRY: the same
+  2-line parsing block was duplicated verbatim between `ExportResume` and `ExportCoverLetter`.
+  **Fixed:** one shared `TryParseFormat` helper requires the parsed value's own name to
+  case-insensitively match what was typed, rejecting numeric strings while still accepting
+  `pdf`/`PDF`/`Markdown` etc.
+- **Copilot, confirmed real:** both export actions used the default `CancellationToken`, so a client
+  disconnect never cancelled a potentially long-running Typst subprocess. **Fixed:** both now pass
+  `HttpContext.RequestAborted` through to `IExportService`. Proven with a test asserting the service
+  is called with that *exact* token (not `It.IsAny`), so a loose-mock default-null return would throw
+  unless the token is genuinely forwarded.
+- **Copilot, confirmed real:** `ExportService`'s private `GetTemplateText` cached a template read —
+  including a *thrown exception* — in a `static Lazy<string>` for the process lifetime; one
+  transient read failure (permission glitch, disk hiccup) would permanently break every later export
+  of that document kind until an app restart, and the failure surfaced as an unhandled exception,
+  not a `Result`, breaking this sprint's own established convention. **Fixed:** extracted the
+  responsibility into its own seam, `ITemplateProvider`/`FileTemplateProvider`
+  (`TaskFlow.Api/Export/`), mirroring `ITypstCompiler`'s existing precedent in this same file — only
+  successful reads are cached; a failure is never cached and is retried on the next call, and is
+  reported as `Result<string>.InternalError`, never thrown. `FileTemplateProviderTests.cs` proves
+  the retry-after-recovery behavior directly against a real, uniquely-named scratch file; a new
+  `ExportServiceTests` case proves the failure surfaces as `ResultStatus.Error` without throwing.
+- **Copilot, confirmed real:** the CORS `DevPolicy` never called `WithExposedHeaders`, so in the
+  documented cross-origin `VITE_API_BASE_URL` deployment mode, browsers hide `Content-Disposition`
+  from JS and every download would silently fall back to the extensionless filename `"download"`.
+  Masked locally by the Vite dev proxy (same-origin), so only catchable by actually sending a
+  cross-origin request and reading the real response header. **Fixed:**
+  `.WithExposedHeaders("Content-Disposition")` added to `DevPolicy`. RED-then-GREEN proven with an
+  integration test sending an explicit `Origin` header and asserting the real
+  `Access-Control-Expose-Headers` response header.
+- **Found independently by both the manual review and Copilot, confirmed real:**
+  `useExportDownload`'s `downloading` was a single `string | null`, but both buttons for a task (PDF
+  and Markdown) can be clicked before either resolves — whichever finished first cleared the
+  *shared* state via `finally`, wiping out the other download's still-in-flight indicator even
+  though it was still running. The existing test claiming to prove this ("does not let one in-flight
+  download block a different one") never actually started two concurrent downloads — it only
+  checked string inequality, so it never caught the bug. **Fixed:** `downloading` is now a `Set<string>`
+  of active keys, added/removed independently. RED-then-GREEN proven by a test using the same route
+  for both formats (distinguished by query param) where pdf never resolves and markdown resolves
+  immediately — the old code incorrectly cleared pdf's in-flight state when markdown completed.
+- **Copilot, confirmed real:** `client.ts`'s `throwForErrorResponse` used the raw response body text
+  verbatim as `ApiError.message`, but real server error responses (`ToActionResult`/
+  `ToFileActionResult`) are JSON objects shaped `{ "message": "..." }` — so a failed export showed
+  literal JSON text in the UI's error alert instead of the actual message. The existing tests mocked
+  plain-text bodies that don't match the real shape, masking this. **Fixed:** attempts to
+  `JSON.parse` the body and extract `.message` first, falling back to the raw text (keeping the
+  existing plain-text tests passing unchanged).
+- **Copilot, confirmed real and reachable through the actual product UI, not just direct API
+  access:** `TaskCardView` rendered export buttons whenever `task.status === 'Done' && applicationId
+  != null`, assuming that implies the `JobApplication` is `Approved`. It doesn't: `KanbanBoard.tsx`'s
+  `pairedTaskIds` only routes a task into the paired `ApplicationReviewCard` flow once *both*
+  siblings are `Review` — until then, a lone Epic-3 sibling renders as a normal solo `TaskCardView`
+  with the ordinary per-task Approve button wired to `TasksController.Approve`, which has no pairing
+  awareness at all. An owner clicking that Approve button on one sibling before its pair is even in
+  `Review` moves it individually to `Done` while the application itself stays `ReviewReady`/
+  `Building` — guaranteeing the export a 400. (The underlying per-task-approve-can-bypass-pairing
+  behavior itself predates this PR and belongs to Sprint 1/3R/4R, so it's flagged, not re-architected,
+  here — T5.0 already made this narrower, not worse, by adding the ownership check. Only the *new*
+  T5.3 gating condition, which incorrectly assumed Done implies Approved, is this PR's own defect.)
+  **Fixed:** threaded the real `ApplicationState` through `TaskResponseDto` (new nullable field,
+  populated from `task.Application?.State`) and `TaskItem` (new optional field), including adding
+  `.Include(t => t.Application)` to `TaskRepository.GetAllAsync` (previously only `GetByIdAsync` had
+  it, from T5.0) — `TaskCardView` now also requires `applicationState === 'Approved'`. Proven at
+  three layers: a repository test confirming the navigation loads, a service test confirming the DTO
+  mapping, and — most convincingly — a real HTTP-level integration test that drives a lone sibling
+  through the actual individual-approve endpoint and asserts `GET /api/Tasks` reports its true,
+  non-Approved state.
+
+**Process note, in the interest of not overstating discipline:** two of the fixes above
+(`HttpContext.RequestAborted` forwarding, and the `TaskCardView`/`types.ts` gating change) were
+implemented in the same edit as their accompanying test rather than strictly test-first,
+single-step. Both were confirmed, by reasoning through the prior code's exact behavior against the
+new test's assertions, to genuinely have failed beforehand — but that confirmation is by inference,
+not by an observed RED run, and is recorded here rather than silently presented as equivalent to the
+strict RED-then-GREEN cycle used for every other fix in this list.
 
 ---
 

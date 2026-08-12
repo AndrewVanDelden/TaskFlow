@@ -58,12 +58,24 @@ describe('TaskCardView', () => {
     expect(onReject).toHaveBeenCalledWith('Needs work')
   })
 
-  it('shows export download controls for a Done task that belongs to a job application', () => {
-    const doneResumeTask: TaskItem = { ...task, status: 'Done', applicationId: 10, kind: 'ResumeTailoring' }
+  it('shows export download controls for a Done task whose application is Approved', () => {
+    const doneResumeTask: TaskItem = { ...task, status: 'Done', applicationId: 10, kind: 'ResumeTailoring', applicationState: 'Approved' }
     render(<TaskCardView task={doneResumeTask} />)
 
     expect(screen.getByRole('button', { name: /download pdf/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /download markdown/i })).toBeInTheDocument()
+  })
+
+  // Copilot review finding (PR #48): a lone Epic-3 sibling task can reach Done via the individual
+  // per-task approve path while its own JobApplication is still ReviewReady/Building (only both
+  // siblings approved together flips the application to Approved) - the export would be guaranteed
+  // to 400 in that case, so the buttons must not render just because Status is Done.
+  it('shows no download controls for a Done task whose application is not yet Approved', () => {
+    const doneButNotApproved: TaskItem = { ...task, status: 'Done', applicationId: 10, kind: 'ResumeTailoring', applicationState: 'ReviewReady' }
+    render(<TaskCardView task={doneButNotApproved} />)
+
+    expect(screen.queryByRole('button', { name: /download pdf/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /download markdown/i })).toBeNull()
   })
 
   it('shows no download controls for a Done generic task with no job application', () => {

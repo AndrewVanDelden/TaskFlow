@@ -130,10 +130,12 @@ builder.Services.AddScoped<IJobApplicationService, JobApplicationService>();
 // (created once) - Singleton, matching IExecutorSwitch's precedent for a stateful-at-the-process-
 // level, not per-request, service. TailoredContentTypstRenderer is fully stateless (pure
 // Markdown-in/Typst-out) - Singleton, registered as itself since it has no interface.
-// IExportService depends on the scoped repositories, so it's Scoped like every other service in
-// this file that touches them.
+// ITemplateProvider caches successful template reads for its own lifetime, so it must be
+// Singleton too, or the cache would be re-populated once per request scope. IExportService depends
+// on the scoped repositories, so it's Scoped like every other service in this file that touches them.
 builder.Services.AddSingleton<ITypstCompiler, ProcessTypstCompiler>();
 builder.Services.AddSingleton<TailoredContentTypstRenderer>();
+builder.Services.AddSingleton<ITemplateProvider, FileTemplateProvider>();
 builder.Services.AddScoped<IExportService, ExportService>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
@@ -177,7 +179,12 @@ builder.Services.AddCors(options =>
             .WithOrigins("http://localhost:5173")
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .AllowCredentials();   // required for SignalR websockets
+            .AllowCredentials()   // required for SignalR websockets
+            // Browsers hide response headers from JS on a cross-origin response unless the server
+            // explicitly exposes them - without this, every file download (Sprint 5) in the
+            // supported cross-origin VITE_API_BASE_URL deployment mode would silently lose its
+            // filename (Copilot review finding, PR #48).
+            .WithExposedHeaders("Content-Disposition");
     });
 });
 
