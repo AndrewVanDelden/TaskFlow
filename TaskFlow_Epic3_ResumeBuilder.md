@@ -1701,26 +1701,37 @@ style concern. Renamed the new factory to `Result<T>.InternalError` per the stan
 collisions by renaming at the source, not aliasing; the enum member `ResultStatus.Error` was
 unaffected and kept its designed name. Recorded in this doc under T5.1a at the time it was found.
 
+**Resolved same day (2026-08-11): the `typst` binary gap above was closed and closing it found two
+real bugs.** The user installed the `typst` CLI mid-session (`winget install --id Typst.Typst`,
+v0.15.1) and asked to close the gap. Running the three `RequiresTypstBinary`-trait tests for real
+for the first time surfaced:
+- **A genuine environment issue, not a code bug:** the first real run of
+  `Valid_Typst_source_compiles_to_PDF_bytes` failed (`IsSuccess` was `false`) because the
+  just-installed binary's directory wasn't yet on the test process's `PATH` (a fresh shell restart
+  was needed, or an explicit `PATH`/`Export:TypstBinaryPath` override for the one-off verification
+  run).
+- **A real test-quality gap, found by that same failed run:** the other two tests
+  (invalid-syntax, timeout) both asserted only `IsSuccess == false` — which is equally true when the
+  binary is simply unresolvable. Direct proof: both incidentally passed during the very run where
+  `PATH` was broken and typst was never actually invoked at all, while only the valid-source test
+  (the one asserting `IsSuccess == true`) caught the problem. **Fixed:** both now assert the exact
+  failure message (`"PDF compilation failed."` / `"PDF compilation timed out."`), which does
+  distinguish "typst ran and rejected this" from "typst was never invoked."
+- **A wrong premise, flagged as unverified when the test was written and confirmed wrong once
+  actually run:** `#while true { }` does not hang typst — it's statically rejected at compile time
+  (`error: condition is always true`), confirmed by running it directly against the real binary. The
+  timeout test was exercising the non-zero-exit path, not the timeout path, passing for the wrong
+  reason. **Fixed:** replaced with a large but genuinely finite nested loop
+  (`range(100000000)` × `range(1000)`), independently confirmed via a manual `timeout`-wrapped probe
+  outside the test to actually run past an 8-second budget without being statically rejected.
+
+All three tests now pass for real against typst 0.15.1, for the right reasons. `resume.typ`/
+`cover-letter.typ` were also smoke-tested directly (template text concatenated with sample content,
+compiled to a real PDF) — both succeed; a benign `unknown font family: linux libertine` warning
+falls back to New Computer Modern and never reaches stderr logging (`ProcessTypstCompiler` only logs
+stderr on a non-zero exit, not on success). Default backend suite unaffected: 327/327 still green.
+
 **Still open, not part of this sprint's scope:**
-- **The three real-binary tests in `ProcessTypstCompilerTests.cs`
-  (`[Trait("RequiresTypstBinary", "true")]`) were written but never executed in this session** — the
-  `typst` binary is confirmed not installed on this development machine. This was a known,
-  discussed tradeoff before T5.1a was dispatched (the user chose to proceed with the trait-gated
-  design already recorded in this doc rather than install `typst` first), not an oversight
-  discovered afterward. `test.cmd` excludes this trait by default (`--filter
-  "RequiresTypstBinary!=true"`), so `.\test` does not require the binary. To actually run them:
-  install the `typst` CLI (e.g. `winget install --id Typst.Typst` or `scoop install typst`), confirm
-  `typst --version` resolves on `PATH`, then run
-  `dotnet test --filter "RequiresTypstBinary=true" --project TaskFlow.Api` from the repo root.
-  Every other piece of this sprint that composes with the compiler (`ExportService`'s Pdf path, the
-  T5.2 HTTP-level `?format=pdf` integration tests) is covered by real, executed tests against a fake
-  `ITypstCompiler` instead — only `ProcessTypstCompiler`'s own real-subprocess behavior (valid
-  source → PDF bytes, non-zero exit → failure, timeout → killed process) is unverified by execution.
-- The two Typst templates (`resume.typ`, `cover-letter.typ`) have not been verified by an actual
-  Typst compile in this session, for the same reason — they're static assets per this repo's
-  existing precedent for untested collaborators of a tested/logic-bearing class
-  (`StaleClaimReaperService`), and will get their first real compile whenever the binary tests above
-  are run.
 - The branch has not been pushed or PR'd — pending user confirmation, consistent with this
   project's convention that release actions are confirmed, not silent.
 
