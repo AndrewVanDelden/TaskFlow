@@ -2289,6 +2289,25 @@ sat unused since Sprint 2.
     then Slice C; then Slice D and Slice E in parallel (D and E both touch `lib/board.ts` — sequenced
     within that pair rather than truly concurrent, per the note above).
 
+**Addendum, decided before dispatching Slice C (2026-08-12): the existing standalone "Save base
+resume" button (`useBaseResumeCapture`, T2.3) is kept, not replaced or orphaned.** Working through
+`useIntakeFlow`'s `starting` transition surfaced a real question the original decision pass didn't
+settle: once "Start tailoring" itself needs to persist the base resume before assembling, does the
+already-shipped, already-tested standalone save button still have a purpose? **Decision: yes, kept
+verbatim, still available at the `provide` stage.** It lets a user save/update their base resume for
+future reuse independent of starting any specific application — genuinely useful given T6.1's own
+reuse feature depends on a resume having been saved at some point — and removing tested, working
+Sprint-2 functionality to make room for the guided flow would be exactly the kind of unscoped,
+silent deletion `CLAUDE.md` prohibits. `useIntakeFlow`'s `starting` transition calls the same
+`saveResumeContext` API function directly (not through the `useBaseResumeCapture` hook — that hook
+owns its own standalone loading/error/saved UI state, which doesn't fit the flow's own
+stage-level loading/error), so there are two call sites but one underlying save function — not a DRY
+violation, no duplicated save logic. `ResumeContextService.SaveAsync`'s existing upsert makes calling
+it twice (once via the button, once via Start) harmless either way. The base resume input stays
+visible and editable through both `provide` and `review` stages (parsing only consumes the job
+posting; there is nothing to "collapse" about the resume until the user actually starts tailoring),
+collapsing only once `starting`/`building`/`ready` is reached.
+
 ### Tasks
 
 **T6.1 — Two clear inputs with labels.** Labeled job-posting and base-resume inputs; a styled file
