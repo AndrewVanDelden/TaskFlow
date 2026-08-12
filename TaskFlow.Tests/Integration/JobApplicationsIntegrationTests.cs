@@ -2,8 +2,14 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using TaskFlow.Api.Common;
+using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs;
+using TaskFlow.Api.Export;
 using TaskFlow.Api.Repositories;
 
 namespace TaskFlow.Tests.Integration;
@@ -19,9 +25,11 @@ public class JobApplicationsIntegrationTests
     private readonly TestWebAppFactory _factory;
     public JobApplicationsIntegrationTests(TestWebAppFactory factory) => _factory = factory;
 
-    private async Task<HttpClient> AuthedClientAsync()
+    private Task<HttpClient> AuthedClientAsync() => AuthedClientAsync(_factory);
+
+    private async Task<HttpClient> AuthedClientAsync(WebApplicationFactory<Program> factory)
     {
-        var client = _factory.CreateClient();
+        var client = factory.CreateClient();
         var email = $"user-{Guid.NewGuid():N}@example.dev";
         await client.PostAsJsonAsync("/api/Auth/register", new { name = "User", email, password = "password1" });
         var login = await client.PostAsJsonAsync("/api/Auth/login", new { email, password = "password1" });
@@ -276,6 +284,196 @@ public class JobApplicationsIntegrationTests
         using var scope = _factory.Services.CreateScope();
         var jobApplications = scope.ServiceProvider.GetRequiredService<IJobApplicationRepository>();
         await jobApplications.PromotePendingReviewReadyApplicationsAsync();
+    }
+
+    // ── Sprint 5: artifact export (T5.2) ────────────────────────────────────────
+    // No HTTP endpoint writes TailoredContent - only the Claude-backed tailoring agents do, and
+    // standing those up for a test is unnecessary per this file's existing precedent
+    // (PromoteToReviewReadyAsync above reaches into the DI container directly rather than driving
+    // the reconciliation sweep through HTTP). Same pattern here: a scoped AppDbContext sets
+    // TailoredContent directly on both sibling TaskItems.
+    private async Task SetTailoredContentAsync(int taskId, string content)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var task = await db.Tasks.FirstAsync(t => t.Id == taskId);
+        task.TailoredContent = content;
+        await db.SaveChangesAsync();
+    }
+
+    // Assembles a real application, sets TailoredContent on both siblings, and drives them to
+    // ReviewReady via the real HTTP status-update endpoint plus the existing reconciliation-sweep
+    // repository call - stops short of Approved so wrong-state tests can use it directly.
+    private async Task<(HttpClient client, int applicationId)> ReviewReadyApplicationAsync(
+        WebApplicationFactory<Program> factory,
+        string resumeContent = "Tailored resume body.",
+        string coverLetterContent = "Tailored cover letter body.")
+    {
+        var client = await AuthedClientAsync(factory);
+        var sessionId = Guid.NewGuid().ToString("N");
+
+        await client.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+
+        var assemble = await client.PostAsJsonAsync("/api/JobApplications",
+            new
+            {
+                ingestionSessionId = sessionId,
+                posting = new { title = "Backend Engineer", description = "Great role", section = "Job Posting" }
+            });
+        var application = await assemble.Content.ReadFromJsonAsync<JobApplicationDto>();
+
+        foreach (var task in application!.Tasks)
+        {
+            var content = task.Kind == "ResumeTailoring" ? resumeContent : coverLetterContent;
+            await SetTailoredContentAsync(task.Id, content);
+
+            var move = await client.PatchAsJsonAsync($"/api/Tasks/{task.Id}/status", new { status = "Review" });
+            move.EnsureSuccessStatusCode();
+        }
+        await PromoteToReviewReadyAsync();
+
+        return (client, application.Id);
+    }
+
+    private async Task<(HttpClient client, int applicationId)> ApprovedApplicationAsync(
+        WebApplicationFactory<Program> factory,
+        string resumeContent = "Tailored resume body.",
+        string coverLetterContent = "Tailored cover letter body.")
+    {
+        var (client, applicationId) = await ReviewReadyApplicationAsync(factory, resumeContent, coverLetterContent);
+
+        var approve = await client.PostAsync($"/api/JobApplications/{applicationId}/approve", null);
+        approve.EnsureSuccessStatusCode();
+
+        return (client, applicationId);
+    }
+
+    // Derived factory with a fake ITypstCompiler for the pdf-format cases: the real
+    // ProcessTypstCompiler shells out to the `typst` binary, which is not installed on this
+    // machine, per Sprint 5's testing-strategy decision. Markdown-format cases never reach the
+    // compiler at all, so they use the plain _factory - proving, structurally, that the real
+    // (missing) binary is never invoked for that path.
+    private static WebApplicationFactory<Program> WithFakeTypstCompiler(TestWebAppFactory factory) =>
+        factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddScoped<ITypstCompiler, FakeTypstCompiler>()));
+
+    [Theory]
+    [InlineData("resume", "resume.pdf")]
+    [InlineData("cover-letter", "cover-letter.pdf")]
+    public async Task Export_pdf_returns_200_with_correct_headers_for_an_owned_Approved_application(string route, string expectedFileName)
+    {
+        var fakeFactory = WithFakeTypstCompiler(_factory);
+        var (client, applicationId) = await ApprovedApplicationAsync(fakeFactory);
+
+        var response = await client.GetAsync($"/api/JobApplications/{applicationId}/export/{route}?format=pdf");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/pdf");
+        response.Content.Headers.ContentDisposition.Should().NotBeNull();
+        response.Content.Headers.ContentDisposition!.DispositionType.Should().Be("attachment");
+        response.Content.Headers.ContentDisposition.FileName.Should().Contain(expectedFileName);
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        bytes.Should().NotBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("resume", "resume.md")]
+    [InlineData("cover-letter", "cover-letter.md")]
+    public async Task Export_markdown_returns_200_with_correct_headers_for_an_owned_Approved_application(string route, string expectedFileName)
+    {
+        var (client, applicationId) = await ApprovedApplicationAsync(_factory,
+            resumeContent: "Resume markdown body.", coverLetterContent: "Cover letter markdown body.");
+
+        var response = await client.GetAsync($"/api/JobApplications/{applicationId}/export/{route}?format=markdown");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("text/markdown");
+        response.Content.Headers.ContentDisposition.Should().NotBeNull();
+        response.Content.Headers.ContentDisposition!.DispositionType.Should().Be("attachment");
+        response.Content.Headers.ContentDisposition.FileName.Should().Contain(expectedFileName);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Be(route == "resume" ? "Resume markdown body." : "Cover letter markdown body.");
+    }
+
+    [Theory]
+    [InlineData("resume")]
+    [InlineData("cover-letter")]
+    public async Task Export_returns_404_for_a_different_owner(string route)
+    {
+        var (_, applicationId) = await ApprovedApplicationAsync(_factory);
+        var otherUser = await AuthedClientAsync();
+
+        var response = await otherUser.GetAsync($"/api/JobApplications/{applicationId}/export/{route}?format=markdown");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Theory]
+    [InlineData("resume")]
+    [InlineData("cover-letter")]
+    public async Task Export_returns_400_for_a_ReviewReady_application(string route)
+    {
+        var (client, applicationId) = await ReviewReadyApplicationAsync(_factory);
+
+        var response = await client.GetAsync($"/api/JobApplications/{applicationId}/export/{route}?format=markdown");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Theory]
+    [InlineData("resume")]
+    [InlineData("cover-letter")]
+    public async Task Export_returns_401_for_a_missing_auth_token(string route)
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync($"/api/JobApplications/1/export/{route}?format=markdown");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Theory]
+    [InlineData("resume")]
+    [InlineData("cover-letter")]
+    public async Task Export_returns_400_for_an_invalid_format_value(string route)
+    {
+        var (client, applicationId) = await ApprovedApplicationAsync(_factory);
+
+        var response = await client.GetAsync($"/api/JobApplications/{applicationId}/export/{route}?format=docx");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    // Copilot review finding (PR #48): browsers hide response headers from JS on a cross-origin
+    // response unless the server explicitly lists them via Access-Control-Expose-Headers - without
+    // it, every download in the supported cross-origin VITE_API_BASE_URL deployment mode would
+    // silently lose Content-Disposition and fall back to the extensionless filename "download".
+    // Masked locally by the Vite dev proxy (same-origin), so this can only be caught by actually
+    // sending a cross-origin request (an Origin header) and reading the real CORS response header.
+    [Fact]
+    public async Task Export_response_exposes_ContentDisposition_via_CORS_for_cross_origin_downloads()
+    {
+        var (client, applicationId) = await ApprovedApplicationAsync(_factory);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/JobApplications/{applicationId}/export/resume?format=markdown");
+        request.Headers.Add("Origin", "http://localhost:5173");
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Headers.TryGetValues("Access-Control-Expose-Headers", out var exposedHeaders).Should().BeTrue();
+        string.Join(",", exposedHeaders!).Should().Contain("Content-Disposition");
+    }
+
+    // Fixed, non-empty bytes stand in for a real PDF - these tests exercise routing/headers/status
+    // (T5.2), not PDF validity, which is covered separately by ExportServiceTests and the
+    // trait-gated ProcessTypstCompilerTests.
+    private sealed class FakeTypstCompiler : ITypstCompiler
+    {
+        public Task<Result<byte[]>> CompilePdfAsync(string typstSource, CancellationToken ct = default) =>
+            Task.FromResult(Result<byte[]>.Ok(new byte[] { 0x25, 0x50, 0x44, 0x46, 0x2D }));
     }
 
     // Local shapes: Kind as a plain string so the test's default deserializer does not choke.

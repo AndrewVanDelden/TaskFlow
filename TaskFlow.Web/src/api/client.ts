@@ -28,29 +28,55 @@ export class ApiError extends Error {
   }
 }
 
-// Single place where every request gets its Authorization header.
-export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+// Shared by request() and requestBlob(): every call gets its Authorization header attached the
+// same way, whatever else the caller passes in.
+function buildHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
   const token = getToken()
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> | undefined),
-  }
+  const headers: Record<string, string> = { ...extraHeaders }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers })
+  return headers
+}
 
+// The server's error responses (ToActionResult / ToFileActionResult) are JSON objects shaped
+// { "message": "..." } - extracts that field so the UI shows the real message instead of the raw
+// JSON text. Returns null (rather than throwing) for a non-JSON or differently-shaped body, so the
+// caller can fall back to the raw text.
+function extractErrorMessage(body: string): string | null {
+  try {
+    const parsed = JSON.parse(body)
+    return typeof parsed?.message === 'string' ? parsed.message : null
+  } catch {
+    return null
+  }
+}
+
+// Shared by request() and requestBlob(): the same 401-clears-token behavior, and the same
+// status+message ApiError for every other non-OK response.
+async function throwForErrorResponse(response: Response): Promise<never> {
   if (response.status === 401) {
     clearToken()
     throw new ApiError(401, 'Session expired. Please log in again.')
   }
 
+  const body = await response.text()
+  throw new ApiError(response.status, extractErrorMessage(body) ?? (body || response.statusText))
+}
+
+// Single place where every JSON request gets its Authorization header.
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers = buildHeaders({
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> | undefined),
+  })
+
+  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers })
+
   if (!response.ok) {
-    const body = await response.text()
-    throw new ApiError(response.status, body || response.statusText)
+    await throwForErrorResponse(response)
   }
 
   // 204 No Content has no body to parse
@@ -59,4 +85,36 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   }
 
   return response.json() as Promise<T>
+}
+
+export interface DownloadedFile {
+  blob: Blob
+  filename: string
+}
+
+// Parses the standard `Content-Disposition: attachment; filename="resume.pdf"` shape. Returns null
+// (rather than throwing) when the header is missing or doesn't match, so callers can fall back.
+function extractFilename(contentDisposition: string | null): string | null {
+  if (!contentDisposition) {
+    return null
+  }
+  const match = /filename="?([^";]+)"?/i.exec(contentDisposition)
+  return match ? match[1] : null
+}
+
+// Sibling to request() for binary/text file downloads: same auth header and error handling, but
+// reads the body as a Blob instead of parsing it as JSON, and surfaces the filename the server
+// named via Content-Disposition.
+export async function requestBlob(path: string, options: RequestInit = {}): Promise<DownloadedFile> {
+  const headers = buildHeaders(options.headers as Record<string, string> | undefined)
+
+  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers })
+
+  if (!response.ok) {
+    await throwForErrorResponse(response)
+  }
+
+  const blob = await response.blob()
+  const filename = extractFilename(response.headers.get('Content-Disposition')) ?? 'download'
+  return { blob, filename }
 }

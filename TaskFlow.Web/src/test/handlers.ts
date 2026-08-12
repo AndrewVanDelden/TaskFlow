@@ -23,6 +23,20 @@ export const handlers = [
     HttpResponse.json({
       id: 1, state: 'Building', ingestionSessionId: '', ownerId: 1, createdAt: '', tasks: [],
     })),
+  http.get('*/api/JobApplications/:id/export/resume', () =>
+    new HttpResponse('resume file bytes', {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="resume.pdf"',
+      },
+    })),
+  http.get('*/api/JobApplications/:id/export/cover-letter', () =>
+    new HttpResponse('cover letter file bytes', {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="cover-letter.pdf"',
+      },
+    })),
   http.get('*/api/agents/executor', () => HttpResponse.json({ enabled: false })),
   http.post('*/api/agents/executor/enable', () => HttpResponse.json({ enabled: true })),
   http.post('*/api/agents/executor/disable', () => HttpResponse.json({ enabled: false })),

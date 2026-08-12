@@ -41,6 +41,35 @@ public class TaskRepositoryTests
         asOtherUser.Select(t => t.Title).Should().NotContain("Owner's tailored resume");
     }
 
+    // Copilot review finding (PR #48): TaskCardView gates its new export buttons on
+    // task.status === 'Done' && applicationId != null, assuming that implies the JobApplication is
+    // Approved - but a lone Epic-3 sibling task can reach Done via the individual per-task approve
+    // path while its pair never does, leaving the application at ReviewReady/Building. The frontend
+    // needs the real ApplicationState to gate correctly instead of guessing from Status alone, which
+    // requires GetAllAsync (used by the board's GET /api/Tasks) to actually load the Application
+    // navigation - GetByIdAsync already does this (T5.0); GetAllAsync did not.
+    [Fact]
+    public async Task GetAllAsync_populates_the_Application_navigation_for_an_Epic3_sibling_task()
+    {
+        using var db = new SqliteInMemoryContext();
+        await db.Context.Tasks.ExecuteDeleteAsync();
+        await db.Context.JobApplications.ExecuteDeleteAsync();
+        var sut = new TaskRepository(db.Context);
+
+        var application = new JobApplication { State = ApplicationState.Approved, OwnerId = 1 };
+        db.Context.JobApplications.Add(application);
+        await db.Context.SaveChangesAsync();
+
+        db.Context.Tasks.Add(new TaskItem { Title = "Tailored resume", Kind = TaskKind.ResumeTailoring, ApplicationId = application.Id, Status = WorkflowStatus.Done });
+        await db.Context.SaveChangesAsync();
+
+        var tasks = await sut.GetAllAsync(null, null, callerId: 1);
+
+        var task = tasks.Should().ContainSingle(t => t.Title == "Tailored resume").Subject;
+        task.Application.Should().NotBeNull();
+        task.Application!.State.Should().Be(ApplicationState.Approved);
+    }
+
     [Fact]
     public async Task AddAsync_then_GetByIdAsync_roundtrips_a_task()
     {

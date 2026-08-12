@@ -12,7 +12,12 @@ public class TaskRepository : ITaskRepository
 
     public async Task<TaskItem?> GetByIdAsync(int id, bool includeAssignee = false, CancellationToken ct = default)
     {
-        var query = _db.Tasks.AsQueryable();
+        // Application is always included (unconditionally, unlike AssignedTo) so every caller of
+        // this method gets the navigation populated when ApplicationId is set - TaskService's six
+        // single-item actions need task.Application!.OwnerId for the ownership check (T5.0). A LEFT
+        // JOIN on a nullable FK is cheap and behavior-preserving for rows where ApplicationId is
+        // null, so this is safe for existing callers (agents) that never read .Application.
+        var query = _db.Tasks.Include(t => t.Application).AsQueryable();
         if (includeAssignee) query = query.Include(t => t.AssignedTo);
         return await query.FirstOrDefaultAsync(t => t.Id == id, ct);
     }
@@ -22,8 +27,10 @@ public class TaskRepository : ITaskRepository
         // Generic tasks (no ApplicationId) are the shared board, visible to everyone. Epic 3
         // sibling tasks carry personal document content (TailoredContent) and are visible only to
         // the JobApplication's own owner - a caller with the wrong id must not see them at all,
-        // not just be blocked from acting on them (PR #45 review finding).
-        var query = _db.Tasks.Include(t => t.AssignedTo)
+        // not just be blocked from acting on them (PR #45 review finding). Application is also
+        // explicitly Included (not just referenced in the Where) so TaskResponseDto.ApplicationState
+        // is populated for the frontend's export-download gating (PR #48 review finding).
+        var query = _db.Tasks.Include(t => t.AssignedTo).Include(t => t.Application)
             .Where(t => t.ApplicationId == null || t.Application!.OwnerId == callerId);
         if (status.HasValue)   query = query.Where(t => t.Status == status.Value);
         if (priority.HasValue) query = query.Where(t => t.Priority == priority.Value);
