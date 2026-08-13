@@ -181,7 +181,7 @@ The first bullet below is this project's most serious finding to date, not a nit
 | **3R** | Multi-Agent Generation | Ready — architecture below, no code yet |
 | **4R** | Combined Review and Approval | Ready — architecture below, no code yet |
 | **5** | Artifact Export | **COMPLETE** — 343/343 backend, 95/95 frontend (incl. PR #48 review fixes) |
-| **6** | Intake Experience Redesign | Ready — architecture below, no code yet |
+| **6** | Intake Experience Redesign | **COMPLETE** — 351/351 backend, 136/136 frontend |
 
 ## Definition of Done (Epic 3)
 
@@ -2111,9 +2111,89 @@ strict RED-then-GREEN cycle used for every other fix in this list.
 
 ## Sprint 6 — Intake Experience Redesign
 
-**Status: Ready. Architecture only. Scoped from the real `IngestDocument.tsx` and
-`KanbanBoard.tsx`** (not independently re-confirmed line-by-line in this pass; the source doc's
-description was itself a grounded read against the current files).
+**Status: COMPLETE (2026-08-12).** T6.1–T6.5 shipped on `feature/epic3-sprint6-intake-redesign`
+(9 commits: decisions doc, two decision corrections found while designing later slices, then five
+implementation slices, each independently re-verified against the real diff and a fresh
+`dotnet test`/`npx vitest run`/`npx tsc -b` run before committing — none taken on any subagent's
+self-report). Full suite green via `.\test`: 351/351 backend, 136/136 frontend, both with coverage.
+Built by five delegated engineers — Slice A (backend resume-reuse read path) and Slice B (frontend
+session-id routing) run in parallel first, zero file overlap, both prerequisites; then Slice C (the
+guided intake flow itself, depending on both); then Slice D (T6.3 live progress) and Slice E (T6.4
+board grouping) run one after the other rather than truly concurrently, since both touch
+`lib/board.ts` and this sprint ran without per-agent worktree isolation (see the note below).
+
+**Tooling note, recorded per this project's standing practice of logging what actually happened, not
+just what was planned:** Slice A and Slice B were originally dispatched with `isolation: "worktree"`.
+Both independently discovered and correctly refused to work around the same problem: the isolated
+worktree the harness created was pinned to a stale pre-Epic-3 commit (`cbbb0ec`, Sprint 7), not this
+session's actual branch — neither agent could find any of the files their brief described, and
+neither attempted to fix it themselves since doing so would have meant running `git checkout` (their
+brief explicitly forbade it) inside a locked worktree they didn't set up. Both correctly stopped and
+reported the mismatch rather than fabricating code against a base that didn't have the files it was
+supposed to extend. Relaunched without `isolation`, directly against the shared working directory on
+the correct branch — both then completed as expected. Slices C, D, and E were dispatched the same way
+(no `isolation`) from the start, with D and E deliberately sequenced rather than parallel specifically
+*because* running two agents concurrently against one shared, unisolated working tree on a file both
+of them edit (`lib/board.ts`) has no safety net the way a worktree would have provided.
+
+**What shipped, exactly as specified:**
+- **T6.1 (backend half)** — `IResumeContextRepository.GetMostRecentForOwnerAsync(ownerId)` (owner-only
+  query, no session-id dimension — ownership-safe because `ownerId` is always resolved server-side
+  from the JWT, never client-supplied), `IResumeContextService.GetMostRecentForCallerAsync`, new
+  `ResumeContextSummaryDto`, and `GET api/JobApplications/resume-context/latest`. Closes a real gap:
+  there was previously no way to answer "the caller's own most recently saved resume, from any
+  session" without already knowing a session id.
+- **T6.1 (session id)** — closes PR #40 review finding #7. The ingestion session id moved from
+  component state (`crypto.randomUUID()` per mount, lost on unmount/remount) to the URL:
+  `App.tsx` gained `/ingest/:sessionId`, with bare `/ingest` (the nav link's target) redirecting
+  through a new `IngestRedirect` component that generates a fresh id and navigates to it.
+- **T6.1/T6.2/T6.5 (the guided flow itself)** — `IngestDocument.tsx` was rewritten around a new
+  `useIntakeFlow(sessionId)` hook owning a one-field stage machine (`provide → parsing → review →
+  starting → building`, `useIntakeFlow`'s own terminal state — it never needed to know about T6.3's
+  live-progress data) that actually drives `POST /api/JobApplications/parse`,
+  `POST /api/JobApplications/resume-context`, and `POST /api/JobApplications` — endpoints that had
+  sat unused in the UI since Sprint 2. `useBaseResumeReuse()` offers a previously saved resume as an
+  optional nicety (any failure, including a 404 for "never saved one," silently resolves to
+  unavailable — never surfaced as an error). Progressive disclosure: only the current stage's controls
+  are interactive; a completed stage collapses to a one-line summary rather than vanishing. The
+  existing Epic-2 generic paste/file/parse/approve flow (`useIngestion`) was kept, unchanged in
+  behavior, moved under a collapsed native `<details>` rather than removed — Sprint 6's task text
+  never asked for its removal, and silently deleting tested, working functionality to make room for
+  the new flow would have been exactly the kind of unscoped change this project's standing rules
+  prohibit. The existing standalone "Save base resume" button (`useBaseResumeCapture`, T2.3) was kept
+  for the same reason, alongside `useIntakeFlow`'s own resume-persist call inside `startTailoring` —
+  two call sites, one underlying save function, not a DRY violation.
+- **T6.3** — confirmed, not assumed, that no new SignalR event type was needed: reading
+  `TailoringAgentBase.cs`/`AgentConstants.cs` directly showed the only per-task `AgentLog` actions
+  these two agents ever write are `Claimed`, `TailoredContentSaved`, and `RolledBack` — enough to
+  derive a per-item stage. New pure helper `taskStage(logs, taskId)` in `lib/board.ts` mirrors
+  `taskOutput`'s existing "most recent Claimed" scoping, so a stale prior cycle (before a
+  rollback-and-retry) never reports as current. New `IntakeProgress` component renders both items'
+  live progress plus a "ready for review — view it on the board" banner once both are `saved`,
+  reusing the same `useAgentFeed` hook `KanbanBoard` already consumes — no second SignalR
+  subscription, additive to `useIntakeFlow`'s `building` stage without `useIntakeFlow` itself needing
+  any change.
+- **T6.4** — new pure helper `groupSiblingCards(tasks)` in `lib/board.ts`, deliberately scoped to one
+  column's own task list rather than board-wide (dnd-kit columns are separate drop containers, so a
+  cross-column visual merge would have no sound drag semantic). `KanbanColumn.tsx` wraps adjacent
+  same-`applicationId` pairs in a shared bordered container; each `TaskCard` is still individually
+  rendered and draggable inside the same `SortableContext` as before. `TaskCardView.tsx` gained an
+  unconditional kind badge ("Resume"/"Cover letter") for every non-`Generic` card, independent of
+  whether it's grouped. `KanbanBoard.tsx`'s existing `ApplicationReviewCard`/`pairedTaskIds` mechanism
+  (full `ReviewReady` pairs) is completely untouched and confirmed unaffected by the full suite
+  staying green, since the tasks that reach `groupSiblingCards` are already pre-filtered to exclude
+  full pairs.
+- **T6.5** — every new input has a real associated `<label>`; loading states use `aria-busy` plus
+  visible text ("Parsing…"/"Starting…"); every stage transition moves focus to the page's `<h1>` (a
+  `ref` + `.focus()` keyed on the stage) so a keyboard/screen-reader user is never left focused on a
+  control that just disappeared; errors render in an explicit `role="alert"` banner, not a silent
+  failure; the reuse-offer and per-item progress rows both render explicit states rather than nothing.
+  The generic-flow `<details>/<summary>` disclosure is natively keyboard-reachable and exposes its own
+  expanded state to assistive tech for free.
+
+**Still open, not part of this sprint's scope:**
+- The branch has not been pushed or PR'd — pending user confirmation, consistent with this project's
+  convention that release actions are confirmed, not silent.
 
 ### Goal
 
