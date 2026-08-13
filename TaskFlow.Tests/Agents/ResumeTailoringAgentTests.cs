@@ -142,7 +142,7 @@ public class ResumeTailoringAgentTests
         var updatedApplication = await jobApplications.GetByIdAsync(application.Id);
         updatedApplication!.State.Should().Be(ApplicationState.Building);
 
-        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.TailoredContentSaved && l.TaskId == resumeTask.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.ApplicationReviewReady);
 
@@ -216,7 +216,7 @@ public class ResumeTailoringAgentTests
         updated.ClaimedBy.Should().BeNull();
         updated.TailoredContent.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == resumeTask.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.TailoredContentSaved);
     }
@@ -243,7 +243,7 @@ public class ResumeTailoringAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Todo);
         updated.ClaimedBy.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == resumeTask.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.AutoFinalized);
     }
@@ -268,7 +268,7 @@ public class ResumeTailoringAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Todo);
         updated.ClaimedBy.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == resumeTask.Id);
     }
 
@@ -297,7 +297,7 @@ public class ResumeTailoringAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Todo);
         updated.ClaimedBy.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.ResumeTailoring, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == resumeTask.Id);
     }
 

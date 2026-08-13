@@ -51,8 +51,21 @@ public class ClaudeAgentBaseWasSuccessfulTests
         ClaudeAgentBase.WasSuccessful(Result(wrapped)).Should().BeTrue();
     }
 
+    // Copilot's automated review (PR #50): the first fix (a 256-character scan window) still
+    // failed this exact case - WrapUntrusted's framing + tag is shorter than 256 characters, so a
+    // resume whose very first words are a trigger phrase is still inside the window and still
+    // misclassified as a failed tool call.
     [Fact]
-    public void Returns_false_when_the_tool_result_has_no_text_content()
+    public void Returns_true_when_the_trigger_phrase_is_the_first_thing_in_the_wrapped_content()
+    {
+        var resume = "Does not exist yet: I am still pursuing this certification.";
+        var wrapped = PromptSafety.WrapUntrusted(resume, "base_resume");
+
+        ClaudeAgentBase.WasSuccessful(Result(wrapped)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Returns_true_when_the_tool_result_has_no_text_content()
     {
         var result = new ToolResultContent { ToolUseId = "tool_1", Content = new List<ContentBase>() };
 

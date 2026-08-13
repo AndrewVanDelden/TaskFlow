@@ -4,6 +4,7 @@ using System.Text.Json;
 using TaskFlow.Api.Configuration;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Repositories;
+using TaskFlow.Api.Security;
 using TaskFlow.Api.Services;
 using Tool = Anthropic.SDK.Common.Tool;
 
@@ -29,17 +30,6 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
 {
     /// <summary>Safety cap so a runaway tool loop cannot call the API unbounded.</summary>
     private const int MaxToolLoopIterations = 10;
-
-    /// <summary>
-    /// How much of a tool result's text <see cref="WasSuccessful"/> scans for an error phrase.
-    /// Every error string this codebase actually produces is a short, code-generated sentence at
-    /// the very start of the result; content that echoes back arbitrary text (e.g.
-    /// TailoringAgentBase's read_base_context tool, which returns the user's own resume) is always
-    /// wrapped first in PromptSafety.WrapUntrusted's framing sentence + tag, comfortably longer than
-    /// this window - so ordinary prose containing a phrase like "does not exist" deep inside a large
-    /// result is never mistaken for a real error (Epic 3 Pre-Merge Code Review, finding 2.1).
-    /// </summary>
-    private const int ErrorHeuristicScanWindow = 256;
 
     private readonly IAgentNotifier _notifier;
 
@@ -190,8 +180,15 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
 
     /// <summary>
     /// A tool call counts as a real action only if it did not report an error (unknown tool, not
-    /// found, invalid argument, exception, etc.). Only scans the first
-    /// <see cref="ErrorHeuristicScanWindow"/> characters — see that constant's doc comment for why.
+    /// found, invalid argument, exception, etc.). Every error string this codebase actually
+    /// produces is a short, code-generated sentence; content that echoes back arbitrary text (e.g.
+    /// TailoringAgentBase's read_base_context tool, which returns the user's own resume) is always
+    /// wrapped first via <see cref="PromptSafety.WrapUntrusted"/>. A fixed-length scan window
+    /// cannot safely rule out a false positive there — the user's own content could start with a
+    /// trigger phrase immediately after the wrapper's tag (Epic 3 Pre-Merge Code Review, finding
+    /// 2.1; a first attempt using a 256-character window still missed exactly this case, caught by
+    /// PR #50's Copilot review) — so wrapped content is recognized by its fixed framing prefix and
+    /// exempted from the heuristic entirely, rather than scanning a bounded prefix of it.
     /// `internal` (not `protected`) purely so TaskFlow.Tests can exercise this heuristic directly.
     /// </summary>
     internal static bool WasSuccessful(ContentBase result)
@@ -200,11 +197,12 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
             .OfType<TextContent>()
             .FirstOrDefault()?.Text ?? string.Empty;
 
-        var window = text.Length <= ErrorHeuristicScanWindow ? text : text[..ErrorHeuristicScanWindow];
+        if (text.StartsWith(PromptSafety.FramingPrefix, StringComparison.Ordinal))
+            return true;
 
-        return !window.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
-            && !window.Contains("not found", StringComparison.OrdinalIgnoreCase)
-            && !window.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+        return !text.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
+            && !text.Contains("not found", StringComparison.OrdinalIgnoreCase)
+            && !text.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -18,14 +18,29 @@ describe('useExecutorControl', () => {
     await waitFor(() => expect(result.current.enabled).toBe(true))
   })
 
+  // Copilot's automated review (PR #50): the original version of this test waited on `busy`,
+  // which the initial load never touches (only toggle() does) - so it was already `false` before
+  // the request even started, and the test would still pass even if the fetch/effect were deleted
+  // entirely. Gate on proof the request actually happened instead.
   it('stays at the unknown (null) state when the initial fetch fails', async () => {
-    server.use(http.get('*/api/agents/executor', () => new HttpResponse(null, { status: 500 })))
+    let requestReceived = false
+    server.use(
+      http.get('*/api/agents/executor', () => {
+        requestReceived = true
+        return new HttpResponse(null, { status: 500 })
+      }),
+    )
 
     const { result } = renderHook(() => useExecutorControl())
 
-    // No transition ever happens; give the failed fetch a tick to settle, then confirm it stayed null.
-    await waitFor(() => expect(result.current.busy).toBe(false))
-    expect(result.current.enabled).toBeNull()
+    // Fails (times out) if the initial fetch is ever removed, unlike asserting on `busy`.
+    await waitFor(() => expect(requestReceived).toBe(true))
+    // waitFor's real-timer polling gives the rejected request's .catch() time to run before the
+    // next check, so this isn't trivially true the instant requestReceived flips.
+    await waitFor(() => {
+      expect(result.current.enabled).toBeNull()
+      expect(result.current.busy).toBe(false)
+    })
   })
 
   it('toggle() disables an enabled executor', async () => {

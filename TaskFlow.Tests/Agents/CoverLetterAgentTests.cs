@@ -141,7 +141,7 @@ public class CoverLetterAgentTests
         var updatedApplication = await jobApplications.GetByIdAsync(application.Id);
         updatedApplication!.State.Should().Be(ApplicationState.Building);
 
-        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.TailoredContentSaved && l.TaskId == coverLetterTask.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.ApplicationReviewReady);
 
@@ -210,7 +210,7 @@ public class CoverLetterAgentTests
         updated.ClaimedBy.Should().BeNull();
         updated.TailoredContent.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == coverLetterTask.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.TailoredContentSaved);
     }
@@ -235,7 +235,7 @@ public class CoverLetterAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Todo);
         updated.ClaimedBy.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == coverLetterTask.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.AutoFinalized);
     }
@@ -260,7 +260,7 @@ public class CoverLetterAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Todo);
         updated.ClaimedBy.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == coverLetterTask.Id);
     }
 
@@ -288,7 +288,7 @@ public class CoverLetterAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Todo);
         updated.ClaimedBy.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10);
+        var recent = await logs.GetRecentAsync(AgentNames.CoverLetter, 10, OwnerId);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == coverLetterTask.Id);
     }
 

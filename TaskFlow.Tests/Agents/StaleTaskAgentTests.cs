@@ -57,7 +57,7 @@ public class StaleTaskAgentTests
         var updated = await tasks.GetByIdAsync(task.Id);
         updated!.Priority.Should().Be(TaskPriority.High);
 
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().Contain(l => l.Action == AgentActions.Escalated && l.TaskId == task.Id);
     }
 
@@ -77,7 +77,7 @@ public class StaleTaskAgentTests
         var act = async () => await sut.RunAsync(CancellationToken.None);
 
         await act.Should().NotThrowAsync();
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().NotContain(l => l.Action == AgentActions.Escalated);
         // The seeded anchor task itself must be untouched by the missing-id call.
         var anchor = await tasks.GetByIdAsync(staleAnchor.Id);
@@ -105,7 +105,7 @@ public class StaleTaskAgentTests
         var updated = await tasks.GetByIdAsync(task.Id);
         updated!.AssignedToId.Should().Be(102);
 
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().Contain(l => l.Action == AgentActions.Reassigned && l.TaskId == task.Id);
     }
 
@@ -146,7 +146,7 @@ public class StaleTaskAgentTests
 
         var updated = await tasks.GetByIdAsync(task.Id);
         updated!.AssignedToId.Should().Be(101); // unchanged
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().NotContain(l => l.Action == AgentActions.Reassigned);
     }
 
@@ -164,7 +164,7 @@ public class StaleTaskAgentTests
         var act = async () => await sut.RunAsync(CancellationToken.None);
 
         await act.Should().NotThrowAsync();
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().NotContain(l => l.Action == AgentActions.Reassigned);
     }
 
@@ -186,7 +186,7 @@ public class StaleTaskAgentTests
         updated!.Priority.Should().Be(TaskPriority.Medium);   // unmodified - flag is log-only
         updated.Status.Should().Be(WorkflowStatus.Todo);
 
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().Contain(l =>
             l.Action == AgentActions.FlaggedForReview &&
             l.TaskId == task.Id &&
@@ -207,7 +207,7 @@ public class StaleTaskAgentTests
         var act = async () => await sut.RunAsync(CancellationToken.None);
 
         await act.Should().NotThrowAsync();
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().NotContain(l => l.Action == AgentActions.FlaggedForReview);
     }
 
@@ -226,7 +226,7 @@ public class StaleTaskAgentTests
         var act = async () => await sut.RunAsync(CancellationToken.None);
 
         await act.Should().NotThrowAsync();
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().NotContain(l =>
             l.Action == AgentActions.Escalated || l.Action == AgentActions.Reassigned || l.Action == AgentActions.FlaggedForReview);
     }
@@ -246,7 +246,7 @@ public class StaleTaskAgentTests
         var act = async () => await sut.RunAsync(CancellationToken.None);
 
         await act.Should().NotThrowAsync();
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().NotContain(l => l.Action == AgentActions.Escalated);
     }
 
@@ -266,7 +266,7 @@ public class StaleTaskAgentTests
         await sut.RunAsync(CancellationToken.None);
 
         claude.Verify(c => c.SendAsync(It.IsAny<MessageParameters>(), It.IsAny<CancellationToken>()), Times.Never);
-        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10);
+        var recent = await logs.GetRecentAsync("StaleTaskDetector", 10, callerId: 1);
         recent.Should().NotContain(l => l.Action == AgentActions.CycleActions || l.Action == AgentActions.NoActionNeeded);
     }
 

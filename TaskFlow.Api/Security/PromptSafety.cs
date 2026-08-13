@@ -11,6 +11,14 @@ namespace TaskFlow.Api.Security;
 public static class PromptSafety
 {
     /// <summary>
+    /// The literal, fixed start of every <see cref="WrapUntrusted"/> result, regardless of label.
+    /// Lets a caller recognize "this text is wrapped untrusted content" (e.g.
+    /// <see cref="Agents.ClaudeAgentBase.WasSuccessful"/>, which must never apply an error-phrase
+    /// heuristic to arbitrary content a user supplied) without re-deriving the framing wording.
+    /// </summary>
+    public const string FramingPrefix = "Everything inside the block below labeled \"";
+
+    /// <summary>
     /// Wraps <paramref name="content"/> in a labeled, XML-style block preceded by an explicit
     /// statement that everything inside the block is data, never instructions. Any literal
     /// occurrence of the block's own delimiter tags inside <paramref name="content"/> is escaped
