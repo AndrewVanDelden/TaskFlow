@@ -48,7 +48,7 @@ describe('navigation', () => {
   it('shows the Ingest page when authenticated at /ingest', async () => {
     authenticate()
     renderAt('/ingest')
-    expect(await screen.findByText('Ingest a document')).toBeInTheDocument()
+    expect(await screen.findByText('Start a job application')).toBeInTheDocument()
   })
 
   it('redirects to the login form when unauthenticated', async () => {
@@ -62,14 +62,14 @@ describe('navigation', () => {
 
     await userEvent.click(await screen.findByRole('link', { name: 'Ingest' }))
 
-    expect(await screen.findByText('Ingest a document')).toBeInTheDocument()
+    expect(await screen.findByText('Start a job application')).toBeInTheDocument()
   })
 
   it('redirects bare /ingest to a session-id-bearing URL', async () => {
     authenticate()
     const { getPathname } = renderAtWithLocationProbe('/ingest')
 
-    await screen.findByText('Ingest a document')
+    await screen.findByText('Start a job application')
 
     expect(getPathname()).toMatch(SESSION_URL)
   })
@@ -77,12 +77,12 @@ describe('navigation', () => {
   it('two separate visits to bare /ingest get different session ids', async () => {
     authenticate()
     const first = renderAtWithLocationProbe('/ingest')
-    await screen.findByText('Ingest a document')
+    await screen.findByText('Start a job application')
     const firstPathname = first.getPathname()
     first.unmount()
 
     const second = renderAtWithLocationProbe('/ingest')
-    await screen.findByText('Ingest a document')
+    await screen.findByText('Start a job application')
     const secondPathname = second.getPathname()
 
     expect(firstPathname).toMatch(SESSION_URL)

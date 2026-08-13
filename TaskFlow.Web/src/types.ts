@@ -68,3 +68,10 @@ export interface JobApplicationResponse {
   createdAt: string
   tasks: JobApplicationTaskSummary[]
 }
+
+// Mirrors TaskFlow.Api's ResumeContextSummaryDto (GET .../resume-context/latest).
+export interface ResumeContextSummary {
+  content: string
+  contentFormat: string
+  updatedAt: string
+}
