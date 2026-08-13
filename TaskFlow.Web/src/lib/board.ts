@@ -93,3 +93,30 @@ export function reviewReadyPairs(tasks: TaskItem[]): ApplicationPair[] {
 
   return pairs
 }
+
+// Clusters adjacent same-applicationId tasks within ONE column's own task list into visual groups
+// (Sprint 6, T6.4). Deliberately column-scoped, not board-wide: dnd-kit columns are separate drop
+// containers, so a cross-column visual merge has no sound drag semantic. KanbanBoard.tsx already
+// filters full ReviewReady pairs out of each column's list before it reaches here (they render via
+// ApplicationReviewCard instead), so this only ever sees partial/non-ReviewReady siblings - never
+// conflicting with that mechanism. A task with a null applicationId, or whose sibling isn't in this
+// same column right now, ends up in its own 1-item group and renders exactly as before.
+//
+// Groups only ever grow to 2: an "open" 1-item group is closed off (excluded from further matches)
+// as soon as a second task joins it, so a hypothetical third same-applicationId task in one column
+// (never expected given the two-sibling domain model, but handled defensively rather than silently
+// dropped or merged) starts its own new 1-item group instead of growing the pair to 3.
+export function groupSiblingCards(tasks: TaskItem[]): TaskItem[][] {
+  const groups: TaskItem[][] = []
+  for (const task of tasks) {
+    const openGroup =
+      task.applicationId !== null &&
+      groups.find((g) => g.length === 1 && g[0].applicationId === task.applicationId)
+    if (openGroup) {
+      openGroup.push(task)
+    } else {
+      groups.push([task])
+    }
+  }
+  return groups
+}

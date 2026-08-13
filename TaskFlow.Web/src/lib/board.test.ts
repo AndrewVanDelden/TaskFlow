@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { AgentLog, TaskItem, TaskStatus } from '../types'
-import { resolveDropColumn, taskOutput, taskStage, reviewReadyPairs } from './board'
+import { resolveDropColumn, taskOutput, taskStage, reviewReadyPairs, groupSiblingCards } from './board'
 
 const task = (id: number, status: TaskStatus): TaskItem => ({
   id,
@@ -189,5 +189,47 @@ describe('reviewReadyPairs', () => {
     const coverLetterTask = epicTask(2, 10, 'CoverLetterTailoring', 'Review')
 
     expect(reviewReadyPairs([resumeTask, coverLetterTask])).toEqual([])
+  })
+})
+
+describe('groupSiblingCards', () => {
+  it('groups two adjacent same-applicationId tasks together', () => {
+    const resumeTask = epicTask(1, 10, 'ResumeTailoring', 'Todo')
+    const coverLetterTask = epicTask(2, 10, 'CoverLetterTailoring', 'InProgress')
+
+    expect(groupSiblingCards([resumeTask, coverLetterTask])).toEqual([[resumeTask, coverLetterTask]])
+  })
+
+  it('does not group tasks from different applications', () => {
+    const taskA = epicTask(1, 10, 'ResumeTailoring', 'Todo')
+    const taskB = epicTask(2, 20, 'ResumeTailoring', 'Todo')
+
+    expect(groupSiblingCards([taskA, taskB])).toEqual([[taskA], [taskB]])
+  })
+
+  it('does not group a Generic task with anything (null applicationId)', () => {
+    const generic = epicTask(1, null, 'Generic', 'Todo')
+    const epic = epicTask(2, 10, 'ResumeTailoring', 'Todo')
+
+    expect(groupSiblingCards([generic, epic])).toEqual([[generic], [epic]])
+  })
+
+  it('handles a lone sibling whose pair is in a different column (not present in this list) as its own 1-item group', () => {
+    const lone = epicTask(1, 10, 'ResumeTailoring', 'Todo')
+
+    expect(groupSiblingCards([lone])).toEqual([[lone]])
+  })
+
+  it('preserves the original task order across groups', () => {
+    const unrelatedA = epicTask(1, null, 'Generic', 'Todo')
+    const resumeTask = epicTask(2, 10, 'ResumeTailoring', 'Todo')
+    const coverLetterTask = epicTask(3, 10, 'CoverLetterTailoring', 'Todo')
+    const unrelatedB = epicTask(4, null, 'Generic', 'Todo')
+
+    expect(groupSiblingCards([unrelatedA, resumeTask, coverLetterTask, unrelatedB])).toEqual([
+      [unrelatedA],
+      [resumeTask, coverLetterTask],
+      [unrelatedB],
+    ])
   })
 })
