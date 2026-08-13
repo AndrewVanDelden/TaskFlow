@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { AgentLog, TaskItem, TaskStatus } from '../types'
-import { resolveDropColumn, taskOutput, reviewReadyPairs } from './board'
+import { resolveDropColumn, taskOutput, taskStage, reviewReadyPairs } from './board'
 
 const task = (id: number, status: TaskStatus): TaskItem => ({
   id,
@@ -66,6 +66,55 @@ describe('taskOutput', () => {
   it('returns nothing when there is no claim for the task in the log window', () => {
     const logs = [log(1, 'ReviewRequested', 'stale, no claim', '2026-07-28T09:00:00Z')]
     expect(taskOutput(logs, 1)).toEqual([])
+  })
+})
+
+describe('taskStage', () => {
+  it('returns pending when the task has never been claimed', () => {
+    const logs = [log(2, 'Claimed', 'claimed', '2026-07-28T09:00:00Z')]
+    expect(taskStage([], 1)).toBe('pending')
+    expect(taskStage(logs, 1)).toBe('pending')
+  })
+
+  it('returns in-progress after Claimed with no further action yet', () => {
+    const logs = [log(1, 'Claimed', 'claimed', '2026-07-28T10:00:00Z')]
+    expect(taskStage(logs, 1)).toBe('in-progress')
+  })
+
+  it('returns saved after TailoredContentSaved', () => {
+    const logs = [
+      log(1, 'Claimed', 'claimed', '2026-07-28T10:00:00Z'),
+      log(1, 'TailoredContentSaved', 'saved content', '2026-07-28T10:05:00Z'),
+    ]
+    expect(taskStage(logs, 1)).toBe('saved')
+  })
+
+  it('returns rolled-back after RolledBack', () => {
+    const logs = [
+      log(1, 'Claimed', 'claimed', '2026-07-28T10:00:00Z'),
+      log(1, 'RolledBack', 'rolled back', '2026-07-28T10:05:00Z'),
+    ]
+    expect(taskStage(logs, 1)).toBe('rolled-back')
+  })
+
+  it('ignores a stale prior cycle before a rollback-and-reclaim', () => {
+    const logs = [
+      // Stale prior cycle: claimed, then rolled back.
+      log(1, 'Claimed', 'claimed first', '2026-07-28T09:00:00Z'),
+      log(1, 'RolledBack', 'rolled back', '2026-07-28T09:05:00Z'),
+      // Current cycle: reclaimed, nothing after it yet.
+      log(1, 'Claimed', 'claimed again', '2026-07-28T10:00:00Z'),
+    ]
+    expect(taskStage(logs, 1)).toBe('in-progress')
+  })
+
+  it('ignores log entries for a different task id', () => {
+    const logs = [
+      log(1, 'Claimed', 'claimed', '2026-07-28T10:00:00Z'),
+      log(1, 'TailoredContentSaved', 'saved content', '2026-07-28T10:05:00Z'),
+      log(2, 'Claimed', 'claimed', '2026-07-28T10:10:00Z'),
+    ]
+    expect(taskStage(logs, 2)).toBe('in-progress')
   })
 })
 

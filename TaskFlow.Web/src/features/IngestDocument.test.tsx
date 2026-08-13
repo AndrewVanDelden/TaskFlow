@@ -159,6 +159,24 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     expect(screen.getByRole('heading', { level: 1 })).toHaveFocus()
   })
 
+  it('renders live per-item progress rows once the building stage is reached (T6.3)', async () => {
+    renderIngestDocument()
+
+    await userEvent.type(screen.getByLabelText(/^job posting$/i), 'Backend Engineer job posting text')
+    await userEvent.click(screen.getByRole('button', { name: /parse posting/i }))
+    await screen.findByText(/job posting:\s*Backend Engineer/i)
+
+    await userEvent.type(screen.getByLabelText(/base resume/i), 'My base resume text')
+    await userEvent.click(screen.getByRole('button', { name: /start tailoring/i }))
+    await screen.findByText(/tailored resume and cover letter are being generated/i)
+
+    // Default MSW handlers produce no AgentLog entries for these fresh task ids, so both rows
+    // render their initial 'pending'/'in-progress'-shaped state - proof the component is wired in,
+    // without needing to simulate live SignalR events (disproportionate for this slice).
+    expect(screen.getByText('Tailored resume')).toBeInTheDocument()
+    expect(screen.getByText('Cover letter')).toBeInTheDocument()
+  })
+
   it('shows an error banner when parsing fails', async () => {
     server.use(
       http.post('*/api/JobApplications/parse', () => new HttpResponse(null, { status: 500 })),

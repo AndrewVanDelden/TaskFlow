@@ -41,6 +41,26 @@ export function taskOutput(logs: AgentLog[], taskId: number): string[] {
     .map((l) => l.details as string)
 }
 
+export type TaskStage = 'pending' | 'in-progress' | 'saved' | 'rolled-back'
+
+// Per-item progress for one Epic 3 tailoring task (resume or cover letter), derived from the same
+// AgentLog feed the board already consumes - no new SignalR event type needed. Scoped to the most
+// recent 'Claimed' entry for this task id, mirroring taskOutput's own "current cycle" scoping, so a
+// stale prior cycle (e.g. before a rollback-and-retry) never reports as the current state.
+export function taskStage(logs: AgentLog[], taskId: number): TaskStage {
+  const forTask = logs.filter((l) => l.taskId === taskId)
+
+  const latestClaimAt = forTask
+    .filter((l) => l.action === 'Claimed')
+    .reduce<string | null>((max, l) => (max === null || l.createdAt > max ? l.createdAt : max), null)
+  if (latestClaimAt === null) return 'pending'
+
+  const sinceLatestClaim = forTask.filter((l) => l.createdAt >= latestClaimAt)
+  if (sinceLatestClaim.some((l) => l.action === 'TailoredContentSaved')) return 'saved'
+  if (sinceLatestClaim.some((l) => l.action === 'RolledBack')) return 'rolled-back'
+  return 'in-progress'
+}
+
 export interface ApplicationPair {
   applicationId: number
   resumeTask: TaskItem

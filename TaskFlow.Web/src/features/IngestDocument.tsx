@@ -4,6 +4,8 @@ import { useIngestion } from '../hooks/useIngestion'
 import { useBaseResumeCapture } from '../hooks/useBaseResumeCapture'
 import { useBaseResumeReuse } from '../hooks/useBaseResumeReuse'
 import { useIntakeFlow } from '../hooks/useIntakeFlow'
+import { useAgentFeed } from '../hooks/useAgentFeed'
+import { IntakeProgress } from '../components/IntakeProgress'
 import { formatDate } from '../lib/formatting'
 
 const fileInputClasses =
@@ -32,6 +34,10 @@ export function IngestDocument() {
   const intake = useIntakeFlow(ingestionSessionId)
   const reuse = useBaseResumeReuse()
   const baseResumeCapture = useBaseResumeCapture()
+  // T6.3: same shared AgentLog/SignalR feed the Kanban board already consumes - IngestDocument is
+  // its own top-level route (not under Dashboard), so it subscribes directly rather than receiving
+  // logs as a prop. No new SignalR event type; IntakeProgress derives per-item stage from it.
+  const { logs } = useAgentFeed()
 
   // T6.5: move focus to the current stage's primary heading on every stage transition, so a
   // keyboard/screen-reader user is never left focused on a control that just disappeared.
@@ -179,10 +185,8 @@ export function IngestDocument() {
         </p>
       )}
 
-      {intake.stage === 'building' && (
-        <p className="mt-4 text-sm text-slate-300">
-          Your tailored resume and cover letter are being generated.
-        </p>
+      {intake.stage === 'building' && intake.resumeTaskId !== null && intake.coverLetterTaskId !== null && (
+        <IntakeProgress logs={logs} resumeTaskId={intake.resumeTaskId} coverLetterTaskId={intake.coverLetterTaskId} />
       )}
 
       <details className="mt-8 pt-6 border-t border-slate-800">
