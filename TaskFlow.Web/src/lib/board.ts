@@ -102,18 +102,26 @@ export function reviewReadyPairs(tasks: TaskItem[]): ApplicationPair[] {
 // conflicting with that mechanism. A task with a null applicationId, or whose sibling isn't in this
 // same column right now, ends up in its own 1-item group and renders exactly as before.
 //
-// Groups only ever grow to 2: an "open" 1-item group is closed off (excluded from further matches)
-// as soon as a second task joins it, so a hypothetical third same-applicationId task in one column
-// (never expected given the two-sibling domain model, but handled defensively rather than silently
-// dropped or merged) starts its own new 1-item group instead of growing the pair to 3.
+// Only the immediately preceding group may be extended (PR #49 review finding, Copilot): the task
+// list is sorted by due date/priority, not grouped by application, so two siblings can legitimately
+// be non-adjacent with an unrelated task between them. Matching against every earlier open group
+// (not just the last one) would cluster those non-adjacent siblings anyway, reordering the
+// rendered DOM relative to SortableContext's own items order (which follows the original task
+// list) and breaking drag-position calculations. Groups only ever grow to 2: the last group stops
+// being a match target as soon as a second task joins it, so a hypothetical third same-applicationId
+// task in one column (never expected given the two-sibling domain model, but handled defensively
+// rather than silently dropped or merged) starts its own new 1-item group instead of growing the
+// pair to 3.
 export function groupSiblingCards(tasks: TaskItem[]): TaskItem[][] {
   const groups: TaskItem[][] = []
   for (const task of tasks) {
-    const openGroup =
+    const lastGroup = groups[groups.length - 1]
+    const canJoinLastGroup =
       task.applicationId !== null &&
-      groups.find((g) => g.length === 1 && g[0].applicationId === task.applicationId)
-    if (openGroup) {
-      openGroup.push(task)
+      lastGroup?.length === 1 &&
+      lastGroup[0].applicationId === task.applicationId
+    if (canJoinLastGroup) {
+      lastGroup.push(task)
     } else {
       groups.push([task])
     }

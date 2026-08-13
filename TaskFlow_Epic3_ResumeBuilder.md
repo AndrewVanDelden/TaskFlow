@@ -181,7 +181,7 @@ The first bullet below is this project's most serious finding to date, not a nit
 | **3R** | Multi-Agent Generation | Ready — architecture below, no code yet |
 | **4R** | Combined Review and Approval | Ready — architecture below, no code yet |
 | **5** | Artifact Export | **COMPLETE** — 343/343 backend, 95/95 frontend (incl. PR #48 review fixes) |
-| **6** | Intake Experience Redesign | **COMPLETE** — 351/351 backend, 136/136 frontend |
+| **6** | Intake Experience Redesign | **COMPLETE** — 351/351 backend, 143/143 frontend (incl. PR #49 review fixes) |
 
 ## Definition of Done (Epic 3)
 
@@ -2192,8 +2192,9 @@ of them edit (`lib/board.ts`) has no safety net the way a worktree would have pr
   expanded state to assistive tech for free.
 
 **Still open, not part of this sprint's scope:**
-- The branch has not been pushed or PR'd — pending user confirmation, consistent with this project's
-  convention that release actions are confirmed, not silent.
+- None — the branch was pushed and opened as PR #49, independently reviewed (manual review before
+  looking at Copilot's comments, then compared), and every finding from both fixed. See "Code review
+  findings" below.
 
 ### Goal
 
@@ -2430,6 +2431,80 @@ empty/error states render. GREEN: accessibility and state handling.
 
 - Sprint 2 (base resume input and session storage), Sprint 3R (SignalR progress for both agents),
   Sprint 4R (kind and applicationId on the frontend model).
+
+### Code review findings (2026-08-13) — PR #49
+
+A full independent manual review was completed **before** looking at Copilot's comments at all,
+per explicit instruction, then compared: Copilot generated 8 comments, all 8 confirmed real against
+the actual code and its reachability (none taken as true on description alone) — plus 2 findings
+from the manual pass Copilot did not flag. All 10 verified against the current source a second time
+before any fix was written, specifically to rule out a hallucinated finding, per explicit
+instruction.
+
+**Status: all 10 findings fixed and confirmed GREEN (351/351 backend, unchanged - every fix in this
+round was frontend-only; 143/143 frontend, +7 tests).**
+
+- **Found independently by both the manual review and Copilot, confirmed real, the most serious
+  finding in this round:** `parseJobPosting` can legitimately resolve successfully with an *empty*
+  array — confirmed by reading the actual backend chain, not assumed: `JobPostingParser` returns
+  `Ok([])` when the pasted text has no markdown `#` heading (true for most real-world job postings
+  pasted as plain text), which escalates to `ClaudeJobPostingParser`, which *also* returns `Ok([])`
+  when `!_claude.IsConfigured` — an intentional, documented "still works offline" state, not a rare
+  edge case. `useIntakeFlow.parse()` moved to `'review'` regardless of draft count; the "Start
+  tailoring" button was never disabled on an empty `drafts` array; clicking it called
+  `saveResumeContext` (a real side effect) and only then dereferenced `drafts[0].title`, throwing a
+  raw `TypeError` shown verbatim to the user. No test covered the HTTP-200-empty-array case. **Fixed:**
+  `parse()` now treats a zero-length result the same as a parse failure — throws inside its own try
+  block with a clear, actionable message, reverting to `'provide'` via the existing catch path (no
+  new error-handling branch needed). RED test added for the empty-array case.
+- **Copilot, confirmed real by hand-tracing the algorithm:** `groupSiblingCards` (`lib/board.ts`)
+  matched a new task against *every* earlier still-open 1-item group, not just the immediately
+  preceding one — for `[A, unrelated, A]` it grouped the two non-adjacent `A` tasks together,
+  reordering the rendered DOM relative to `SortableContext`'s own `items` order (which follows the
+  original task list), which could corrupt dnd-kit's drag-position calculations. Confirmed reachable,
+  not contrived: the task list is sorted by due date/priority (`TaskRepository.GetAllAsync`), not
+  grouped by application, so an unrelated task landing between two siblings is ordinary. The
+  existing tests only covered adjacent siblings. **Fixed:** only the last group in the accumulator
+  may be extended, so grouping now only happens for truly adjacent same-`applicationId` tasks. RED
+  test added for the non-adjacent case.
+- **Copilot, confirmed real against T6.2's own task text ("review **drafts**"):** the review-stage
+  summary rendered only `drafts[0]?.title`, silently dropping `.section` (company) and
+  `.description` (requirements) even though both are already present on the parsed draft — the user
+  had no way to verify what they were about to commit to before starting tailoring. **Fixed:** both
+  fields now render under the summary when present. RED test added.
+- **Copilot, confirmed real, directly contradicts T6.5's own explicit "visible focus" requirement:**
+  the `<h1>` that `useEffect` programmatically focuses on every stage transition had `outline-none`
+  with no replacement ring — every *other* interactive element in this file correctly pairs
+  `outline-none` with `focus-visible:ring-2 focus-visible:ring-blue-500`, this one didn't. A keyboard
+  user got no visible indication focus had moved. **Fixed:** added the same ring classes already
+  used everywhere else in this file. RED test asserts the class is present (jsdom cannot compute
+  real `:focus-visible` styling, so this is the direct, deterministic proxy for the requirement).
+- **Copilot, confirmed real, x2 (same root cause):** the generic-document flow's textarea (placeholder
+  only, which disappears once typed) and file input (no `id`/label at all) had no accessible label,
+  unlike the job-posting equivalents in the very same file. Pre-existing Epic-2 code carried over
+  unchanged, but sitting in the same file/PR/accessibility-focused sprint right next to the fixed
+  pattern made this a proportionate, low-risk fix rather than unrelated scope creep. **Fixed:** both
+  given an `id` + `<label htmlFor>`, matching the job-posting inputs' existing pattern (the file
+  input's label text deliberately differs from the job-posting one — "Or upload a document file" vs
+  "Or upload a file" — since both can be simultaneously present at the `provide` stage and identical
+  text would make `getByLabelText` ambiguous). RED tests added for both.
+- **Copilot, confirmed real, test-quality:** `parseJobPosting`'s and `assembleApplication`'s own
+  tests were named "posts the content/session id and posting..." but only ever asserted on the
+  *mocked response* — the MSW handler never inspected what was actually sent, so a serialization bug
+  (wrong field name, missing field) would still have passed green. **Fixed:** both now capture and
+  assert the real request body. Both passed immediately once written — confirming this was a pure
+  test-quality gap, not a masked implementation bug.
+- **Manual finding (mine), DRY:** `KanbanColumn.tsx`'s ternary duplicated the identical
+  `<TaskCard key/task/output/onApprove/onReject>` block across its grouped and ungrouped branches.
+  **Fixed:** extracted a `renderCard` helper used by both; pure refactor, existing tests (which
+  already cover both branches) stayed green unchanged, confirming no behavior change.
+- **Manual finding (mine), accessibility:** the sibling-group wrapper `<div>` had no ARIA group
+  semantics (`role`, `aria-label`) — a screen-reader user got two adjacent cards with only an
+  invisible-to-them border as a hint they were related. **Fixed:** added `role="group"
+  aria-label="Job application"`. RED test asserts the accessible name via
+  `toHaveAccessibleName`.
+- **Copilot, doc accuracy:** the "Still open" section claimed the branch hadn't been pushed or PR'd,
+  already stale since PR #49 existed by the time this was read. **Fixed:** updated in place, above.
 
 ---
 

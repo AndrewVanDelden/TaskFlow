@@ -49,6 +49,27 @@ describe('IngestDocument - generic document flow (kept, moved under a collapsed 
 
     expect(await screen.findByText(/added 1 task to the board/i)).toBeInTheDocument()
   })
+
+  // Copilot review finding (PR #49): this textarea only had a placeholder (which disappears once
+  // typed and isn't a substitute for an accessible name), unlike the job-posting textarea in the
+  // same file which has a real <label>. T6.5, this same sprint, requires labelled inputs.
+  it('the paste-a-document textarea has a persistent accessible label', async () => {
+    renderIngestDocument()
+    await expandGenericFlow()
+
+    expect(screen.getByLabelText(/paste a document/i)).toBeInTheDocument()
+  })
+
+  // Copilot review finding (PR #49): this file input had no id/label at all, unlike the
+  // job-posting file input in the same file ("Or upload a file"). Distinct label text (not just
+  // "upload a file" again) so the two remain unambiguous to getByLabelText - both file inputs are
+  // simultaneously present at this point, since the provide-stage job-posting section is still open.
+  it('the generic-document file input has an accessible label', async () => {
+    renderIngestDocument()
+    await expandGenericFlow()
+
+    expect(screen.getByLabelText(/upload a document file/i)).toBeInTheDocument()
+  })
 })
 
 describe('IngestDocument - base resume capture (kept, unchanged behavior)', () => {
@@ -122,6 +143,20 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     expect(screen.queryByLabelText(/^job posting$/i)).not.toBeInTheDocument()
   })
 
+  // Copilot review finding (PR #49): T6.2 says "review drafts" - the review-stage summary must let
+  // the user actually verify what the parser extracted (company and requirements), not just the
+  // title, before they commit to starting tailoring against it.
+  it('the review-stage summary shows the parsed company and requirements, not just the title', async () => {
+    renderIngestDocument()
+
+    await userEvent.type(screen.getByLabelText(/^job posting$/i), 'Backend Engineer job posting text')
+    await userEvent.click(screen.getByRole('button', { name: /parse posting/i }))
+    await screen.findByText(/job posting:\s*Backend Engineer/i)
+
+    expect(screen.getByText('Job Posting')).toBeInTheDocument()
+    expect(screen.getByText('Build things.')).toBeInTheDocument()
+  })
+
   it('offers to reuse a previously saved base resume when one exists', async () => {
     server.use(
       http.get('*/api/JobApplications/resume-context/latest', () =>
@@ -157,6 +192,17 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     await screen.findByText(/job posting:\s*Backend Engineer/i)
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveFocus()
+  })
+
+  // Copilot review finding (PR #49): the heading above is programmatically focused on every stage
+  // transition, but outline-none with no replacement ring leaves a keyboard user with no visible
+  // indication focus moved there at all - directly contradicts T6.5's own "visible focus"
+  // requirement. jsdom doesn't compute real focus-visible styles, so this asserts the same
+  // focus-visible:ring utility class this file already uses on every other interactive element.
+  it('the stage heading keeps a visible focus ring when focused (T6.5)', () => {
+    renderIngestDocument()
+
+    expect(screen.getByRole('heading', { level: 1 }).className).toMatch(/focus-visible:ring/)
   })
 
   it('renders live per-item progress rows once the building stage is reached (T6.3)', async () => {

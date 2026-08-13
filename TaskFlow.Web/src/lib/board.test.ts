@@ -232,4 +232,22 @@ describe('groupSiblingCards', () => {
       [unrelatedB],
     ])
   })
+
+  // PR #49 review finding (Copilot, confirmed by hand-tracing the algorithm): the task list is
+  // sorted by due date/priority (TaskRepository.GetAllAsync), not grouped by application, so two
+  // siblings landing non-adjacent - with an unrelated task sorted between them - is an ordinary,
+  // reachable case, not a contrived one. Grouping them anyway would reorder the rendered DOM
+  // relative to SortableContext's own items order (which follows the original task list), breaking
+  // drag-position calculations. Only truly adjacent same-applicationId tasks may be grouped.
+  it('does not group two same-applicationId tasks that are not adjacent', () => {
+    const resumeTask = epicTask(1, 10, 'ResumeTailoring', 'Todo')
+    const unrelated = epicTask(2, null, 'Generic', 'Todo')
+    const coverLetterTask = epicTask(3, 10, 'CoverLetterTailoring', 'Todo')
+
+    expect(groupSiblingCards([resumeTask, unrelated, coverLetterTask])).toEqual([
+      [resumeTask],
+      [unrelated],
+      [coverLetterTask],
+    ])
+  })
 })

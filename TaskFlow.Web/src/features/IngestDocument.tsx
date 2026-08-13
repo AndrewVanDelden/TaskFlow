@@ -69,7 +69,7 @@ export function IngestDocument() {
 
   return (
     <div className="max-w-2xl mx-auto p-6 text-white">
-      <h1 ref={stageHeadingRef} tabIndex={-1} className="text-lg font-bold mb-3 outline-none">
+      <h1 ref={stageHeadingRef} tabIndex={-1} className="text-lg font-bold mb-3 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded">
         Start a job application
       </h1>
 
@@ -117,7 +117,11 @@ export function IngestDocument() {
             </div>
           </>
         ) : (
-          <p className="text-sm text-slate-400">Job posting: {intake.drafts[0]?.title}</p>
+          <div className="text-sm text-slate-400">
+            <p>Job posting: {intake.drafts[0]?.title}</p>
+            {intake.drafts[0]?.section && <p className="mt-1">{intake.drafts[0].section}</p>}
+            {intake.drafts[0]?.description && <p className="mt-1">{intake.drafts[0].description}</p>}
+          </div>
         )}
       </section>
 
@@ -195,7 +199,11 @@ export function IngestDocument() {
         </summary>
 
         <div className="mt-4">
+          <label htmlFor="generic-document" className="block text-sm font-semibold mb-2">
+            Paste a document
+          </label>
           <textarea
+            id="generic-document"
             value={genericText}
             onChange={(e) => setGenericText(e.target.value)}
             placeholder="Paste a document"
@@ -203,7 +211,15 @@ export function IngestDocument() {
           />
 
           <div className="flex items-center gap-3 mt-3">
-            <input type="file" onChange={onGenericFile} className="text-xs text-slate-400" />
+            <label htmlFor="generic-document-file" className="text-xs text-slate-400">
+              Or upload a document file
+            </label>
+            <input
+              id="generic-document-file"
+              type="file"
+              onChange={onGenericFile}
+              className="text-xs text-slate-400"
+            />
             <button
               onClick={() => generic.submit(genericText)}
               disabled={generic.loading || !genericText}

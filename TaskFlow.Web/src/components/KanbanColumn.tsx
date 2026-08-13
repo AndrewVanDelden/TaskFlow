@@ -20,6 +20,16 @@ interface Props {
 export function KanbanColumn({ status, label, tasks, onApprove, onReject, outputFor, pairs }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: status })
 
+  const renderCard = (task: TaskItem) => (
+    <TaskCard
+      key={task.id}
+      task={task}
+      output={outputFor?.(task.id)}
+      onApprove={onApprove ? () => onApprove(task.id) : undefined}
+      onReject={onReject ? (reason) => onReject(task.id, reason) : undefined}
+    />
+  )
+
   return (
     <div
       ref={setNodeRef}
@@ -56,28 +66,14 @@ export function KanbanColumn({ status, label, tasks, onApprove, onReject, output
             <div
               key={`pair-${group[0].applicationId}`}
               data-testid={`sibling-group-${group[0].applicationId}`}
+              role="group"
+              aria-label="Job application"
               className="border border-indigo-800/60 rounded-lg p-1 mb-2"
             >
-              {group.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  output={outputFor?.(task.id)}
-                  onApprove={onApprove ? () => onApprove(task.id) : undefined}
-                  onReject={onReject ? (reason) => onReject(task.id, reason) : undefined}
-                />
-              ))}
+              {group.map(renderCard)}
             </div>
           ) : (
-            group.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                output={outputFor?.(task.id)}
-                onApprove={onApprove ? () => onApprove(task.id) : undefined}
-                onReject={onReject ? (reason) => onReject(task.id, reason) : undefined}
-              />
-            ))
+            group.map(renderCard)
           ),
         )}
       </SortableContext>

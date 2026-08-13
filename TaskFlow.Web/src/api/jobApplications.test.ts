@@ -78,14 +78,21 @@ describe('getMostRecentResumeContext', () => {
 })
 
 describe('parseJobPosting', () => {
+  // Copilot review finding (PR #49): the test's own name claims it verifies the posted content,
+  // but only the mocked response was ever asserted on - a serialization bug (wrong field name,
+  // missing field) would still pass green. Captures and asserts the real request body instead.
   it('posts the content and returns the parsed drafts', async () => {
+    let capturedBody: unknown = null
     server.use(
-      http.post('*/api/JobApplications/parse', () =>
-        HttpResponse.json([{ title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' }])),
+      http.post('*/api/JobApplications/parse', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json([{ title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' }])
+      }),
     )
 
     const result = await parseJobPosting('some job posting text')
 
+    expect(capturedBody).toEqual({ content: 'some job posting text' })
     expect(result).toHaveLength(1)
     expect(result[0].title).toBe('Backend Engineer')
   })
@@ -100,9 +107,16 @@ describe('parseJobPosting', () => {
 })
 
 describe('assembleApplication', () => {
+  // Copilot review finding (PR #49): same test-quality gap as parseJobPosting above - the test's
+  // own name claims it verifies the posted session id and posting, but only the mocked response
+  // was ever asserted on.
   it('posts the session id and posting, and returns the assembled application', async () => {
+    let capturedBody: unknown = null
     server.use(
-      http.post('*/api/JobApplications', () => HttpResponse.json(applicationResponse('Building', 'Todo'))),
+      http.post('*/api/JobApplications', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json(applicationResponse('Building', 'Todo'))
+      }),
     )
 
     const result = await assembleApplication('11111111-1111-1111-1111-111111111111', {
@@ -111,6 +125,10 @@ describe('assembleApplication', () => {
       section: 'Job Posting',
     })
 
+    expect(capturedBody).toEqual({
+      ingestionSessionId: '11111111-1111-1111-1111-111111111111',
+      posting: { title: 'Backend Engineer', description: 'Build things.', section: 'Job Posting' },
+    })
     expect(result.state).toBe('Building')
     expect(result.tasks[0].status).toBe('Todo')
   })

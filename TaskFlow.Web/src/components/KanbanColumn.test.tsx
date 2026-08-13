@@ -57,6 +57,25 @@ describe('KanbanColumn', () => {
     expect(within(group).getByText('Tailor cover letter')).toBeInTheDocument()
   })
 
+  // My own review finding (PR #49): the wrapper had no ARIA group semantics, so a screen-reader
+  // user encountering the two cards had no indication they belong to the same job application -
+  // only a visual border, which conveys nothing to assistive tech.
+  it('exposes a grouped sibling pair to assistive tech as a labeled group', () => {
+    const resumeTask = epicTask(1, 'Tailor resume', 10, 'ResumeTailoring')
+    const coverLetterTask = epicTask(2, 'Tailor cover letter', 10, 'CoverLetterTailoring')
+
+    render(
+      <DndContext>
+        <KanbanColumn status="Todo" label="To Do" tasks={[resumeTask, coverLetterTask]} />
+      </DndContext>,
+    )
+
+    const group = screen.getByRole('group')
+    expect(group).toHaveAccessibleName(/job application/i)
+    expect(within(group).getByText('Tailor resume')).toBeInTheDocument()
+    expect(within(group).getByText('Tailor cover letter')).toBeInTheDocument()
+  })
+
   it('does not group two tasks from different applications', () => {
     const taskA = epicTask(1, 'Tailor resume A', 10, 'ResumeTailoring')
     const taskB = epicTask(2, 'Tailor resume B', 20, 'ResumeTailoring')

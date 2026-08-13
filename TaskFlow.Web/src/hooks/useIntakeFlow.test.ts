@@ -23,6 +23,31 @@ describe('useIntakeFlow', () => {
     expect(result.current.error).toBeNull()
   })
 
+  // PR #49 review finding (found independently and by Copilot): the parser can legitimately
+  // resolve successfully with an empty array (no Anthropic key configured, and/or the posting has
+  // no markdown heading the free parser recognizes - both ordinary, expected states, not server
+  // errors). Before the fix, this moved straight to 'review' with an empty drafts array, and
+  // startTailoring() would later crash dereferencing drafts[0] after already saving the resume as
+  // a side effect. An empty result must be treated the same as a parse failure.
+  it('parse() reverts to provide with an error when the server returns an empty draft list', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse', () => HttpResponse.json([])),
+    )
+    const { result } = renderHook(() => useIntakeFlow('session-1'))
+
+    act(() => {
+      result.current.setJobPostingText('Some text with no recognizable job title')
+    })
+
+    await act(async () => {
+      await result.current.parse()
+    })
+
+    await waitFor(() => expect(result.current.stage).toBe('provide'))
+    expect(result.current.error).not.toBeNull()
+    expect(result.current.drafts).toHaveLength(0)
+  })
+
   it('parse() reverts to provide with an error on failure', async () => {
     server.use(
       http.post('*/api/JobApplications/parse', () => new HttpResponse(null, { status: 500 })),

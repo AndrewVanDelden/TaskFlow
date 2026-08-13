@@ -21,6 +21,13 @@ export function useIntakeFlow(sessionId: string) {
     setError(null)
     try {
       const result = await parseJobPosting(jobPostingText)
+      // An empty list is a legitimate, successful HTTP response (no Anthropic key configured,
+      // and/or the posting has no heading the free parser recognizes) - not a server error, but
+      // still nothing usable to review or assemble. Treated the same as a parse failure so the
+      // user gets a clear message instead of silently reaching 'review' with nothing in it.
+      if (result.length === 0) {
+        throw new Error('Could not find a job title in that posting. Try adding a heading or more detail.')
+      }
       setDrafts(result)
       setStage('review')
     } catch (err) {
