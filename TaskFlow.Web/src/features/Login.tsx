@@ -58,6 +58,7 @@ export function Login() {
             <input
               className={`${inputClass} mb-3`}
               placeholder="Name"
+              aria-label="Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
@@ -68,6 +69,7 @@ export function Login() {
             className={`${inputClass} mb-3`}
             type="email"
             placeholder="Email"
+            aria-label="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -77,13 +79,14 @@ export function Login() {
             className={`${inputClass} mb-4`}
             type="password"
             placeholder="Password"
+            aria-label="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
           />
 
           {error && (
-            <div className="mb-4 text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+            <div role="alert" className="mb-4 text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
               {error}
             </div>
           )}

@@ -62,6 +62,43 @@ public sealed class StubClaude : IClaudeClient
         },
         EndTurn());
 
+    /// <summary>Scripts one reassign_task tool call (omit newUserId to unassign), then an end_turn.</summary>
+    public static StubClaude ThatReassigns(int taskId, int? newUserId, string reason) => new(
+        ToolUse("tool_1", "reassign_task", new { task_id = taskId, new_user_id = newUserId, reason }),
+        EndTurn());
+
+    /// <summary>Scripts one flag_for_review tool call, then an end_turn.</summary>
+    public static StubClaude ThatFlags(int taskId, string concern) => new(
+        ToolUse("tool_1", "flag_for_review", new { task_id = taskId, concern }),
+        EndTurn());
+
+    /// <summary>Scripts a call to a tool name the agent does not recognize, then an end_turn -
+    /// exercises the dispatcher's "unknown tool" fallback branch.</summary>
+    public static StubClaude ThatCallsAnUnknownTool() => new(
+        ToolUse("tool_1", "not_a_real_tool", new { }),
+        EndTurn());
+
+    /// <summary>
+    /// Scripts a call to <paramref name="toolName"/> whose arguments are not a JSON object (a bare
+    /// string), so deserializing them into the tool's argument record throws - exercising a tool
+    /// dispatcher's catch-and-report-as-a-tool-error branch, rather than the agent crashing.
+    /// </summary>
+    public static StubClaude ThatCallsToolWithUndeserializableArgs(string toolName) => new(
+        new MessageResponse
+        {
+            StopReason = "tool_use",
+            Content = new List<ContentBase>
+            {
+                new ToolUseContent
+                {
+                    Id = "tool_1",
+                    Name = toolName,
+                    Input = JsonSerializer.SerializeToNode("not-an-object")!
+                }
+            }
+        },
+        EndTurn());
+
     /// <summary>Scripts one update_task_priority tool call, then an end_turn.</summary>
     public static StubClaude ThatUpdatesPriority(int taskId, string priority, string reasoning) => new(
         new MessageResponse

@@ -29,4 +29,10 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Lets TaskFlow.Tests unit-test `internal` members directly (e.g. ClaudeAgentBase.WasSuccessful)
+         instead of only indirectly through an agent's observable side effects. -->
+    <InternalsVisibleTo Include="TaskFlow.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -45,6 +45,8 @@ public static class AgentActions
 public static class AgentNames
 {
     public const string GenericExecutor = "GenericExecutor";
+    public const string StaleTaskDetector = "StaleTaskDetector";
+    public const string TaskPrioritizer = "TaskPrioritizer";
 
     // Tailoring agents (Epic 3, Sprint 3R)
     public const string ResumeTailoring = "ResumeTailoringAgent";

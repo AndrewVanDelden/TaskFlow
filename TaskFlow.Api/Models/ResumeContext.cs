@@ -18,8 +18,9 @@ public class ResumeContext
     public int OwnerId { get; set; }
 
     // Base resume text. Large free text, so a generous cap rather than the short MaxLength
-    // used for other string fields — matches TaskItem.TailoredContent for the same reason.
-    [MaxLength(20000)]
+    // used for other string fields — shares TaskItem.TailoredContentMaxLength since both caps
+    // exist for the same reason (one resume's worth of text) and must not drift apart.
+    [MaxLength(TaskItem.TailoredContentMaxLength)]
     public string Content { get; set; } = string.Empty;
 
     // Enum-like discriminator ("text", "markdown") — capped the same as AgentLog.Action, another

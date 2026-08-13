@@ -145,8 +145,9 @@ public class CoverLetterAgentTests
         recent.Should().Contain(l => l.Action == AgentActions.TailoredContentSaved && l.TaskId == coverLetterTask.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.ApplicationReviewReady);
 
-        notifier.Verify(n => n.TaskMovedAsync(coverLetterTask.Id, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once);
-        notifier.Verify(n => n.TaskMovedAsync(coverLetterTask.Id, WorkflowStatus.Review, It.IsAny<CancellationToken>()), Times.Once);
+        // Epic 3 Pre-Merge Code Review, finding 1.1: scoped to the application's owner, not everyone.
+        notifier.Verify(n => n.TaskMovedAsync(coverLetterTask.Id, WorkflowStatus.InProgress, OwnerId, It.IsAny<CancellationToken>()), Times.Once);
+        notifier.Verify(n => n.TaskMovedAsync(coverLetterTask.Id, WorkflowStatus.Review, OwnerId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

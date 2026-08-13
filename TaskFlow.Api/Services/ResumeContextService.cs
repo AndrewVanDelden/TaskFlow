@@ -10,8 +10,6 @@ namespace TaskFlow.Api.Services;
 /// <summary>EF-backed implementation of <see cref="IResumeContextService"/>.</summary>
 public sealed class ResumeContextService : IResumeContextService
 {
-    private const int MaxContentLength = 20000;
-
     private readonly IResumeContextRepository _resumeContexts;
     private readonly IJobApplicationRepository _jobApplications;
 
@@ -28,7 +26,7 @@ public sealed class ResumeContextService : IResumeContextService
             return Result<bool>.Invalid("Ingestion session id must not be null, empty, or whitespace-only.");
         }
 
-        var validated = ToolOutputValidator.Validate(content, MaxContentLength);
+        var validated = ToolOutputValidator.Validate(content, TaskItem.TailoredContentMaxLength);
         if (!validated.IsSuccess)
         {
             return Result<bool>.Invalid(validated.Error!);
@@ -87,7 +85,7 @@ public sealed class ResumeContextService : IResumeContextService
 
         // Same NotFound for missing and wrong-owner: a cross-owner probe must be indistinguishable
         // from a genuine 404 - this project's established IDOR-safe convention.
-        if (application is null || application.OwnerId != callerId)
+        if (application.IsMissingOrOwnedByAnotherUser(callerId))
             return Result<string>.NotFound($"JobApplication {applicationId} not found.");
 
         var context = await _resumeContexts.GetForOwnerAsync(application.IngestionSessionId, application.OwnerId, ct);

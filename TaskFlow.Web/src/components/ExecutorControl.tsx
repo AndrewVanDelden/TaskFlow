@@ -1,30 +1,9 @@
-import { useEffect, useState } from 'react'
-import { getExecutorState, enableExecutor, disableExecutor } from '../api/executor'
+import { useExecutorControl } from '../hooks/useExecutorControl'
 
 // Enable/pause the autonomous executor. State comes from the server (the runtime kill switch), so
 // the UI reflects the real switch rather than a guess.
 export function ExecutorControl() {
-  const [enabled, setEnabled] = useState<boolean | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    getExecutorState()
-      .then((s) => setEnabled(s.enabled))
-      .catch(() => {})
-  }, [])
-
-  const toggle = async () => {
-    if (enabled === null || busy) return
-    setBusy(true)
-    try {
-      const next = enabled ? await disableExecutor() : await enableExecutor()
-      setEnabled(next.enabled)
-    } catch {
-      // Keep the current state on failure.
-    } finally {
-      setBusy(false)
-    }
-  }
+  const { enabled, busy, toggle } = useExecutorControl()
 
   // Whole card tints faded green when enabled, faded red when paused (neutral while loading).
   const shell =

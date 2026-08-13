@@ -60,8 +60,9 @@ public class JobApplicationServiceTests
         result.Value!.State.Should().Be(ApplicationState.Approved);
         result.Value!.Tasks.Should().HaveCount(2);
         _applications.Verify(a => a.TryApprovePairAsync(ApplicationId, OwnerId, It.IsAny<CancellationToken>()), Times.Once);
-        _notifier.Verify(n => n.TaskMovedAsync(10, WorkflowStatus.Done, It.IsAny<CancellationToken>()), Times.Once);
-        _notifier.Verify(n => n.TaskMovedAsync(11, WorkflowStatus.Done, It.IsAny<CancellationToken>()), Times.Once);
+        // Epic 3 Pre-Merge Code Review, finding 1.1: scoped to the application's owner, not everyone.
+        _notifier.Verify(n => n.TaskMovedAsync(10, WorkflowStatus.Done, OwnerId, It.IsAny<CancellationToken>()), Times.Once);
+        _notifier.Verify(n => n.TaskMovedAsync(11, WorkflowStatus.Done, OwnerId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -137,8 +138,9 @@ public class JobApplicationServiceTests
         _logs.Verify(l => l.AddAsync(
             It.Is<AgentLog>(log => log.TaskId == 11 && log.Action == AgentActions.Rejected && log.Details == "Needs more punch."),
             It.IsAny<CancellationToken>()), Times.Once);
-        _notifier.Verify(n => n.TaskMovedAsync(10, WorkflowStatus.Todo, It.IsAny<CancellationToken>()), Times.Once);
-        _notifier.Verify(n => n.TaskMovedAsync(11, WorkflowStatus.Todo, It.IsAny<CancellationToken>()), Times.Once);
+        // Epic 3 Pre-Merge Code Review, finding 1.1: scoped to the application's owner, not everyone.
+        _notifier.Verify(n => n.TaskMovedAsync(10, WorkflowStatus.Todo, OwnerId, It.IsAny<CancellationToken>()), Times.Once);
+        _notifier.Verify(n => n.TaskMovedAsync(11, WorkflowStatus.Todo, OwnerId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

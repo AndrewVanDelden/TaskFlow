@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using TaskFlow.Api.Models;
 
 namespace TaskFlow.Api.DTOs;
 
@@ -9,7 +10,7 @@ public class SaveResumeContextDto
     public string IngestionSessionId { get; set; } = string.Empty;
 
     [Required]
-    [MaxLength(20000)]
+    [MaxLength(TaskItem.TailoredContentMaxLength)]
     public string Content { get; set; } = string.Empty;
 
     [MaxLength(50)]

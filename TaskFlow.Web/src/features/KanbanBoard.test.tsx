@@ -31,6 +31,17 @@ describe('KanbanBoard integration', () => {
     expect(await screen.findByText('Wire the dashboard')).toBeInTheDocument()
   })
 
+  // Epic 3 Pre-Merge Code Review, finding 6.4: the board-level error banner (KanbanBoard.tsx:49-53)
+  // was never rendered by a test.
+  it('shows an alert when the initial task load fails', async () => {
+    server.use(http.get('*/api/Tasks', () => new HttpResponse('Server error', { status: 500 })))
+
+    render(<KanbanBoard />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).not.toHaveTextContent('')
+  })
+
   it('shows Approve only on Review cards and approves to Done', async () => {
     server.use(
       http.get('*/api/Tasks', () =>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { AgentLog, TaskItem, TaskStatus } from '../types'
+import type { AgentLog, TaskItem, TaskKind, TaskStatus } from '../types'
 import { resolveDropColumn, taskOutput, taskStage, reviewReadyPairs, groupSiblingCards } from './board'
 
 const task = (id: number, status: TaskStatus): TaskItem => ({
@@ -123,7 +123,7 @@ describe('taskStage', () => {
 const epicTask = (
   id: number,
   applicationId: number | null,
-  kind: string,
+  kind: TaskKind,
   status: TaskStatus,
 ): TaskItem => ({
   id,
@@ -249,5 +249,17 @@ describe('groupSiblingCards', () => {
       [unrelated],
       [coverLetterTask],
     ])
+  })
+
+  // Epic 3 Pre-Merge Code Review, finding 6.4: the function's own comment calls this case out
+  // ("a hypothetical third same-applicationId task... starts its own new 1-item group instead of
+  // growing the pair to 3") but no test proved it. Never reachable given the two-sibling domain
+  // model, but handled defensively rather than silently dropped or merged.
+  it('starts a new group for a third same-applicationId task instead of growing the pair to 3', () => {
+    const first = epicTask(1, 10, 'ResumeTailoring', 'Todo')
+    const second = epicTask(2, 10, 'CoverLetterTailoring', 'Todo')
+    const third = epicTask(3, 10, 'ResumeTailoring', 'Todo')
+
+    expect(groupSiblingCards([first, second, third])).toEqual([[first, second], [third]])
   })
 })

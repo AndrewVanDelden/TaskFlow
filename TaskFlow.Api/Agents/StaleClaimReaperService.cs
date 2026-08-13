@@ -13,63 +13,30 @@ namespace TaskFlow.Api.Agents;
 /// (default 5), reclaiming anything InProgress for longer than
 /// <c>Agents:StaleClaimThresholdMinutes</c> (default 30).
 /// </summary>
-public class StaleClaimReaperService : BackgroundService
+public class StaleClaimReaperService : PeriodicSweepBackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConfiguration _config;
-    private readonly ILogger<StaleClaimReaperService> _logger;
 
     public StaleClaimReaperService(
         IServiceScopeFactory scopeFactory,
         IConfiguration config,
         ILogger<StaleClaimReaperService> logger)
+        : base(logger)
     {
         // IServiceScopeFactory (not IServiceProvider directly): this service lives for the app's
         // lifetime but ITaskRepository/AppDbContext are scoped, so each sweep needs its own scope
         // (same reason AgentRunner does this).
         _scopeFactory = scopeFactory;
         _config = config;
-        _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var interval = TimeSpan.FromMinutes(Math.Max(1, _config.GetValue("Agents:StaleClaimSweepIntervalMinutes", 5)));
+    protected override string Name => nameof(StaleClaimReaperService);
 
-        _logger.LogInformation("StaleClaimReaperService started. Interval: {Interval}", interval);
+    protected override TimeSpan Interval =>
+        TimeSpan.FromMinutes(Math.Max(1, _config.GetValue("Agents:StaleClaimSweepIntervalMinutes", 5)));
 
-        // Run immediately on startup, then on the interval.
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await SweepAsync(stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // Normal shutdown — don't log as error.
-                break;
-            }
-            catch (Exception ex)
-            {
-                // Log the error but keep sweeping — one bad sweep shouldn't kill the loop.
-                _logger.LogError(ex, "StaleClaimReaperService sweep failed. Will retry after interval.");
-            }
-
-            try
-            {
-                await Task.Delay(interval, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-        }
-
-        _logger.LogInformation("StaleClaimReaperService stopped.");
-    }
-
-    private async Task SweepAsync(CancellationToken ct)
+    protected override async Task SweepAsync(CancellationToken ct)
     {
         var thresholdMinutes = Math.Max(1, _config.GetValue("Agents:StaleClaimThresholdMinutes", 30));
         var staleAfter = TimeSpan.FromMinutes(thresholdMinutes);
@@ -80,10 +47,10 @@ public class StaleClaimReaperService : BackgroundService
         var recovered = await tasks.RecoverStaleInProgressAsync(staleAfter, ct);
 
         if (recovered > 0)
-            _logger.LogWarning(
+            Logger.LogWarning(
                 "StaleClaimReaperService recovered {Count} task(s) stuck InProgress for longer than {Threshold}m.",
                 recovered, thresholdMinutes);
         else
-            _logger.LogInformation("StaleClaimReaperService sweep complete. No stale claims found.");
+            Logger.LogInformation("StaleClaimReaperService sweep complete. No stale claims found.");
     }
 }

@@ -37,7 +37,7 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
         _tasks = tasks;
     }
 
-    public override string Name => "TaskPrioritizer";
+    public override string Name => AgentNames.TaskPrioritizer;
 
     public override TimeSpan Interval =>
         TimeSpan.FromMinutes(Config.GetValue("Agents:PrioritizerIntervalMinutes", 30));
@@ -141,7 +141,7 @@ public class TaskPrioritizerAgent : ClaudeAgentBase
             Details = $"Priority {previousPriority} -> {priority}. {args.Reasoning}",
             Success = true,
             CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
+        }, task.OwnerId, cancellationToken);
 
         Logger.LogInformation(
             "[{Agent}] Updated Task {Id} '{Title}': {From} -> {To}. Reason: {Reason}",

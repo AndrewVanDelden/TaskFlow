@@ -3,6 +3,8 @@
 
 export type TaskStatus = 'Todo' | 'InProgress' | 'Review' | 'Done'
 export type TaskPriority = 'Low' | 'Medium' | 'High'
+// Mirrors TaskFlow.Api/Models/TaskKind.cs.
+export type TaskKind = 'Generic' | 'ResumeTailoring' | 'CoverLetterTailoring'
 
 export interface TaskItem {
   id: number
@@ -15,7 +17,7 @@ export interface TaskItem {
   updatedAt: string
   assignedToId: number | null
   assignedToName: string | null
-  kind: string
+  kind: TaskKind
   applicationId: number | null
   tailoredContent: string | null
   // Sprint 5 review finding: a lone Epic-3 sibling task can reach 'Done' via the individual
@@ -48,7 +50,7 @@ export interface AgentLog {
 export interface TaskDraft {
   title: string
   description: string | null
-  kind: string
+  kind: TaskKind
   section: string
 }
 
@@ -56,7 +58,7 @@ export interface TaskDraft {
 export interface JobApplicationTaskSummary {
   id: number
   title: string
-  kind: string
+  kind: TaskKind
   status: string
 }
 

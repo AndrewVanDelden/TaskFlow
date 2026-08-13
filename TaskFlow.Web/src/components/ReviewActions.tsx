@@ -31,7 +31,7 @@ export function ReviewActions({
         <button
           onClick={() => onReject(reason.trim())}
           disabled={!canReject}
-          className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-1.5 rounded"
+          className="flex-1 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold px-3 py-1.5 rounded"
         >
           Reject
         </button>

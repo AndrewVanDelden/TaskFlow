@@ -47,6 +47,33 @@ public class PromptSafetyTests
         result.Should().EndWith("</untrusted_input>");
     }
 
+    // Epic 3 Pre-Merge Code Review, finding 6.2: the label-validation guard (rejecting a blank or
+    // tag-breaking label before it could undermine the escaping scheme) had zero coverage.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Blank_label_is_rejected(string? label)
+    {
+        var act = () => PromptSafety.WrapUntrusted("content", label!);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Theory]
+    [InlineData("has space")]
+    [InlineData("has<bracket")]
+    [InlineData("has>bracket")]
+    [InlineData("has/slash")]
+    [InlineData("has\"quote")]
+    [InlineData("has'quote")]
+    public void Label_with_tag_breaking_characters_is_rejected(string label)
+    {
+        var act = () => PromptSafety.WrapUntrusted("content", label);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var count = 0;

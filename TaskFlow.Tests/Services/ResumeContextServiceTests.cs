@@ -165,7 +165,7 @@ public class ResumeContextServiceTests
     [Fact]
     public async Task SaveAsync_rejects_content_over_20000_characters()
     {
-        var tooLong = new string('a', 20001);
+        var tooLong = new string('a', TaskItem.TailoredContentMaxLength + 1);
 
         var result = await CreateSut().SaveAsync("session-A", 1, tooLong, "text");
 

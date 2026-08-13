@@ -63,4 +63,25 @@ public class TaskItem
     // generous cap rather than the short MaxLength used for other string fields on this entity.
     [MaxLength(TailoredContentMaxLength)]
     public string? TailoredContent { get; set; }
+
+    // Single source of truth for "who owns this task" (T5.0's rule, extracted here so every
+    // caller - broadcasts, ownership checks - derives it the same way instead of re-deriving it).
+    // Fails closed rather than open: if ApplicationId is set but Application wasn't Included, that
+    // is a caller bug, and silently returning null would broadcast a personal Epic 3 event to
+    // everyone instead of just the owner.
+    public int? OwnerId
+    {
+        get
+        {
+            if (ApplicationId is null)
+                return null;
+
+            if (Application is null)
+                throw new InvalidOperationException(
+                    $"TaskItem {Id} has ApplicationId {ApplicationId} but its Application " +
+                    "navigation was not loaded; include it before reading OwnerId.");
+
+            return Application.OwnerId;
+        }
+    }
 }

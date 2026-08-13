@@ -30,6 +30,17 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
     /// <summary>Safety cap so a runaway tool loop cannot call the API unbounded.</summary>
     private const int MaxToolLoopIterations = 10;
 
+    /// <summary>
+    /// How much of a tool result's text <see cref="WasSuccessful"/> scans for an error phrase.
+    /// Every error string this codebase actually produces is a short, code-generated sentence at
+    /// the very start of the result; content that echoes back arbitrary text (e.g.
+    /// TailoringAgentBase's read_base_context tool, which returns the user's own resume) is always
+    /// wrapped first in PromptSafety.WrapUntrusted's framing sentence + tag, comfortably longer than
+    /// this window - so ordinary prose containing a phrase like "does not exist" deep inside a large
+    /// result is never mistaken for a real error (Epic 3 Pre-Merge Code Review, finding 2.1).
+    /// </summary>
+    private const int ErrorHeuristicScanWindow = 256;
+
     private readonly IAgentNotifier _notifier;
 
     /// <summary>Claude client used to drive the tool-use conversation.</summary>
@@ -178,18 +189,22 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
         };
 
     /// <summary>
-    /// A tool call counts as a real action only if it did not report an error
-    /// (unknown tool, not found, invalid argument, exception, etc.).
+    /// A tool call counts as a real action only if it did not report an error (unknown tool, not
+    /// found, invalid argument, exception, etc.). Only scans the first
+    /// <see cref="ErrorHeuristicScanWindow"/> characters — see that constant's doc comment for why.
+    /// `internal` (not `protected`) purely so TaskFlow.Tests can exercise this heuristic directly.
     /// </summary>
-    protected static bool WasSuccessful(ContentBase result)
+    internal static bool WasSuccessful(ContentBase result)
     {
         var text = (result as ToolResultContent)?.Content?
             .OfType<TextContent>()
             .FirstOrDefault()?.Text ?? string.Empty;
 
-        return !text.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
-            && !text.Contains("not found", StringComparison.OrdinalIgnoreCase)
-            && !text.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+        var window = text.Length <= ErrorHeuristicScanWindow ? text : text[..ErrorHeuristicScanWindow];
+
+        return !window.StartsWith("Error", StringComparison.OrdinalIgnoreCase)
+            && !window.Contains("not found", StringComparison.OrdinalIgnoreCase)
+            && !window.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -197,11 +212,13 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
     /// Saving here also flushes any task/user entity edits made earlier in the same
     /// cycle, since all repositories share one <c>DbContext</c>.
     /// </summary>
-    protected async Task RecordActionAsync(AgentLog log, CancellationToken cancellationToken)
+    /// <param name="ownerId">The owning user to scope the broadcast to, or null for the shared
+    /// generic board - pass the acted-on task's <see cref="Models.TaskItem.OwnerId"/>.</param>
+    protected async Task RecordActionAsync(AgentLog log, int? ownerId, CancellationToken cancellationToken)
     {
         await Logs.AddAsync(log, cancellationToken);
         await Logs.SaveChangesAsync(cancellationToken);
-        await _notifier.AgentActionAsync(log, cancellationToken);
+        await _notifier.AgentActionAsync(log, ownerId, cancellationToken);
     }
 
     /// <summary>
@@ -223,6 +240,7 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
         _notifier.AgentCycleAsync(Name, AgentPhases.Completed, cancellationToken);
 
     /// <summary>Broadcasts that a task moved to a new status, so boards update that one card live.</summary>
-    protected Task NotifyTaskMovedAsync(int taskId, WorkflowStatus status, CancellationToken cancellationToken) =>
-        _notifier.TaskMovedAsync(taskId, status, cancellationToken);
+    /// <param name="ownerId">See <see cref="RecordActionAsync"/>.</param>
+    protected Task NotifyTaskMovedAsync(int taskId, WorkflowStatus status, int? ownerId, CancellationToken cancellationToken) =>
+        _notifier.TaskMovedAsync(taskId, status, ownerId, cancellationToken);
 }

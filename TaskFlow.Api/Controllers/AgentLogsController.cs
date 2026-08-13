@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TaskFlow.Api.Data;
+using TaskFlow.Api.Repositories;
 
 namespace TaskFlow.Api.Controllers;
 
@@ -10,9 +9,9 @@ namespace TaskFlow.Api.Controllers;
 [Authorize]
 public class AgentLogsController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IAgentLogRepository _logs;
 
-    public AgentLogsController(AppDbContext db) => _db = db;
+    public AgentLogsController(IAgentLogRepository logs) => _logs = logs;
 
     /// <summary>Returns the most recent agent activity logs.</summary>
     [HttpGet]
@@ -20,16 +19,7 @@ public class AgentLogsController : ControllerBase
         [FromQuery] string? agentName,
         [FromQuery] int limit = 50)
     {
-        var query = _db.AgentLogs.AsQueryable();
-
-        if (!string.IsNullOrWhiteSpace(agentName))
-            query = query.Where(l => l.AgentName == agentName);
-
-        var logs = await query
-            .OrderByDescending(l => l.CreatedAt)
-            .Take(Math.Clamp(limit, 1, 200))
-            .ToListAsync();
-
+        var logs = await _logs.GetRecentAsync(agentName, limit);
         return Ok(logs);
     }
 }
