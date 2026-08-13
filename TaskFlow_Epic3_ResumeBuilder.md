@@ -2197,20 +2197,28 @@ sat unused since Sprint 2.
     re-pasting"), not a required capability; failing to check it must never block or alarm the user
     during intake. A "Use previously saved base resume (updated `<date>`)" affordance appears only
     when `available` is true and lets the user accept it, still editable afterward.
-- **T6.2's stage model — one discriminated field, not several booleans:**
-  `type IntakeStage = 'provide' | 'parsing' | 'review' | 'starting' | 'building' | 'ready'`, owned by
-  a new hook, `useIntakeFlow(sessionId)`. Transitions: `provide` → `parsing` (Parse clicked, job
-  posting non-empty) → `review` (parse resolves; drafts shown) or back to `provide` (parse fails,
-  error shown, retry). `review` → `starting` (Start tailoring clicked; requires non-empty base resume
-  text, typed or reused) — `starting` performs `POST resume-context` (save) then `POST /` (assemble)
-  in sequence, since `AssembleAsync` already refuses `NotFound` without a saved `ResumeContext` for
-  the session — then → `building` (assemble resolves; the two new sibling task ids are captured
-  from the response) or back to `review` (either call fails, error shown, retry without re-parsing).
-  `building` → `ready` once both sibling task ids reach a terminal per-item stage (T6.3's `saved`) via
-  the live feed. **Progressive disclosure, concretely:** only the current stage's controls are
-  interactive; a completed earlier stage collapses to a compact read-only summary line (e.g. the
-  parsed job title) rather than vanishing, so the user can see what they submitted without more than
-  one actionable control-set on screen at a time.
+- **T6.2's stage model — one discriminated field, not several booleans, and deliberately owned
+  entirely by `useIntakeFlow` with no dependency on T6.3's live-progress data (sequencing: Slice C
+  ships before Slice D):** `type IntakeStage = 'provide' | 'parsing' | 'review' | 'starting' |
+  'building'`. Transitions: `provide` → `parsing` (Parse clicked, job posting non-empty) → `review`
+  (parse resolves; drafts shown) or back to `provide` (parse fails, error shown, retry). `review` →
+  `starting` (Start tailoring clicked; requires non-empty base resume text, typed or reused) —
+  `starting` performs `POST resume-context` (save) then `POST /` (assemble) in sequence, since
+  `AssembleAsync` already refuses `NotFound` without a saved `ResumeContext` for the session — then
+  → `building` (assemble resolves; the two new sibling task ids are captured from the response,
+  exposed as `resumeTaskId`/`coverLetterTaskId`) or back to `review` (either call fails, error shown,
+  retry without re-parsing). `building` is `useIntakeFlow`'s own terminal state — it does not attempt
+  to model "both siblings done," since that requires the live agent feed, which `useIntakeFlow`
+  itself does not consume. **Decision: "ready" is not a stage `useIntakeFlow` owns at all.** Slice D
+  (T6.3)'s `IntakeProgress` component, given the two task ids `useIntakeFlow` already exposes plus
+  the shared `logs` array, independently derives a "both saved" condition and renders its own
+  "ready for review — view it on the board" banner *within* the `building` stage's view, entirely as
+  an additive Slice D change — `useIntakeFlow` never needs to know this happened, keeping Slice C
+  fully self-contained and Slice D purely additive on top, matching the dispatch order below (D
+  depends on C's task-id contract, not the reverse). **Progressive disclosure, concretely:** only the
+  current stage's controls are interactive; a completed earlier stage collapses to a compact
+  read-only summary line (e.g. the parsed job title) rather than vanishing, so the user can see what
+  they submitted without more than one actionable control-set on screen at a time.
 - **Scope boundary, stated explicitly per the standing rule against silently dropping or inventing
   scope: the existing generic paste/file/parse/approve flow (`useIngestion`, `/api/Ingestion`) is
   kept, not removed, and not touched behaviorally.** None of T6.1–T6.5's task text asks for its
