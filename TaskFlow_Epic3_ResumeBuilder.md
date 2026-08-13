@@ -2508,6 +2508,297 @@ round was frontend-only; 143/143 frontend, +7 tests).**
 
 ---
 
+## Epic 3 Pre-Merge Review (develop → main) — PR #50
+
+Unlike every review above, this one isn't scoped to a single sprint's PR — it's a fresh pass over
+the full `develop` vs `main` diff (150 files, +18,369/-7,559 across 92 commits, PRs #37–#49) right
+before merging all of Epic 3 to `main`, run against Strict TDD/clean code/SOLID/DRY. Confirmed which
+sprints already had a structured review (PRs #40, #43, #45, #48, #49 above; Sprint 0 and Sprint 1 —
+PRs #38, #39 — never went through this process at all) and cross-checked every finding below against
+those first, so nothing here duplicates an already-fixed issue. The initial sweep was parallelized
+across five independent passes (backend core, backend Agents/Ingestion/Security/Export, frontend
+hooks/lib/api, frontend components/features, a cross-cutting test-coverage audit), then **every
+finding was personally re-verified against the actual current file content before being acted on** —
+file paths and line numbers re-read directly, not taken on any pass's word.
+
+What was already solid, so this isn't read as "everything is broken": `TaskService.cs` (every
+method's NotFound/Validation/ownership path individually tested), `TailoredContentTypstRenderer.cs`
+and its adversarial-first test suite, `ResumeTailoringAgent`/`CoverLetterAgent`/`TailoringAgentBase`'s
+core save/rollback/join logic, `ClaudeJsonExtractionParserBase` and its two subclasses,
+`JobPostingParser`, `ExportService`, `FileTemplateProvider`, and `board.ts`'s core pure functions.
+Five rounds of prior PR review (above) visibly paid off in these areas.
+
+**Status: the two priority items (the SignalR ownership leak, the `StaleTaskAgent` coverage gap) and
+the cheap DRY sweep are fixed; most of the rest is fixed too; a smaller set of larger/riskier items
+are deliberately deferred, with reasoning recorded per item below, rather than rushed into this
+pass.** `.\test`: 408/408 backend, 156/156 frontend, all green. Manually smoke-tested live: register/
+login, guided job-application intake end to end (including a real live agent tailoring cycle), board
+live updates, approve/reject, PDF/Markdown export, and the generic-document flow.
+
+### Critical — Security
+
+- **SignalR broadcasts were not ownership-scoped — cross-user data leak.** `AgentHub` was
+  `[Authorize]` only, no per-user grouping; `SignalRAgentNotifier.AgentActionAsync`/`AgentCycleAsync`/
+  `TaskMovedAsync` all broadcast via `_hub.Clients.All.SendAsync(...)` — every connected authenticated
+  client received every event. Confirmed the payload carries real sensitive content:
+  `TailoringAgentBase.cs:91` sets `Details = $"Claimed '{task.Title}' for tailoring."` for an Epic 3
+  sibling task, persisted **and** broadcast immediately. **Impact:** any authenticated user could
+  watch every other user's job-application titles and status changes in real time over the
+  WebSocket — no exploit needed, just the Network/WS tab. This is exactly the invariant class Sprint
+  4R's own retrospective (above) calls its most serious finding to date — applied to every REST
+  surface but never to this hub. **Fixed:** `AgentHub.OnConnectedAsync` now places every connection
+  in a group scoped to its own user id (`AgentHub.GroupForUser(userId)`, read from the JWT's
+  `NameIdentifier` claim, `int.TryParse`-guarded). `TaskItem` gained a computed `OwnerId` property as
+  the single source of truth for "who owns this task" — and it **fails closed**: if `ApplicationId`
+  is set but `Application` wasn't `Include`d, it throws rather than silently falling back to
+  broadcast-everyone. `IAgentNotifier.AgentActionAsync`/`TaskMovedAsync` now take a **required**
+  `int? ownerId` (no default), so every call site must explicitly decide "this user only" vs. "the
+  shared generic board." Every call site (`TaskService`, `JobApplicationService`,
+  `TailoringAgentBase`, `GenericExecutorAgent`, `StaleTaskAgent`, `TaskPrioritizerAgent`) passes the
+  correct owner. RED-then-GREEN: confirmed each new test failed to compile or assert correctly
+  (`TaskItem.OwnerId` didn't exist, notifier calls had the old 3-arg signature) before implementing.
+  New coverage (previously zero): `AgentHubTests.cs`, `SignalRAgentNotifierTests.cs`,
+  `TaskItemOwnerIdTests.cs`, plus strengthened existing assertions that now check the exact `ownerId`
+  passed instead of `It.IsAny<...>()`.
+  **Follow-up (PR #50 Copilot review, a real second gap):** the fix above only closed the *live*
+  path. `GET /api/AgentLogs` — loaded by `useAgentFeed` on every dashboard — still returned every
+  persisted log to any authenticated caller, same leak via a second delivery path. **Fixed:**
+  `IAgentLogRepository.GetRecentAsync` now requires a `callerId` and applies the same ownership rule
+  `TaskRepository.GetAllAsync` already applies to tasks, via a correlated `EXISTS` subquery against
+  `Tasks` (`AgentLog.TaskId` has no FK/navigation) — a log whose task no longer exists is excluded
+  entirely (fails closed) rather than guessed at. `AgentLogsController` now extracts and forwards the
+  caller id (401 if missing), mirroring `TasksController`'s convention. New tests: 4 cases in
+  `AgentLogRepositoryTests.cs`, a 401 case in `AgentLogsControllerTests.cs`; ~29 existing call sites
+  across 6 agent test files updated to pass a caller id.
+
+### High — Correctness
+
+- **`WasSuccessful` heuristic could misclassify a genuinely successful base-resume read.**
+  `ClaudeAgentBase.WasSuccessful` classified a tool result as failed via substring match on `"not
+  found"`/`"does not exist"`. `TailoringAgentBase.ReadBaseContext` returns the user's own resume text
+  as that tool result — ordinary prose containing either phrase (e.g. "certification does not exist
+  yet") would misclassify a successful read as failed. Zero test coverage in either direction.
+  Impact was narrow (a log/count purpose, not task state or control flow), but the heuristic was
+  designed against short, code-generated strings and was silently being applied to arbitrary user
+  prose via Epic 3. **Fixed (round 1):** bounded the scan to the first 256 characters, reasoning that
+  `read_base_context`'s wrapped resume content always starts with
+  `PromptSafety.WrapUntrusted`'s framing sentence + tag first. Changed `WasSuccessful` from
+  `protected` to `internal` (`InternalsVisibleTo(TaskFlow.Tests)`) so it could be unit-tested
+  directly for the first time. **Process note:** this round's fix was implemented before its test was
+  confirmed failing — a TDD-order slip, caught and disclosed rather than silently proceeding; the
+  test suite was still written and verified afterward.
+  **Follow-up (PR #50 Copilot review — round 1 was still wrong):** Copilot correctly found the
+  256-character window insufficient: the framing sentence + tag is *shorter* than 256 characters, so
+  a resume starting with "does not exist" right after the tag was still inside the window and still
+  misclassified. **Fixed properly:** replaced the window entirely — `PromptSafety` now exposes a
+  `FramingPrefix` constant (the fixed literal string every `WrapUntrusted` result starts with), and
+  `WasSuccessful` checks for that prefix first; if present, the content is wrapped/untrusted and is
+  exempted from the heuristic entirely rather than scanned within any bound. Added the exact case
+  Copilot named to `ClaudeAgentBaseWasSuccessfulTests.cs`, confirmed it failed against the round-1
+  fix, then fixed it (TDD order followed correctly this round).
+
+### DRY, SOLID, Clean Code — fixed
+
+- **`TailoredContentMaxLength` literal duplicated** across `ResumeContext.cs`, `SaveResumeContextDto.cs`,
+  and `ResumeContextService.cs` instead of referencing `TaskItem.TailoredContentMaxLength` (exactly
+  the drift risk `TitleMaxLength`/`DescriptionMaxLength` were extracted to prevent, PR #40 above).
+  **Fixed:** all three now reference the shared constant; the local `MaxContentLength` const was
+  deleted; the test suite's boundary check now derives its "too long" length from the constant.
+- **The missing-or-wrong-owner NotFound check** (`if (application is null || application.OwnerId !=
+  callerId) return NotFound(...)`) was duplicated verbatim 3 times across `JobApplicationService.cs`
+  and `ResumeContextService.cs` — the same pattern `TaskService.IsOwnedByAnotherUser` was extracted to
+  fix in PR #48 (above), recurring in files that fix never touched. **Fixed:** extracted to
+  `Common/JobApplicationOwnership.cs` as an extension method `IsMissingOrOwnedByAnotherUser`
+  (`[NotNullWhen(false)]` so callers don't need a null-forgiving `!`); all three call sites updated.
+- **`AgentLogsController` bypassed the repository layer** — the only controller in the codebase to
+  inject `AppDbContext` directly and re-implement `IAgentLogRepository.GetRecentAsync`'s exact
+  filter/order/clamp logic, contradicting that interface's own doc comment ("the only code that
+  queries logs via EF Core"). **Fixed:** the controller now takes `IAgentLogRepository` and is a thin
+  pass-through; new `AgentLogsControllerTests.cs` closed its previously-zero coverage too.
+- **`StaleClaimReaperService` and `JobApplicationPromotionReconcilerService` duplicated their entire
+  sweep loop verbatim** (interval computation, the `while(!stoppingToken...)` loop, try/catch/delay,
+  start/stop logging) — the second file's own doc comment admitted it "mirrors
+  `StaleClaimReaperService`'s shape exactly." **Fixed:** new `Agents/PeriodicSweepBackgroundService.cs`
+  base class owns the loop; both services now only supply `Name`, `Interval`, and `SweepAsync`. New
+  `PeriodicSweepBackgroundServiceTests.cs` (4 tests) also closed most of a "zero test file" gap for
+  both services, which had no test before.
+- **`taskOutput`/`taskStage` (`lib/board.ts`) duplicated the identical `forTask` filter +
+  `latestClaimAt` reduce block verbatim** — the file's own comment said `taskStage` "mirrors
+  `taskOutput`'s own scoping," never actually factored into a shared helper. **Fixed:** extracted
+  `mostRecentClaimAt`; existing `board.test.ts` coverage passed unchanged (pure refactor).
+- **`useApplicationReview.ts`'s `approve`/`reject`** were near-identical
+  `setLoading→try/await/catch/finally` blocks differing only in the API call and fallback message.
+  **Fixed:** extracted a shared `runAction(action, fallbackMessage)` closure; existing tests passed
+  unchanged. (Unifying this pattern across all four hooks that repeat it — `useIngestion.ts`,
+  `useBaseResumeCapture.ts`, `useExportDownload.ts` too — is deferred; those don't all shape their
+  loading state identically, e.g. `useExportDownload` tracks a `Set` of concurrent keys, so unifying
+  them is a bigger, more design-judgment-heavy change than this file's own internal dedup.)
+- **`ExportDownloadControls`'s PDF/Markdown buttons** were near-identical JSX differing only by
+  format literal and label. **Fixed:** collapsed to a `.map()` over `[{format, label}]`.
+- **`TaskCardView` and `ExportDownloadControls` each independently switched on the same
+  `'ResumeTailoring'`/`'CoverLetterTailoring'` string literals** to derive two different
+  vocabularies (display label vs. export-route key), with no single source of truth — root cause was
+  the untyped `kind` field (below). **Fixed:** new `lib/taskKind.ts` (`taskKindLabel`,
+  `exportKindFor`) is now the single source for both; both components consume it.
+- **`TaskItem.kind`/`TaskDraft.kind` (`types.ts`) were typed as bare `string`** instead of a literal
+  union, even though `TaskStatus`/`TaskPriority` in the same file correctly use string-literal
+  unions — every `kind` comparison across the codebase was consequently unchecked by the compiler
+  (independently flagged by two separate review passes). **Fixed:** new `export type TaskKind =
+  'Generic' | 'ResumeTailoring' | 'CoverLetterTailoring'` (mirrors `TaskFlow.Api/Models/TaskKind.cs`),
+  applied everywhere `kind` appears in the frontend model. Every existing literal `kind:` assignment
+  already used a valid value, so this was a pure type-tightening with no runtime behavior change.
+- **`IngestDocument.tsx`'s generic-document file input used a bare, unstyled class string** instead
+  of the themed `fileInputClasses` constant the job-posting file input (same file) already used, with
+  no stated reason for the divergence. **Fixed:** both now use `fileInputClasses`.
+- **Inconsistent disabled-opacity values app-wide** (`disabled:opacity-50` in most files vs.
+  `disabled:opacity-40` in `ReviewActions.tsx`/`ExportDownloadControls.tsx`) with no shared `Button`
+  primitive to anchor one convention. **Fixed:** standardized on `opacity-50` (the majority) in the
+  two outlier files; the "no shared `Button` primitive" root cause itself is deferred (below).
+- **`StaleTaskAgent`/`TaskPrioritizerAgent` hardcoded their agent name inline** instead of adding to
+  `AgentConstants.AgentNames`, unlike `AgentNames.ResumeTailoring`/`AgentNames.CoverLetter`, which
+  Epic 3 itself added to that class — pre-existing Epic-2 code, inconsistent with a convention Epic 3
+  established. **Fixed:** added `AgentNames.StaleTaskDetector`/`AgentNames.TaskPrioritizer`; string
+  values unchanged, so no test needed updating.
+
+### DRY, SOLID, Clean Code — deferred
+
+- **`JobApplicationRepository.TryApprovePairAsync`/`TryRejectPairAsync`** are structurally identical
+  (transaction → guarded update on `JobApplications` → check/rollback → guarded update on `Tasks` →
+  check/rollback → commit), differing only in target states, whether `ClaimedBy` is cleared, and one
+  extra `SetProperty`. Left as-is: this is atomic, security-critical transaction code, and a
+  parameterization mistake here has real correctness stakes — worth a dedicated, carefully-reviewed
+  slice of its own rather than folding into this broad pass.
+- **`JobPostingParser`/`SpecDocumentParser`** repeat the same 2-line "split on `\n`, `TrimEnd('\r')`"
+  boilerplate. Deliberately not fixed: this is the "three similar lines" case `CLAUDE.md` explicitly
+  says not to extract an abstraction for.
+- **`ITaskRepository` (13 members)** is consumed by two very different concern groups (human-facing
+  CRUD vs. agent claim-lifecycle) with no implementer needing the full surface. Plausible split into
+  CRUD + claim-transition interfaces, but flagged as an observation, not a clear defect, at the app's
+  current size — left alone.
+- **`IngestDocument.tsx` (269 lines) owns two essentially independent flows** — the guided
+  job-application wizard and the legacy generic-document flow, joined only by a shared container
+  `<div>`. A real SRP violation, but splitting a 269-line component with its own dedicated test file
+  mid-pass risks more churn than the other fixes here — better done as its own reviewed slice with
+  the test file restructured alongside it.
+- **`useIngestion`/`useBaseResumeCapture`/`useApplicationReview`/`useExportDownload`** independently
+  reimplement the same loading/error try-catch-finally wrapper shape (`useIngestion` already extracts
+  a `run(fallback, action)` helper the other three don't reuse) — see the `useApplicationReview` note
+  above for why unifying all four is deferred.
+- **`useAgentFeed`/`useBoardTasks`** repeat the same SignalR subscribe/unsubscribe boilerplate. A
+  `useHubEvent` helper would remove it; only two call sites currently, low severity, left alone.
+- **The "show the last error" banner is hand-copied 6 times**, in two different visual styles, with
+  `role="alert"` present on only half (now fixed everywhere, see Accessibility below — this is the
+  remaining DRY half). Unifying into one shared banner component is deferred: the two visual styles
+  (bordered card vs. plain text) differ enough that unifying them is a design decision, better made
+  deliberately alongside a `Button` component than as a mechanical extraction here.
+- **Five primary-action buttons in `IngestDocument.tsx`** repeat the same Tailwind class string
+  verbatim (only the background color varies), with no shared `Button` component. A shared primitive
+  would also anchor the disabled-opacity convention and half the banner-styling duplication above —
+  worth one deliberate design pass across all three findings rather than three separate edits.
+- **`lib/board.ts`'s `OUTPUT_ACTIONS` and inline action-name literals** aren't centralized the way
+  `hubEvents.ts` centralizes cross-language event names. Low severity: unlike `hubEvents.ts` (a true
+  frontend/backend wire contract), these are `AgentLog.Action` values already centralized
+  backend-side in `AgentConstants.AgentActions` — the frontend-side win here is smaller than the
+  pattern suggests.
+
+### Test coverage — fixed
+
+- `Hubs/AgentHub.cs`, `Services/SignalRAgentNotifier.cs` — previously zero coverage; new
+  `AgentHubTests.cs` (4 tests), `SignalRAgentNotifierTests.cs` (8 tests), see the SignalR fix above.
+- `Repositories/UserRepository.cs` — was the only repository with no matching test file; new
+  `UserRepositoryTests.cs` (5 tests).
+- `Services/ClaudeClient.cs` — `IsConfigured`'s null/blank-API-key branch; new `ClaudeClientTests.cs`
+  (4 tests).
+- `Agents/JobApplicationPromotionReconcilerService.cs`/`StaleClaimReaperService.cs` — the shared
+  sweep loop both now inherit has 4 new direct tests (each service's own `SweepAsync` body is still
+  untested in isolation, a smaller remaining gap, not folded in here).
+- `Security/PromptSafety.cs`'s label-validation guard — closes the exact bug class recorded in
+  project memory (an unvalidated `label` parameter) that was never actually locked in by a test; 8
+  new theory cases added.
+- `Agents/StaleTaskAgent.cs` — the largest gap found: 355 lines, 3 tools, only 2 tests total.
+  `ReassignAsync`/`FlagAsync` were entirely untested; also untested were `EscalateAsync`'s
+  task-not-found branch, the `!ClaudeConfigured` skip, the unknown-tool branch, and the tool-dispatch
+  exception catch. Added `StubClaude.ThatReassigns`/`ThatFlags`/`ThatCallsAnUnknownTool`/
+  `ThatCallsToolWithUndeserializableArgs` and 10 new tests. No production bugs found — a pure
+  coverage gap; all 10 passed against the existing implementation once written.
+- `hooks/AuthContext.tsx`'s "must be used inside AuthProvider" throw branch, `lib/formatting.ts`
+  (`formatDate`/`formatTime`) — both previously untested; new `AuthContext.test.tsx`,
+  `formatting.test.ts`.
+- `hooks/AuthProvider.tsx`'s `signOut()` — zero coverage anywhere despite the equivalent sign-in flow
+  being well tested; new `AuthProvider.test.tsx` covers both `signIn` and `signOut`, including the
+  localStorage clear.
+- `ExecutorControl`'s disable/"Pause" path, the toggle's `catch` block, and the initial-fetch failure
+  branch — all previously untested; now covered in `useExecutorControl.test.ts` (4.4's extraction).
+  **Follow-up (PR #50 Copilot review):** the initial-fetch-failure test as first written waited on
+  `busy`, which the initial load never touches — trivially already `false`, so the test passed even
+  with the effect/fetch deleted entirely. Rewrote it to gate on proof the request actually happened
+  (an MSW resolver flag), which now fails if the fetch is ever removed.
+- `Login.test.tsx` had no test for a failed login/register call — the `catch` block and its error
+  banner had zero coverage; new failed-sign-in test asserts the alert renders and no token is stored.
+- `KanbanBoard.test.tsx` never rendered the board-level error banner; new test forces the initial
+  task load to fail and asserts the alert renders.
+- `lib/board.test.ts` — the explicitly-called-out-in-comment "third same-applicationId task in one
+  column starts a new group" behavior had no test proving it; added.
+
+### Test coverage — deferred
+
+- `Agents/AgentRunner.cs` (drives every agent's loop) — testing this properly needs a
+  timer/background-scheduling test, a different shape than anything else in this pass.
+- `Controllers/AgentsController.cs`, `Controllers/HealthController.cs` — no controller-level tests;
+  lower risk (thin, low-branch-count controllers) than the items fixed above.
+- `Data/AppDbContext.cs`'s `OnModelCreating` unique indexes/cascade-delete behavior — needs its own
+  migration/schema-level test approach, distinct from the unit/repository style used elsewhere.
+- `Ingestion/ClaudeJsonExtractionParserBase.cs`'s `JsonException` catch, `Ingestion/
+  ClaudeIngestionParser.cs`'s blank-title filter — both genuinely untested, left for a follow-up.
+- `Agents/TailoringAgentBase.cs` — 7 untested branches across `ResumeTailoringAgentTests.cs`/
+  `CoverLetterAgentTests.cs` (the `!ClaudeConfigured` skip, "no task to claim," two rollback paths, a
+  cancellation rollback, the `SaveAsync` race branch, the promotion-join exception path) — a
+  meaningful slice of work in its own right, not folded into this pass.
+- `Export/TailoredContentTypstRenderer.cs` — several `SignificantChars`/list/code-span/line-break
+  cases untested individually; low urgency given how strong this file's existing coverage already is.
+- `Export/ProcessTypstCompiler.cs`'s real-binary suite (deliberately excluded from the default
+  `.\test` run) — the `Process.Start()` failure branch and non-timeout cancellation rethrow are
+  untested within it.
+- `api/agentLogs.ts`/`api/tasks.ts` — no dedicated unit test, unlike every other `api/*.ts` module
+  (`api/executor.ts` now has indirect coverage via `useExecutorControl.test.ts`).
+- `lib/agentHub.tsx` — every test globally mocks `@microsoft/signalr`, so the real connection
+  lifecycle (`onreconnected`/`onclose`, `.start().catch()` failure, stop-on-unmount) is never
+  exercised — a meaningfully different test setup than anything else in this pass.
+- `IngestDocument.tsx` — the file-upload path, the `'starting'` stage's text, the generic-flow error
+  banner, and `committedCount`'s pluralization at counts other than 1 are all untested; left for the
+  same follow-up as the SRP split above, since restructuring the tests fits better alongside it.
+- `useIntakeFlow.test.ts` — `startTailoring()` failing specifically at `saveResumeContext` (vs.
+  `assembleApplication`) is untested; both go through the same catch block, so severity is low.
+
+### Accessibility
+
+- **Login's Name/Email/Password inputs had only `placeholder`, no `<label>`/`aria-label`/`id`** —
+  the exact issue class PR #49 fixed for `IngestDocument`'s generic-flow inputs, never extended to
+  `Login.tsx`. **Fixed:** `aria-label` added to all three (matching the existing placeholder text)
+  rather than visible `<label>` elements, to close the accessible-name gap without changing this
+  form's established placeholder-only visual design.
+- **Error banners missing `role="alert"`** in `Login.tsx` and `KanbanBoard.tsx`, unlike
+  `IngestDocument.tsx`'s guided-flow banner. **Fixed both**, and while in the area also added the
+  same missing `role="alert"` to `IngestDocument.tsx`'s other two banners and
+  `ApplicationReviewCard.tsx`'s base-resume-load error — every error banner in the app now has
+  `role="alert"`. The banners' remaining visual/DRY unification is deferred (above).
+
+### PR #50 Copilot review round (2026-08-13)
+
+After opening PR #50, GitHub Copilot's automated review caught two real gaps the pass above missed —
+folded into the Critical/High findings above rather than repeated here — plus the test-quality issue
+on the `useExecutorControl` initial-fetch-failure test (also folded in above). Copilot's fourth
+comment objected to this remediation record living in a standalone `TaskFlow_Epic3_PreMerge_
+CodeReview.md` file rather than here, in the active epic doc — the project's own established
+convention (see PR #40's round-2 note above: "Recorded here, in this doc, rather than as a standalone
+review file, so the sprint's own history carries its review outcome"). The human reviewer explicitly
+waived that comment on the PR at the time ("Ignore this. I asked to create it to keep the AI on
+task."), so no action was taken in the moment — this section is that content, folded in after the
+fact per the same convention, with the standalone file deleted. `.\test` after the full round:
+414/414 backend, 156/156 frontend, all green.
+
+---
+
 # Open decisions log
 
 Recorded so nothing is silently assumed. Each needs an answer before the sprint that depends on it
