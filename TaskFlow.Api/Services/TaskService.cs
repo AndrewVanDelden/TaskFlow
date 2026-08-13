@@ -89,7 +89,7 @@ public class TaskService : ITaskService
         await _tasks.SaveChangesAsync(ct);
 
         // Broadcast so every connected board updates this one card live (the same seam agents use).
-        await _notifier.TaskMovedAsync(id, dto.Status, ct);
+        await _notifier.TaskMovedAsync(id, dto.Status, task.OwnerId, ct);
 
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
@@ -112,7 +112,7 @@ public class TaskService : ITaskService
         task.UpdatedAt = DateTime.UtcNow;
 
         await _tasks.SaveChangesAsync(ct);
-        await _notifier.TaskMovedAsync(id, WorkflowStatus.Done, ct);
+        await _notifier.TaskMovedAsync(id, WorkflowStatus.Done, task.OwnerId, ct);
 
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
@@ -148,7 +148,7 @@ public class TaskService : ITaskService
         }, ct);
         await _logs.SaveChangesAsync(ct);
 
-        await _notifier.TaskMovedAsync(id, WorkflowStatus.Todo, ct);
+        await _notifier.TaskMovedAsync(id, WorkflowStatus.Todo, task.OwnerId, ct);
 
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
@@ -210,5 +210,5 @@ public class TaskService : ITaskService
     // distinguishable error that reveals the task exists (the same IDOR class the PR #45 GetAll fix
     // closed for the list). Extracted once here (was duplicated verbatim across all six methods).
     private static bool IsOwnedByAnotherUser(TaskItem task, int callerId) =>
-        task.ApplicationId != null && task.Application!.OwnerId != callerId;
+        task.OwnerId != null && task.OwnerId != callerId;
 }

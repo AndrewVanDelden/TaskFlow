@@ -140,7 +140,7 @@ public class TaskServiceTests
         result.Status.Should().Be(ResultStatus.NotFound);
         // No move happened, so nothing is broadcast.
         _notifier.Verify(
-            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -165,7 +165,22 @@ public class TaskServiceTests
 
         result.IsSuccess.Should().BeTrue();
         _notifier.Verify(
-            n => n.TaskMovedAsync(1, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()),
+            n => n.TaskMovedAsync(1, WorkflowStatus.InProgress, null, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // Epic 3 Pre-Merge Code Review, finding 1.1: an Epic 3 sibling task's move must be scoped to
+    // its owner, not broadcast to every connected client (unlike the shared generic board).
+    [Fact]
+    public async Task UpdateStatus_scopes_the_broadcast_to_the_applications_owner_for_an_Epic3_sibling_task()
+    {
+        SetupGetById(Epic3TaskOwnedBy(ownerId: 1));
+
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.InProgress }, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        _notifier.Verify(
+            n => n.TaskMovedAsync(1, WorkflowStatus.InProgress, 1, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -179,7 +194,7 @@ public class TaskServiceTests
         result.Status.Should().Be(ResultStatus.NotFound);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _notifier.Verify(
-            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -196,7 +211,7 @@ public class TaskServiceTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Status.Should().Be(nameof(WorkflowStatus.Done));
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
-        _notifier.Verify(n => n.TaskMovedAsync(1, WorkflowStatus.Done, It.IsAny<CancellationToken>()), Times.Once);
+        _notifier.Verify(n => n.TaskMovedAsync(1, WorkflowStatus.Done, null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -211,7 +226,7 @@ public class TaskServiceTests
         result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _notifier.Verify(
-            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -237,7 +252,7 @@ public class TaskServiceTests
         result.Status.Should().Be(ResultStatus.NotFound);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _notifier.Verify(
-            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -259,7 +274,7 @@ public class TaskServiceTests
         _logs.Verify(l => l.AddAsync(
             It.Is<AgentLog>(a => a.Action == "Rejected" && a.TaskId == 1 && a.Details == "Needs a better haiku."),
             It.IsAny<CancellationToken>()), Times.Once);
-        _notifier.Verify(n => n.TaskMovedAsync(1, WorkflowStatus.Todo, It.IsAny<CancellationToken>()), Times.Once);
+        _notifier.Verify(n => n.TaskMovedAsync(1, WorkflowStatus.Todo, null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -274,7 +289,7 @@ public class TaskServiceTests
         result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _notifier.Verify(
-            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -299,7 +314,7 @@ public class TaskServiceTests
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _logs.Verify(l => l.AddAsync(It.IsAny<AgentLog>(), It.IsAny<CancellationToken>()), Times.Never);
         _notifier.Verify(
-            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<CancellationToken>()),
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

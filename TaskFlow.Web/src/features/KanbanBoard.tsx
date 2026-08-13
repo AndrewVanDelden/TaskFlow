@@ -47,7 +47,7 @@ export function KanbanBoard({ logs = [] }: { logs?: AgentLog[] }) {
   return (
     <div>
       {error && (
-        <div className="mb-3 text-sm text-red-400 bg-red-950 border border-red-900 rounded px-3 py-2">
+        <div role="alert" className="mb-3 text-sm text-red-400 bg-red-950 border border-red-900 rounded px-3 py-2">
           {error}
         </div>
       )}

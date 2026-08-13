@@ -26,12 +26,19 @@ export function resolveDropColumn(overId: string | number, tasks: TaskItem[]): T
 // inline instead of making the user hunt the feed.
 const OUTPUT_ACTIONS = ['ProgressRecorded', 'ReviewRequested', 'AutoFinalized']
 
+// Shared by taskOutput and taskStage: the most recent 'Claimed' timestamp among a task's own logs,
+// so both scope to the task's current cycle - a stale prior cycle (e.g. before a rollback-and-retry)
+// never reports as the current state. Null if the task has never been claimed.
+function mostRecentClaimAt(forTask: AgentLog[]): string | null {
+  return forTask
+    .filter((l) => l.action === 'Claimed')
+    .reduce<string | null>((max, l) => (max === null || l.createdAt > max ? l.createdAt : max), null)
+}
+
 export function taskOutput(logs: AgentLog[], taskId: number): string[] {
   const forTask = logs.filter((l) => l.taskId === taskId)
 
-  const latestClaimAt = forTask
-    .filter((l) => l.action === 'Claimed')
-    .reduce<string | null>((max, l) => (max === null || l.createdAt > max ? l.createdAt : max), null)
+  const latestClaimAt = mostRecentClaimAt(forTask)
   if (latestClaimAt === null) return []
 
   return forTask
@@ -45,14 +52,13 @@ export type TaskStage = 'pending' | 'in-progress' | 'saved' | 'rolled-back'
 
 // Per-item progress for one Epic 3 tailoring task (resume or cover letter), derived from the same
 // AgentLog feed the board already consumes - no new SignalR event type needed. Scoped to the most
-// recent 'Claimed' entry for this task id, mirroring taskOutput's own "current cycle" scoping, so a
-// stale prior cycle (e.g. before a rollback-and-retry) never reports as the current state.
+// recent 'Claimed' entry for this task id via mostRecentClaimAt, the same "current cycle" scoping
+// taskOutput uses, so a stale prior cycle (e.g. before a rollback-and-retry) never reports as the
+// current state.
 export function taskStage(logs: AgentLog[], taskId: number): TaskStage {
   const forTask = logs.filter((l) => l.taskId === taskId)
 
-  const latestClaimAt = forTask
-    .filter((l) => l.action === 'Claimed')
-    .reduce<string | null>((max, l) => (max === null || l.createdAt > max ? l.createdAt : max), null)
+  const latestClaimAt = mostRecentClaimAt(forTask)
   if (latestClaimAt === null) return 'pending'
 
   const sinceLatestClaim = forTask.filter((l) => l.createdAt >= latestClaimAt)

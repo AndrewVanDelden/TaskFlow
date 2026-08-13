@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { DndContext } from '@dnd-kit/core'
 import { KanbanColumn } from './KanbanColumn'
-import type { TaskItem } from '../types'
+import type { TaskItem, TaskKind } from '../types'
 
 const task: TaskItem = {
   id: 1, title: 'Ship it', description: null, status: 'Todo',
@@ -13,7 +13,7 @@ const task: TaskItem = {
 
 // Builds an Epic 3 sibling task (Sprint 6, T6.4 grouping tests), mirroring board.test.ts's own
 // epicTask helper.
-const epicTask = (id: number, title: string, applicationId: number | null, kind: string): TaskItem => ({
+const epicTask = (id: number, title: string, applicationId: number | null, kind: TaskKind): TaskItem => ({
   id, title, description: null, status: 'Todo',
   priority: 'High', dueDate: null, createdAt: '', updatedAt: '',
   assignedToId: null, assignedToName: null,

@@ -43,7 +43,7 @@ export function ApplicationReviewCard({
       <section>
         <h4 className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Base resume</h4>
         {baseResumeLoading && <p className="text-xs text-slate-400">Loading base resume...</p>}
-        {baseResumeError && <p className="text-xs text-red-400">{baseResumeError}</p>}
+        {baseResumeError && <p className="text-xs text-red-400" role="alert">{baseResumeError}</p>}
         {baseResume !== null && <MarkdownPreview content={baseResume} />}
       </section>
 

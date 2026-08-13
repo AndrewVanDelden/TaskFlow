@@ -43,29 +43,24 @@ export function useApplicationReview(applicationId: number) {
     }
   }, [applicationId])
 
-  const approve = async () => {
+  // Shared by approve/reject: they differ only in which API call runs and the fallback message.
+  const runAction = async (action: () => Promise<unknown>, fallbackMessage: string) => {
     setActionLoading(true)
     setActionError(null)
     try {
-      await approveApplication(applicationId)
+      await action()
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to approve the application.')
+      setActionError(err instanceof Error ? err.message : fallbackMessage)
     } finally {
       setActionLoading(false)
     }
   }
 
-  const reject = async (reason: string) => {
-    setActionLoading(true)
-    setActionError(null)
-    try {
-      await rejectApplication(applicationId, reason)
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to reject the application.')
-    } finally {
-      setActionLoading(false)
-    }
-  }
+  const approve = () =>
+    runAction(() => approveApplication(applicationId), 'Failed to approve the application.')
+
+  const reject = (reason: string) =>
+    runAction(() => rejectApplication(applicationId, reason), 'Failed to reject the application.')
 
   return {
     baseResume,

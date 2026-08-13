@@ -79,6 +79,35 @@ public class TaskRepositoryClaimTests
         claimedGeneric!.Title.Should().Be("Generic work");
     }
 
+    // Epic 3 Pre-Merge Code Review, finding 1.1: agents need the claimed task's owner to scope
+    // SignalR broadcasts, so the claim read must include Application the same way GetByIdAsync
+    // already does - otherwise TaskItem.OwnerId throws (fails closed) the moment an agent tries
+    // to read it off a claimed Epic 3 sibling task.
+    [Fact]
+    public async Task TryClaimNext_includes_the_application_navigation_so_OwnerId_is_available()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        db.Context.JobApplications.ExecuteDelete();
+        var repo = new TaskRepository(db.Context);
+        var application = new JobApplication { IngestionSessionId = "s", OwnerId = 42 };
+        db.Context.JobApplications.Add(application);
+        await db.Context.SaveChangesAsync();
+        db.Context.Tasks.Add(new TaskItem
+        {
+            Title = "Tailor resume",
+            Status = WorkflowStatus.Todo,
+            Kind = TaskKind.ResumeTailoring,
+            ApplicationId = application.Id
+        });
+        await db.Context.SaveChangesAsync();
+
+        var claimed = await repo.TryClaimNextAsync(TaskKind.ResumeTailoring, "ResumeExecutor");
+
+        claimed.Should().NotBeNull();
+        claimed!.OwnerId.Should().Be(42);
+    }
+
     // The seeded board has Todo tasks; clear it so each test controls exactly which tasks exist.
     private static Task StartFromEmptyBoard(AppDbContext db) => db.Tasks.ExecuteDeleteAsync();
 }

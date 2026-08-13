@@ -49,7 +49,7 @@ public class StaleTaskAgent : ClaudeAgentBase
         _users = users;
     }
 
-    public override string Name => "StaleTaskDetector";
+    public override string Name => AgentNames.StaleTaskDetector;
 
     public override TimeSpan Interval =>
         TimeSpan.FromMinutes(Config.GetValue("Agents:StaleTaskIntervalMinutes", 60));
@@ -222,7 +222,7 @@ public class StaleTaskAgent : ClaudeAgentBase
             Details = $"Priority {previous} -> High. {args.Reason}",
             Success = true,
             CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
+        }, task.OwnerId, cancellationToken);
 
         Logger.LogInformation(
             "[{Agent}] Escalated Task {Id} '{Title}': {From} -> High. {Reason}",
@@ -261,7 +261,7 @@ public class StaleTaskAgent : ClaudeAgentBase
                       $"{args.NewUserId?.ToString() ?? "unassigned"}. {args.Reason}",
             Success = true,
             CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
+        }, task.OwnerId, cancellationToken);
 
         Logger.LogInformation(
             "[{Agent}] Reassigned Task {Id} '{Title}': owner {From} -> {To}. {Reason}",
@@ -293,7 +293,7 @@ public class StaleTaskAgent : ClaudeAgentBase
             Details = args.Concern,
             Success = true,
             CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
+        }, task.OwnerId, cancellationToken);
 
         Logger.LogInformation(
             "[{Agent}] Flagged Task {Id} '{Title}' for review: {Concern}",

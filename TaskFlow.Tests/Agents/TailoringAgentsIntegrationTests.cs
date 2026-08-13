@@ -125,7 +125,7 @@ public class TailoringAgentsIntegrationTests
         (await tasks.GetByIdAsync(resumeTask.Id))!.TailoredContent.Should().Be(tailoredResume);
         (await tasks.GetByIdAsync(resumeTask.Id))!.Status.Should().Be(WorkflowStatus.Review);
 
-        var failureLogs = await logs.GetRecentAsync(AgentNames.CoverLetter, 10);
+        var failureLogs = await logs.GetRecentAsync(AgentNames.CoverLetter, 10, OwnerId);
         failureLogs.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == coverLetterTask.Id);
 
         // ── Step 3: the failed task is retried (it's back in Todo, so the next cycle re-claims
@@ -145,7 +145,7 @@ public class TailoringAgentsIntegrationTests
         var finalApplication = await jobApplications.GetByIdAsync(application.Id);
         finalApplication!.State.Should().Be(ApplicationState.ReviewReady);
 
-        var successLogs = await logs.GetRecentAsync(AgentNames.CoverLetter, 10);
+        var successLogs = await logs.GetRecentAsync(AgentNames.CoverLetter, 10, OwnerId);
         successLogs.Should().Contain(l => l.Action == AgentActions.ApplicationReviewReady && l.TaskId == coverLetterTask.Id);
     }
 }

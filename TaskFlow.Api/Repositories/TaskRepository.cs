@@ -88,7 +88,10 @@ public class TaskRepository : ITaskRepository
             if (won == 1)
                 // AsNoTracking: ExecuteUpdate bypasses the change tracker, so a tracked read would be
                 // stale. A fresh no-tracking read reflects the claim (InProgress, ClaimedBy set).
-                return await _db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id, ct);
+                // Application is included so a claiming agent can read TaskItem.OwnerId (T5.0 /
+                // SignalR ownership fix) without a second round trip.
+                return await _db.Tasks.AsNoTracking().Include(t => t.Application)
+                    .FirstOrDefaultAsync(t => t.Id == id, ct);
         }
 
         return null;

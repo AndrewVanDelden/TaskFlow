@@ -157,7 +157,7 @@ export function IngestDocument() {
             </button>
 
             {baseResumeCapture.error && (
-              <div className="mt-3 text-sm text-red-400 bg-red-950 border border-red-900 rounded px-3 py-2">
+              <div role="alert" className="mt-3 text-sm text-red-400 bg-red-950 border border-red-900 rounded px-3 py-2">
                 {baseResumeCapture.error}
               </div>
             )}
@@ -218,7 +218,7 @@ export function IngestDocument() {
               id="generic-document-file"
               type="file"
               onChange={onGenericFile}
-              className="text-xs text-slate-400"
+              className={fileInputClasses}
             />
             <button
               onClick={() => generic.submit(genericText)}
@@ -230,7 +230,7 @@ export function IngestDocument() {
           </div>
 
           {generic.error && (
-            <div className="mt-3 text-sm text-red-400 bg-red-950 border border-red-900 rounded px-3 py-2">
+            <div role="alert" className="mt-3 text-sm text-red-400 bg-red-950 border border-red-900 rounded px-3 py-2">
               {generic.error}
             </div>
           )}

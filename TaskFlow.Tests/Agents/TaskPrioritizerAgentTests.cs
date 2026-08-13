@@ -56,7 +56,7 @@ public class TaskPrioritizerAgentTests
         var updated = await tasks.GetByIdAsync(task.Id);
         updated!.Priority.Should().Be(TaskPriority.High);
 
-        var recent = await logs.GetRecentAsync("TaskPrioritizer", 10);
+        var recent = await logs.GetRecentAsync("TaskPrioritizer", 10, callerId: 1);
         recent.Should().Contain(l => l.Action == "PriorityUpdated" && l.TaskId == task.Id);
     }
 

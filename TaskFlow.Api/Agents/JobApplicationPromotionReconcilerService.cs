@@ -11,69 +11,36 @@ namespace TaskFlow.Api.Agents;
 /// transient DB write-lock under two agents' concurrent DbContexts is the realistic trigger)
 /// between the save and the join, the trigger is lost and nothing else retries it (PR #43 review,
 /// round 2: found independently by both a manual review and Copilot's automated review). This
-/// sweep is the code path left to notice and correct it — mirrors
-/// <see cref="StaleClaimReaperService"/>'s shape exactly.
+/// sweep is the code path left to notice and correct it — shares its sweep-loop shape with
+/// <see cref="StaleClaimReaperService"/> via <see cref="PeriodicSweepBackgroundService"/>.
 ///
 /// Runs an immediate sweep on startup, then again on
 /// <c>Agents:PromotionSweepIntervalMinutes</c> (default 5).
 /// </summary>
-public class JobApplicationPromotionReconcilerService : BackgroundService
+public class JobApplicationPromotionReconcilerService : PeriodicSweepBackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConfiguration _config;
-    private readonly ILogger<JobApplicationPromotionReconcilerService> _logger;
 
     public JobApplicationPromotionReconcilerService(
         IServiceScopeFactory scopeFactory,
         IConfiguration config,
         ILogger<JobApplicationPromotionReconcilerService> logger)
+        : base(logger)
     {
         // IServiceScopeFactory (not IServiceProvider directly): this service lives for the app's
         // lifetime but IJobApplicationRepository/AppDbContext are scoped, so each sweep needs its
         // own scope (same reason AgentRunner and StaleClaimReaperService do this).
         _scopeFactory = scopeFactory;
         _config = config;
-        _logger = logger;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var interval = TimeSpan.FromMinutes(Math.Max(1, _config.GetValue("Agents:PromotionSweepIntervalMinutes", 5)));
+    protected override string Name => nameof(JobApplicationPromotionReconcilerService);
 
-        _logger.LogInformation("JobApplicationPromotionReconcilerService started. Interval: {Interval}", interval);
+    protected override TimeSpan Interval =>
+        TimeSpan.FromMinutes(Math.Max(1, _config.GetValue("Agents:PromotionSweepIntervalMinutes", 5)));
 
-        // Run immediately on startup, then on the interval.
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await SweepAsync(stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // Normal shutdown — don't log as error.
-                break;
-            }
-            catch (Exception ex)
-            {
-                // Log the error but keep sweeping — one bad sweep shouldn't kill the loop.
-                _logger.LogError(ex, "JobApplicationPromotionReconcilerService sweep failed. Will retry after interval.");
-            }
-
-            try
-            {
-                await Task.Delay(interval, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-        }
-
-        _logger.LogInformation("JobApplicationPromotionReconcilerService stopped.");
-    }
-
-    private async Task SweepAsync(CancellationToken ct)
+    protected override async Task SweepAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var jobApplications = scope.ServiceProvider.GetRequiredService<IJobApplicationRepository>();
@@ -81,10 +48,10 @@ public class JobApplicationPromotionReconcilerService : BackgroundService
         var promoted = await jobApplications.PromotePendingReviewReadyApplicationsAsync(ct);
 
         if (promoted > 0)
-            _logger.LogWarning(
+            Logger.LogWarning(
                 "JobApplicationPromotionReconcilerService promoted {Count} application(s) stuck at Building with both siblings Review.",
                 promoted);
         else
-            _logger.LogInformation("JobApplicationPromotionReconcilerService sweep complete. Nothing to promote.");
+            Logger.LogInformation("JobApplicationPromotionReconcilerService sweep complete. Nothing to promote.");
     }
 }

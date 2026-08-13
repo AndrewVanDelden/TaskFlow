@@ -1,6 +1,7 @@
 import type { TaskItem } from '../types'
 import { priorityStyles } from '../lib/styles'
 import { formatDate } from '../lib/formatting'
+import { taskKindLabel } from '../lib/taskKind'
 import { ReviewActions } from './ReviewActions'
 import { ExportDownloadControls } from './ExportDownloadControls'
 
@@ -25,11 +26,7 @@ export function TaskCardView({
         <div className="flex items-center gap-1 shrink-0">
           {task.kind !== 'Generic' && (
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border border-indigo-700 bg-indigo-950 text-indigo-300">
-              {task.kind === 'ResumeTailoring'
-                ? 'Resume'
-                : task.kind === 'CoverLetterTailoring'
-                  ? 'Cover letter'
-                  : task.kind}
+              {taskKindLabel(task.kind)}
             </span>
           )}
           <span

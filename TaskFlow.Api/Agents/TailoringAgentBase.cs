@@ -91,9 +91,9 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
                 Details = $"Claimed '{task.Title}' for tailoring.",
                 Success = true,
                 CreatedAt = DateTime.UtcNow
-            }, cancellationToken);
+            }, task.OwnerId, cancellationToken);
 
-            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, cancellationToken);
+            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, task.OwnerId, cancellationToken);
 
             // task.ApplicationId is nullable in the type system, but assembly always sets it for
             // these kinds. If it's null, that's a data-integrity problem, not a normal "nothing to
@@ -193,9 +193,9 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
                 Details = $"Rolled back to Todo: {reason}",
                 Success = false,
                 CreatedAt = DateTime.UtcNow
-            }, CancellationToken.None);
+            }, task.OwnerId, CancellationToken.None);
 
-            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, CancellationToken.None);
+            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, task.OwnerId, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -335,9 +335,9 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
                 Details = "Tailored content saved; moved to Review.",
                 Success = true,
                 CreatedAt = DateTime.UtcNow
-            }, cancellationToken);
+            }, task.OwnerId, cancellationToken);
 
-            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
+            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, task.OwnerId, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -370,7 +370,7 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
                     Details = $"JobApplication {application.Id} promoted to ReviewReady.",
                     Success = true,
                     CreatedAt = DateTime.UtcNow
-                }, cancellationToken);
+                }, task.OwnerId, cancellationToken);
             }
             catch (Exception ex)
             {

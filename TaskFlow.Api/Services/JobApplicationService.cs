@@ -31,9 +31,8 @@ public class JobApplicationService : IJobApplicationService
         var application = await _jobApplications.GetByIdAsync(applicationId, ct);
 
         // Same NotFound for missing and wrong-owner: a cross-owner probe must be indistinguishable
-        // from a genuine 404, matching this project's established IDOR-safe convention (see
-        // ResumeContextRepository's doc comments for the same reasoning applied elsewhere).
-        if (application is null || application.OwnerId != callerId)
+        // from a genuine 404, matching this project's established IDOR-safe convention.
+        if (application.IsMissingOrOwnedByAnotherUser(callerId))
             return Result<JobApplicationResponseDto>.NotFound($"JobApplication {applicationId} not found.");
 
         if (application.State != ApplicationState.ReviewReady)
@@ -47,7 +46,7 @@ public class JobApplicationService : IJobApplicationService
 
         var siblings = await _tasks.GetByApplicationIdAsync(applicationId, ct);
         foreach (var sibling in siblings)
-            await _notifier.TaskMovedAsync(sibling.Id, WorkflowStatus.Done, ct);
+            await _notifier.TaskMovedAsync(sibling.Id, WorkflowStatus.Done, application.OwnerId, ct);
 
         var updated = await _jobApplications.GetByIdAsync(applicationId, ct);
         return Result<JobApplicationResponseDto>.Ok(JobApplicationResponseDto.FromEntity(updated!, siblings));
@@ -57,7 +56,7 @@ public class JobApplicationService : IJobApplicationService
     {
         var application = await _jobApplications.GetByIdAsync(applicationId, ct);
 
-        if (application is null || application.OwnerId != callerId)
+        if (application.IsMissingOrOwnedByAnotherUser(callerId))
             return Result<JobApplicationResponseDto>.NotFound($"JobApplication {applicationId} not found.");
 
         if (application.State != ApplicationState.ReviewReady)
@@ -90,7 +89,7 @@ public class JobApplicationService : IJobApplicationService
                 CreatedAt = DateTime.UtcNow
             }, ct);
 
-            await _notifier.TaskMovedAsync(sibling.Id, WorkflowStatus.Todo, ct);
+            await _notifier.TaskMovedAsync(sibling.Id, WorkflowStatus.Todo, application.OwnerId, ct);
         }
         await _logs.SaveChangesAsync(ct);
 
