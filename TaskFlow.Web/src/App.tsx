@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { AuthProvider } from './hooks/AuthProvider'
 import { useAuth } from './hooks/AuthContext'
@@ -11,6 +12,14 @@ import { IngestDocument } from './features/IngestDocument'
 function LoginRoute() {
   const { isAuthenticated } = useAuth()
   return isAuthenticated ? <Navigate to="/board" replace /> : <Login />
+}
+
+// Bare /ingest (the nav link's target) has no session id yet - generate one and redirect to the
+// real, id-bearing route. This is what makes the session id survive an unmount/remount: it now
+// lives in the URL, not component state (PR #40 review finding #7).
+function IngestRedirect() {
+  const [sessionId] = useState(() => crypto.randomUUID())
+  return <Navigate to={`/ingest/${sessionId}`} replace />
 }
 
 // Guards the authenticated area and provides the shared shell: one SignalR connection and the nav bar
@@ -36,7 +45,8 @@ export default function App() {
         <Route path="/login" element={<LoginRoute />} />
         <Route element={<ProtectedLayout />}>
           <Route path="/board" element={<Dashboard />} />
-          <Route path="/ingest" element={<IngestDocument />} />
+          <Route path="/ingest" element={<IngestRedirect />} />
+          <Route path="/ingest/:sessionId" element={<IngestDocument />} />
         </Route>
         <Route path="*" element={<Navigate to="/board" replace />} />
       </Routes>

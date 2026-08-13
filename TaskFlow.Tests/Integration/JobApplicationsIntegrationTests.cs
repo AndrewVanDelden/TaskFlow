@@ -279,6 +279,49 @@ public class JobApplicationsIntegrationTests
         reject.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    // ── Sprint 6: GET /resume-context/latest — "reuse your last resume" for the intake UI ────────
+    // Route ordering note: "resume-context" as a literal first path segment is never matched by
+    // the existing [HttpGet("{id:int}/resume-context")] action's {id:int} constraint, so this new
+    // route disambiguates cleanly without any special ordering.
+
+    [Fact]
+    public async Task GetMostRecentResumeContext_returns_404_when_the_caller_has_never_saved_a_resume()
+    {
+        var client = await AuthedClientAsync();
+
+        var response = await client.GetAsync("/api/JobApplications/resume-context/latest");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task GetMostRecentResumeContext_returns_the_callers_own_most_recent_resume()
+    {
+        var client = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+
+        var save = await client.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+        save.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var response = await client.GetAsync("/api/JobApplications/resume-context/latest");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var summary = await response.Content.ReadFromJsonAsync<ResumeContextSummaryDto>();
+        summary.Should().NotBeNull();
+        summary!.Content.Should().Be("Base resume text.");
+    }
+
+    [Fact]
+    public async Task GetMostRecentResumeContext_returns_401_without_a_bearer_token()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/JobApplications/resume-context/latest");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
     private async Task PromoteToReviewReadyAsync()
     {
         using var scope = _factory.Services.CreateScope();

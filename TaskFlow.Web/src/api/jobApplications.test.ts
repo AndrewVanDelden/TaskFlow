@@ -4,6 +4,9 @@ import { server } from '../test/server'
 import {
   saveResumeContext,
   getApplicationResumeContext,
+  getMostRecentResumeContext,
+  parseJobPosting,
+  assembleApplication,
   approveApplication,
   rejectApplication,
   exportResume,
@@ -48,6 +51,100 @@ describe('getApplicationResumeContext', () => {
     )
 
     await expect(getApplicationResumeContext(10)).rejects.toThrow()
+  })
+})
+
+describe('getMostRecentResumeContext', () => {
+  it('gets the caller\'s most recently saved resume summary', async () => {
+    server.use(
+      http.get('*/api/JobApplications/resume-context/latest', () =>
+        HttpResponse.json({ content: 'My saved resume', contentFormat: 'text', updatedAt: '2026-08-01T00:00:00Z' })),
+    )
+
+    const result = await getMostRecentResumeContext()
+
+    expect(result.content).toBe('My saved resume')
+    expect(result.contentFormat).toBe('text')
+    expect(result.updatedAt).toBe('2026-08-01T00:00:00Z')
+  })
+
+  it('rejects on 404 (caller has never saved a resume)', async () => {
+    server.use(
+      http.get('*/api/JobApplications/resume-context/latest', () => new HttpResponse(null, { status: 404 })),
+    )
+
+    await expect(getMostRecentResumeContext()).rejects.toThrow()
+  })
+})
+
+describe('parseJobPosting', () => {
+  // Copilot review finding (PR #49): the test's own name claims it verifies the posted content,
+  // but only the mocked response was ever asserted on - a serialization bug (wrong field name,
+  // missing field) would still pass green. Captures and asserts the real request body instead.
+  it('posts the content and returns the parsed drafts', async () => {
+    let capturedBody: unknown = null
+    server.use(
+      http.post('*/api/JobApplications/parse', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json([{ title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' }])
+      }),
+    )
+
+    const result = await parseJobPosting('some job posting text')
+
+    expect(capturedBody).toEqual({ content: 'some job posting text' })
+    expect(result).toHaveLength(1)
+    expect(result[0].title).toBe('Backend Engineer')
+  })
+
+  it('rejects when the server refuses to parse', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse', () => new HttpResponse(null, { status: 500 })),
+    )
+
+    await expect(parseJobPosting('bad text')).rejects.toThrow()
+  })
+})
+
+describe('assembleApplication', () => {
+  // Copilot review finding (PR #49): same test-quality gap as parseJobPosting above - the test's
+  // own name claims it verifies the posted session id and posting, but only the mocked response
+  // was ever asserted on.
+  it('posts the session id and posting, and returns the assembled application', async () => {
+    let capturedBody: unknown = null
+    server.use(
+      http.post('*/api/JobApplications', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json(applicationResponse('Building', 'Todo'))
+      }),
+    )
+
+    const result = await assembleApplication('11111111-1111-1111-1111-111111111111', {
+      title: 'Backend Engineer',
+      description: 'Build things.',
+      section: 'Job Posting',
+    })
+
+    expect(capturedBody).toEqual({
+      ingestionSessionId: '11111111-1111-1111-1111-111111111111',
+      posting: { title: 'Backend Engineer', description: 'Build things.', section: 'Job Posting' },
+    })
+    expect(result.state).toBe('Building')
+    expect(result.tasks[0].status).toBe('Todo')
+  })
+
+  it('rejects when the server refuses to assemble (e.g. no saved resume context)', async () => {
+    server.use(
+      http.post('*/api/JobApplications', () => new HttpResponse(null, { status: 404 })),
+    )
+
+    await expect(
+      assembleApplication('11111111-1111-1111-1111-111111111111', {
+        title: 'Backend Engineer',
+        description: 'Build things.',
+        section: 'Job Posting',
+      }),
+    ).rejects.toThrow()
   })
 })
 

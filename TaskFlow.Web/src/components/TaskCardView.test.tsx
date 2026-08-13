@@ -93,4 +93,26 @@ describe('TaskCardView', () => {
     expect(screen.queryByRole('button', { name: /download pdf/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /download markdown/i })).toBeNull()
   })
+
+  // Sprint 6, T6.4: every card shows its kind (unconditionally, not just grouped ones).
+  it('shows a kind badge for a ResumeTailoring task', () => {
+    const resumeTask: TaskItem = { ...task, kind: 'ResumeTailoring', applicationId: 10 }
+    render(<TaskCardView task={resumeTask} />)
+
+    expect(screen.getByText('Resume')).toBeInTheDocument()
+  })
+
+  it('shows a kind badge for a CoverLetterTailoring task', () => {
+    const coverLetterTask: TaskItem = { ...task, kind: 'CoverLetterTailoring', applicationId: 10 }
+    render(<TaskCardView task={coverLetterTask} />)
+
+    expect(screen.getByText('Cover letter')).toBeInTheDocument()
+  })
+
+  it('shows no kind badge for a Generic task', () => {
+    render(<TaskCardView task={task} />)
+
+    expect(screen.queryByText('Resume')).toBeNull()
+    expect(screen.queryByText('Cover letter')).toBeNull()
+  })
 })

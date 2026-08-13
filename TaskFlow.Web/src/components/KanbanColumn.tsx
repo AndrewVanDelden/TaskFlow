@@ -1,7 +1,7 @@
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type { TaskItem, TaskStatus } from '../types'
-import type { ApplicationPair } from '../lib/board'
+import { groupSiblingCards, type ApplicationPair } from '../lib/board'
 import { TaskCard } from './TaskCard'
 import { ApplicationReviewCard } from './ApplicationReviewCard'
 
@@ -19,6 +19,16 @@ interface Props {
 
 export function KanbanColumn({ status, label, tasks, onApprove, onReject, outputFor, pairs }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: status })
+
+  const renderCard = (task: TaskItem) => (
+    <TaskCard
+      key={task.id}
+      task={task}
+      output={outputFor?.(task.id)}
+      onApprove={onApprove ? () => onApprove(task.id) : undefined}
+      onReject={onReject ? (reason) => onReject(task.id, reason) : undefined}
+    />
+  )
 
   return (
     <div
@@ -51,15 +61,21 @@ export function KanbanColumn({ status, label, tasks, onApprove, onReject, output
         items={tasks.map((t) => t.id)}
         strategy={verticalListSortingStrategy}
       >
-        {tasks.map((task) => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            output={outputFor?.(task.id)}
-            onApprove={onApprove ? () => onApprove(task.id) : undefined}
-            onReject={onReject ? (reason) => onReject(task.id, reason) : undefined}
-          />
-        ))}
+        {groupSiblingCards(tasks).map((group) =>
+          group.length === 2 ? (
+            <div
+              key={`pair-${group[0].applicationId}`}
+              data-testid={`sibling-group-${group[0].applicationId}`}
+              role="group"
+              aria-label="Job application"
+              className="border border-indigo-800/60 rounded-lg p-1 mb-2"
+            >
+              {group.map(renderCard)}
+            </div>
+          ) : (
+            group.map(renderCard)
+          ),
+        )}
       </SortableContext>
 
       {tasks.length === 0 && (!pairs || pairs.length === 0) && (

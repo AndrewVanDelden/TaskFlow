@@ -22,13 +22,24 @@ export function TaskCardView({
     <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 cursor-grab active:cursor-grabbing hover:border-slate-600">
       <div className="flex items-start justify-between gap-2 mb-2">
         <h3 className="text-sm font-medium text-white leading-snug">{task.title}</h3>
-        <span
-          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${
-            priorityStyles[task.priority] ?? priorityStyles.Low
-          }`}
-        >
-          {task.priority}
-        </span>
+        <div className="flex items-center gap-1 shrink-0">
+          {task.kind !== 'Generic' && (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border border-indigo-700 bg-indigo-950 text-indigo-300">
+              {task.kind === 'ResumeTailoring'
+                ? 'Resume'
+                : task.kind === 'CoverLetterTailoring'
+                  ? 'Cover letter'
+                  : task.kind}
+            </span>
+          )}
+          <span
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${
+              priorityStyles[task.priority] ?? priorityStyles.Low
+            }`}
+          >
+            {task.priority}
+          </span>
+        </div>
       </div>
 
       {task.description && (

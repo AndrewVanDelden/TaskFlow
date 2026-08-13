@@ -15,6 +15,19 @@ export const handlers = [
   http.post('*/api/Ingestion/commit', () => HttpResponse.json(1)),
   http.post('*/api/JobApplications/resume-context', () => HttpResponse.json(true)),
   http.get('*/api/JobApplications/:id/resume-context', () => HttpResponse.json('Base resume text')),
+  http.get('*/api/JobApplications/resume-context/latest', () => new HttpResponse(null, { status: 404 })),
+  http.post('*/api/JobApplications/parse', () =>
+    HttpResponse.json([
+      { title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' },
+    ])),
+  http.post('*/api/JobApplications', () =>
+    HttpResponse.json({
+      id: 1, state: 'Building', ingestionSessionId: '', ownerId: 1, createdAt: '',
+      tasks: [
+        { id: 101, title: 'Tailor resume', kind: 'ResumeTailoring', status: 'Todo' },
+        { id: 102, title: 'Cover letter', kind: 'CoverLetterTailoring', status: 'Todo' },
+      ],
+    })),
   http.post('*/api/JobApplications/:id/approve', () =>
     HttpResponse.json({
       id: 1, state: 'Approved', ingestionSessionId: '', ownerId: 1, createdAt: '', tasks: [],

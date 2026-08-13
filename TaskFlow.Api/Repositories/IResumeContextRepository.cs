@@ -6,6 +6,13 @@ namespace TaskFlow.Api.Repositories;
 public interface IResumeContextRepository
 {
     Task<ResumeContext?> GetForOwnerAsync(string ingestionSessionId, int ownerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Sprint 6: the caller's own most recently saved resume, from any session — no session-id
+    /// dimension exists for this query shape, so ownership scoping rests entirely on ownerId.
+    /// </summary>
+    Task<ResumeContext?> GetMostRecentForOwnerAsync(int ownerId, CancellationToken ct = default);
+
     Task AddAsync(ResumeContext context, CancellationToken ct = default);
     Task<bool> DeleteForOwnerAsync(string ingestionSessionId, int ownerId, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
