@@ -5,13 +5,20 @@ namespace TaskFlow.Api.Models;
 
 public class TaskItem
 {
+    // Shared with the DTOs that feed these fields (e.g. JobPostingSummaryDto) so the API
+    // boundary's validation caps and this entity's persistence caps can't drift apart.
+    public const int TitleMaxLength = 200;
+    public const int DescriptionMaxLength = 2000;
+    public const int SourceSectionMaxLength = 200;
+    public const int TailoredContentMaxLength = 20000;
+
     public int Id { get; set; }
 
     [Required]
-    [MaxLength(200)]
+    [MaxLength(TitleMaxLength)]
     public string Title { get; set; } = string.Empty;
 
-    [MaxLength(2000)]
+    [MaxLength(DescriptionMaxLength)]
     public string? Description { get; set; }
 
     public WorkflowStatus Status { get; set; } = WorkflowStatus.Todo;
@@ -38,10 +45,43 @@ public class TaskItem
     [MaxLength(200)]
     public string? SourceName { get; set; }
 
-    [MaxLength(200)]
+    [MaxLength(SourceSectionMaxLength)]
     public string? SourceSection { get; set; }
 
     // The agent currently working this task; null when unclaimed. Stamped atomically at claim time.
     [MaxLength(200)]
     public string? ClaimedBy { get; set; }
+
+    // Foreign key — nullable so ordinary tasks can exist without a JobApplication parent. Only
+    // resume/cover-letter sibling tasks (Epic 3) set this.
+    public int? ApplicationId { get; set; }
+
+    [ForeignKey(nameof(ApplicationId))]
+    public JobApplication? Application { get; set; }
+
+    // Generated/edited resume or cover-letter body text for Epic 3 tasks. Large free text, so a
+    // generous cap rather than the short MaxLength used for other string fields on this entity.
+    [MaxLength(TailoredContentMaxLength)]
+    public string? TailoredContent { get; set; }
+
+    // Single source of truth for "who owns this task" (T5.0's rule, extracted here so every
+    // caller - broadcasts, ownership checks - derives it the same way instead of re-deriving it).
+    // Fails closed rather than open: if ApplicationId is set but Application wasn't Included, that
+    // is a caller bug, and silently returning null would broadcast a personal Epic 3 event to
+    // everyone instead of just the owner.
+    public int? OwnerId
+    {
+        get
+        {
+            if (ApplicationId is null)
+                return null;
+
+            if (Application is null)
+                throw new InvalidOperationException(
+                    $"TaskItem {Id} has ApplicationId {ApplicationId} but its Application " +
+                    "navigation was not loaded; include it before reading OwnerId.");
+
+            return Application.OwnerId;
+        }
+    }
 }

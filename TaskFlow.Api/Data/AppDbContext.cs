@@ -12,6 +12,8 @@ public class AppDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<TaskItem> Tasks => Set<TaskItem>();
     public DbSet<AgentLog> AgentLogs => Set<AgentLog>();
+    public DbSet<JobApplication> JobApplications => Set<JobApplication>();
+    public DbSet<ResumeContext> ResumeContexts => Set<ResumeContext>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,6 +43,36 @@ public class AppDbContext : DbContext
                   .WithMany(u => u.Tasks)
                   .HasForeignKey(t => t.AssignedToId)
                   .OnDelete(DeleteBehavior.SetNull);
+
+            // Relationship: Task -> JobApplication (optional; resume/cover-letter siblings only).
+            // Cascade so deleting a JobApplication removes its sibling tasks rather than orphaning them.
+            entity.HasOne(t => t.Application)
+                  .WithMany(a => a.Tasks)
+                  .HasForeignKey(t => t.ApplicationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── JobApplication configuration ────────────────────────────────────────
+        modelBuilder.Entity<JobApplication>(entity =>
+        {
+            // Store enum as string so the DB is human-readable
+            entity.Property(a => a.State)
+                  .HasConversion<string>();
+
+            // Sprint 3R's agents will query JobApplication by this pair to resolve the
+            // ResumeContext (task.ApplicationId -> this row -> ResumeContext lookup), mirroring
+            // ResumeContext's own index on the same pair.
+            entity.HasIndex(a => new { a.IngestionSessionId, a.OwnerId });
+        });
+
+        // ── ResumeContext configuration ─────────────────────────────────────────
+        modelBuilder.Entity<ResumeContext>(entity =>
+        {
+            // Every read/delete queries by this pair together (ownership scoping), so index it.
+            // Unique because ResumeContextService.SaveAsync upserts by this same pair - without a
+            // DB-level constraint, a race between two concurrent saves for the same session could
+            // still land two rows even though the service checks-then-acts.
+            entity.HasIndex(r => new { r.IngestionSessionId, r.OwnerId }).IsUnique();
         });
 
         // ── Seed data ─────────────────────────────────────────────────────────

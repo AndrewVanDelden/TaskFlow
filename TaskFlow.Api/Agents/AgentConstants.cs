@@ -35,10 +35,20 @@ public static class AgentActions
 
     // Human review
     public const string Rejected = "Rejected";                   // reviewer sent a Review task back to Todo
+
+    // Tailoring agents (Epic 3, Sprint 3R)
+    public const string TailoredContentSaved = "TailoredContentSaved";     // agent saved its output -> Review
+    public const string ApplicationReviewReady = "ApplicationReviewReady"; // both siblings Review -> application promoted
 }
 
 /// <summary>Canonical agent names. Each must match the agent's <c>Name</c> property.</summary>
 public static class AgentNames
 {
     public const string GenericExecutor = "GenericExecutor";
+    public const string StaleTaskDetector = "StaleTaskDetector";
+    public const string TaskPrioritizer = "TaskPrioritizer";
+
+    // Tailoring agents (Epic 3, Sprint 3R)
+    public const string ResumeTailoring = "ResumeTailoringAgent";
+    public const string CoverLetter = "CoverLetterAgent";
 }

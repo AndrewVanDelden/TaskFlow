@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
+import { http, HttpResponse } from 'msw'
+import { server } from '../test/server'
 import App from '../App'
 
 // After sign-in, the router navigates to the Board, which opens a SignalR connection.
@@ -24,6 +26,29 @@ describe('Login flow', () => {
     // shows the signed-in user. findByText waits for that async re-render to land.
     expect(await screen.findByText('Ada')).toBeInTheDocument()
     expect(localStorage.getItem('taskflow_token')).toBe('fake.jwt.token')
+  })
+
+  // Epic 3 Pre-Merge Code Review, finding 6.4: no test simulated a failed login, so the catch
+  // block and its error banner had zero coverage.
+  it('shows an alert and does not navigate away when sign-in fails', async () => {
+    server.use(
+      http.post('*/api/Auth/login', () => new HttpResponse('Invalid credentials.', { status: 401 })),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await userEvent.type(screen.getByPlaceholderText('Email'), 'ada@x.dev')
+    await userEvent.type(screen.getByPlaceholderText('Password'), 'wrong-password')
+    await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).not.toHaveTextContent('')
+    expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument()
+    expect(localStorage.getItem('taskflow_token')).toBeNull()
   })
 
   it('toggles between sign in and register', async () => {

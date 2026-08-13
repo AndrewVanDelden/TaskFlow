@@ -3,6 +3,8 @@
 
 export type TaskStatus = 'Todo' | 'InProgress' | 'Review' | 'Done'
 export type TaskPriority = 'Low' | 'Medium' | 'High'
+// Mirrors TaskFlow.Api/Models/TaskKind.cs.
+export type TaskKind = 'Generic' | 'ResumeTailoring' | 'CoverLetterTailoring'
 
 export interface TaskItem {
   id: number
@@ -15,6 +17,15 @@ export interface TaskItem {
   updatedAt: string
   assignedToId: number | null
   assignedToName: string | null
+  kind: TaskKind
+  applicationId: number | null
+  tailoredContent: string | null
+  // Sprint 5 review finding: a lone Epic-3 sibling task can reach 'Done' via the individual
+  // per-task approve path while its own JobApplication never reaches Approved (only both siblings
+  // approved together does that) - export-download gating needs this real state, not just Status.
+  // Optional so existing fixtures that don't care about it don't need updating; absent/undefined
+  // correctly fails an === 'Approved' check, matching the safe default (don't assume approved).
+  applicationState?: string | null
 }
 
 export interface AuthResponse {
@@ -39,6 +50,30 @@ export interface AgentLog {
 export interface TaskDraft {
   title: string
   description: string | null
-  kind: string
+  kind: TaskKind
   section: string
+}
+
+// Mirrors TaskFlow.Api's JobApplicationResponseDto: the approve/reject response shape.
+export interface JobApplicationTaskSummary {
+  id: number
+  title: string
+  kind: TaskKind
+  status: string
+}
+
+export interface JobApplicationResponse {
+  id: number
+  state: string
+  ingestionSessionId: string
+  ownerId: number
+  createdAt: string
+  tasks: JobApplicationTaskSummary[]
+}
+
+// Mirrors TaskFlow.Api's ResumeContextSummaryDto (GET .../resume-context/latest).
+export interface ResumeContextSummary {
+  content: string
+  contentFormat: string
+  updatedAt: string
 }

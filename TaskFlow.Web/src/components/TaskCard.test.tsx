@@ -8,6 +8,7 @@ const task: TaskItem = {
   id: 1, title: 'Ship it', description: 'now', status: 'Todo',
   priority: 'High', dueDate: null, createdAt: '', updatedAt: '',
   assignedToId: null, assignedToName: null,
+  kind: 'Generic', applicationId: null, tailoredContent: null,
 }
 
 // TaskCard uses useSortable, which throws outside a drag context, so wrap in DndContext.

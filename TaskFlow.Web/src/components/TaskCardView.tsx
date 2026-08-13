@@ -1,7 +1,9 @@
 import type { TaskItem } from '../types'
 import { priorityStyles } from '../lib/styles'
 import { formatDate } from '../lib/formatting'
+import { taskKindLabel } from '../lib/taskKind'
 import { ReviewActions } from './ReviewActions'
+import { ExportDownloadControls } from './ExportDownloadControls'
 
 // Presentational card with no drag behavior, so it can render both inside the sortable TaskCard
 // and inside the DragOverlay (which has no SortableContext). On Review cards it shows the executor's
@@ -21,13 +23,20 @@ export function TaskCardView({
     <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 cursor-grab active:cursor-grabbing hover:border-slate-600">
       <div className="flex items-start justify-between gap-2 mb-2">
         <h3 className="text-sm font-medium text-white leading-snug">{task.title}</h3>
-        <span
-          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${
-            priorityStyles[task.priority] ?? priorityStyles.Low
-          }`}
-        >
-          {task.priority}
-        </span>
+        <div className="flex items-center gap-1 shrink-0">
+          {task.kind !== 'Generic' && (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border border-indigo-700 bg-indigo-950 text-indigo-300">
+              {taskKindLabel(task.kind)}
+            </span>
+          )}
+          <span
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${
+              priorityStyles[task.priority] ?? priorityStyles.Low
+            }`}
+          >
+            {task.priority}
+          </span>
+        </div>
       </div>
 
       {task.description && (
@@ -51,6 +60,10 @@ export function TaskCardView({
       )}
 
       {onApprove && onReject && <ReviewActions onApprove={onApprove} onReject={onReject} />}
+
+      {task.status === 'Done' && task.applicationId !== null && task.applicationState === 'Approved' && (
+        <ExportDownloadControls applicationId={task.applicationId} kind={task.kind} />
+      )}
     </div>
   )
 }

@@ -80,13 +80,14 @@ public class GenericExecutorAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Review);   // guardrail: the executor never reaches Done
         updated.ClaimedBy.Should().Be("GenericExecutor");
 
-        var recent = await logs.GetRecentAsync("GenericExecutor", 10);
+        var recent = await logs.GetRecentAsync("GenericExecutor", 10, callerId: 1);
         recent.Should().Contain(l => l.Action == AgentActions.Claimed && l.TaskId == task.Id);
         recent.Should().Contain(l => l.Action == AgentActions.ProgressRecorded && l.TaskId == task.Id);
         recent.Should().Contain(l => l.Action == AgentActions.ReviewRequested && l.TaskId == task.Id);
 
-        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once);
-        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.Review, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // Generic tasks have no ApplicationId, so this stays the shared-board broadcast (ownerId null).
+        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.InProgress, null, It.IsAny<CancellationToken>()), Times.Once);
+        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.Review, null, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Fact]
@@ -106,12 +107,13 @@ public class GenericExecutorAgentTests
         var updated = await tasks.GetByIdAsync(task.Id);
         updated!.Status.Should().Be(WorkflowStatus.Review);   // never left orphaned InProgress
 
-        var recent = await logs.GetRecentAsync("GenericExecutor", 10);
+        var recent = await logs.GetRecentAsync("GenericExecutor", 10, callerId: 1);
         recent.Should().Contain(l => l.Action == AgentActions.AutoFinalized && l.TaskId == task.Id);
         recent.Should().NotContain(l => l.Action == AgentActions.ReviewRequested && l.TaskId == task.Id);
 
-        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.InProgress, It.IsAny<CancellationToken>()), Times.Once);
-        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.Review, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        // Generic tasks have no ApplicationId, so this stays the shared-board broadcast (ownerId null).
+        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.InProgress, null, It.IsAny<CancellationToken>()), Times.Once);
+        notifier.Verify(n => n.TaskMovedAsync(task.Id, WorkflowStatus.Review, null, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Fact]
@@ -213,7 +215,7 @@ public class GenericExecutorAgentTests
         updated!.Status.Should().Be(WorkflowStatus.Todo);   // returned to the pool
         updated.ClaimedBy.Should().BeNull();
 
-        var recent = await logs.GetRecentAsync("GenericExecutor", 10);
+        var recent = await logs.GetRecentAsync("GenericExecutor", 10, callerId: 1);
         recent.Should().Contain(l => l.Action == AgentActions.RolledBack && l.TaskId == task.Id);
     }
 

@@ -124,8 +124,156 @@ public class TaskWorkflowIntegrationTests
         count.Should().Be(drafts!.Count);
     }
 
-    // Local shapes: read the switch state, and read drafts with Kind as a plain string so the test's
-    // default (non-enum-aware) deserializer does not choke on "Generic".
+    // PR #45 review finding: GET /api/Tasks was never scoped by owner, so TaskResponseDto's new
+    // TailoredContent field (Sprint 4R) leaked every user's tailored resume/cover letter to every
+    // other authenticated user through the shared board endpoint. Proves the real HTTP fix, not
+    // just the repository-level unit test: a second user's Epic 3 sibling task is completely
+    // absent from the response (not just redacted), while a generic task remains visible to all.
+    [Fact]
+    public async Task GetAll_hides_another_users_Epic3_sibling_task_but_shows_generic_tasks_to_everyone()
+    {
+        var owner = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await owner.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+        var assemble = await owner.PostAsJsonAsync("/api/JobApplications",
+            new { ingestionSessionId = sessionId, posting = new { title = "Backend Engineer", section = "Job Posting" } });
+        assemble.EnsureSuccessStatusCode();
+
+        var otherUser = await AuthedClientAsync();
+        var genericId = await CreateTaskAsync(otherUser, "Shared generic task");
+
+        var tasksAsOtherUser = await otherUser.GetFromJsonAsync<List<TaskResponseDto>>("/api/Tasks");
+
+        tasksAsOtherUser!.Should().Contain(t => t.Id == genericId);
+        tasksAsOtherUser.Should().NotContain(t => t.ApplicationId != null);
+    }
+
+    // T5.0: a fresh architecture review (Sprint 5) re-checked every endpoint touching the same rows
+    // as the PR #45 GetAll fix and found the same gap still open on all six single-item actions -
+    // none of them checked ownership at all, so any authenticated user could read or mutate another
+    // user's Epic 3 sibling task (including its personal TailoredContent) just by guessing/knowing
+    // its id. Proves the real HTTP fix: a non-owner gets the same 404 NotFound a caller with the
+    // wrong id would get, never a distinguishable error that reveals the task exists.
+    [Theory]
+    [InlineData("GET", "")]
+    [InlineData("PUT", "")]
+    [InlineData("PATCH", "/status")]
+    [InlineData("POST", "/approve")]
+    [InlineData("POST", "/reject")]
+    [InlineData("DELETE", "")]
+    public async Task NonOwner_gets_404_on_every_single_item_route_for_another_users_Epic3_sibling_task(string method, string suffix)
+    {
+        var owner = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await owner.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+        var assemble = await owner.PostAsJsonAsync("/api/JobApplications",
+            new { ingestionSessionId = sessionId, posting = new { title = "Backend Engineer", section = "Job Posting" } });
+        assemble.EnsureSuccessStatusCode();
+        var application = await assemble.Content.ReadFromJsonAsync<JobApplicationDto>();
+        var taskId = application!.Tasks[0].Id;
+
+        var otherUser = await AuthedClientAsync();
+        var request = new HttpRequestMessage(new HttpMethod(method), $"/api/Tasks/{taskId}{suffix}");
+        request.Content = suffix switch
+        {
+            "/status" => JsonContent.Create(new { status = "Done" }),
+            "/reject" => JsonContent.Create(new { reason = "trying to peek" }),
+            "" when method == "PUT" => JsonContent.Create(new { title = "Hacked title", status = "Todo", priority = "Medium" }),
+            _ => null
+        };
+
+        var response = await otherUser.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    // The other half of the same fix: generic tasks (no ApplicationId) are the shared board by
+    // design and must stay reachable by any authenticated user, not just their creator - the
+    // ownership check above must never fire for them.
+    [Theory]
+    [InlineData("GET", "")]
+    [InlineData("PUT", "")]
+    [InlineData("PATCH", "/status")]
+    [InlineData("DELETE", "")]
+    public async Task Any_authenticated_user_can_still_reach_a_generic_task_on_every_single_item_route(string method, string suffix)
+    {
+        var creator = await AuthedClientAsync();
+        var taskId = await CreateTaskAsync(creator, "Shared generic task");
+
+        var otherUser = await AuthedClientAsync();
+        var request = new HttpRequestMessage(new HttpMethod(method), $"/api/Tasks/{taskId}{suffix}");
+        request.Content = suffix switch
+        {
+            "/status" => JsonContent.Create(new { status = "Review" }),
+            "" when method == "PUT" => JsonContent.Create(new { title = "Edited title", status = "Todo", priority = "Medium" }),
+            _ => null
+        };
+
+        var response = await otherUser.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // Approve/Reject require Review status first, so they're proven separately (not folded into the
+    // theory above, which asserts a flat 200): a non-owner must reach the *status* guard (400), not
+    // the ownership guard (404), for a generic task.
+    [Fact]
+    public async Task Any_authenticated_user_can_still_approve_and_reject_a_generic_task()
+    {
+        var creator = await AuthedClientAsync();
+        var otherUser = await AuthedClientAsync();
+
+        var approveTaskId = await CreateTaskAsync(creator, "Generic task for approve");
+        await MoveToReviewAsync(creator, approveTaskId);
+        var approve = await otherUser.PostAsync($"/api/Tasks/{approveTaskId}/approve", null);
+        approve.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var rejectTaskId = await CreateTaskAsync(creator, "Generic task for reject");
+        await MoveToReviewAsync(creator, rejectTaskId);
+        var reject = await otherUser.PostAsJsonAsync($"/api/Tasks/{rejectTaskId}/reject", new { reason = "Needs work" });
+        reject.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // Copilot review finding (PR #48): TaskCardView's new export buttons (Sprint 5, T5.3) gate on
+    // task.status === 'Done' && applicationId != null, assuming that implies the JobApplication is
+    // Approved. But the individual per-task approve endpoint used here is reachable through the
+    // real Review-column UI whenever a sibling isn't also Review-ready yet (KanbanBoard.tsx's
+    // pairedTaskIds only excludes a task from solo rendering once BOTH siblings are Review) - so an
+    // owner can approve one sibling alone, reaching Done while the application itself is still
+    // ReviewReady/Building. Proves GET /api/Tasks reports the real ApplicationState for that task,
+    // which the frontend needs to gate correctly instead of assuming Done implies Approved.
+    [Fact]
+    public async Task GetAll_reports_the_real_ApplicationState_for_an_Epic3_sibling_task_approved_individually_before_its_pair()
+    {
+        var owner = await AuthedClientAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await owner.PostAsJsonAsync("/api/JobApplications/resume-context",
+            new { ingestionSessionId = sessionId, content = "Base resume text." });
+        var assemble = await owner.PostAsJsonAsync("/api/JobApplications",
+            new { ingestionSessionId = sessionId, posting = new { title = "Backend Engineer", section = "Job Posting" } });
+        assemble.EnsureSuccessStatusCode();
+        var application = await assemble.Content.ReadFromJsonAsync<JobApplicationDto>();
+        var resumeTaskId = application!.Tasks[0].Id;
+
+        await MoveToReviewAsync(owner, resumeTaskId);
+        var approve = await owner.PostAsync($"/api/Tasks/{resumeTaskId}/approve", null);
+        approve.EnsureSuccessStatusCode();
+
+        var tasks = await owner.GetFromJsonAsync<List<TaskResponseDto>>("/api/Tasks");
+
+        var resumeTask = tasks!.Should().ContainSingle(t => t.Id == resumeTaskId).Subject;
+        resumeTask.Status.Should().Be(nameof(WorkflowStatus.Done));
+        resumeTask.ApplicationState.Should().NotBe(nameof(ApplicationState.Approved));
+    }
+
+    // Local shapes: read the switch state, and read drafts/tasks with their enum fields as plain
+    // strings so the test's default (non-enum-aware) deserializer does not choke - the server side
+    // serializes enums as strings via JsonStringEnumConverter (Program.cs), but HttpContent's
+    // ReadFromJsonAsync uses default JsonSerializerOptions with no such converter registered.
     private sealed record ExecutorState(bool Enabled);
     private sealed record DraftDto(string Title, string? Description, string Kind, string? Section);
+    private sealed record JobApplicationDto(int Id, string State, List<TaskSummaryDto> Tasks);
+    private sealed record TaskSummaryDto(int Id, string Title, string Kind, string Status);
 }

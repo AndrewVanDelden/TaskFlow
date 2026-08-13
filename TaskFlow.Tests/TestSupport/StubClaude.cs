@@ -30,8 +30,13 @@ public sealed class StubClaude : IClaudeClient
 
     public bool IsConfigured => true;
 
+    /// <summary>The most recent request passed to <see cref="SendAsync"/>, for tests that need to
+    /// assert on exactly what was sent (e.g. that untrusted content was wrapped before it left).</summary>
+    public MessageParameters? LastRequest { get; private set; }
+
     public Task<MessageResponse> SendAsync(MessageParameters parameters, CancellationToken ct = default)
     {
+        LastRequest = parameters;
         if (_throws)
             throw new InvalidOperationException("Claude call failed (test).");
         return Task.FromResult(_responses.Count > 0 ? _responses.Dequeue() : EndTurn());
@@ -52,6 +57,43 @@ public sealed class StubClaude : IClaudeClient
                     Id = "tool_1",
                     Name = "escalate_task",
                     Input = JsonSerializer.SerializeToNode(new { task_id = taskId, reason })!
+                }
+            }
+        },
+        EndTurn());
+
+    /// <summary>Scripts one reassign_task tool call (omit newUserId to unassign), then an end_turn.</summary>
+    public static StubClaude ThatReassigns(int taskId, int? newUserId, string reason) => new(
+        ToolUse("tool_1", "reassign_task", new { task_id = taskId, new_user_id = newUserId, reason }),
+        EndTurn());
+
+    /// <summary>Scripts one flag_for_review tool call, then an end_turn.</summary>
+    public static StubClaude ThatFlags(int taskId, string concern) => new(
+        ToolUse("tool_1", "flag_for_review", new { task_id = taskId, concern }),
+        EndTurn());
+
+    /// <summary>Scripts a call to a tool name the agent does not recognize, then an end_turn -
+    /// exercises the dispatcher's "unknown tool" fallback branch.</summary>
+    public static StubClaude ThatCallsAnUnknownTool() => new(
+        ToolUse("tool_1", "not_a_real_tool", new { }),
+        EndTurn());
+
+    /// <summary>
+    /// Scripts a call to <paramref name="toolName"/> whose arguments are not a JSON object (a bare
+    /// string), so deserializing them into the tool's argument record throws - exercising a tool
+    /// dispatcher's catch-and-report-as-a-tool-error branch, rather than the agent crashing.
+    /// </summary>
+    public static StubClaude ThatCallsToolWithUndeserializableArgs(string toolName) => new(
+        new MessageResponse
+        {
+            StopReason = "tool_use",
+            Content = new List<ContentBase>
+            {
+                new ToolUseContent
+                {
+                    Id = "tool_1",
+                    Name = toolName,
+                    Input = JsonSerializer.SerializeToNode("not-an-object")!
                 }
             }
         },
@@ -86,6 +128,25 @@ public sealed class StubClaude : IClaudeClient
     public static StubClaude ThatRecordsProgressThenRequestsReview(string note, string summary) => new(
         ToolUse("tool_1", "record_progress", new { note }),
         ToolUse("tool_2", "request_review", new { summary }),
+        EndTurn());
+
+    /// <summary>
+    /// Scripts a read_base_context call, then a save call for <paramref name="saveToolName"/> with
+    /// <paramref name="content"/>, then an end_turn. Shared by the Sprint 3R tailoring agents
+    /// (ResumeTailoringAgent, CoverLetterAgent), which differ only in their save tool's name.
+    /// </summary>
+    public static StubClaude ThatReadsContextThenSaves(string saveToolName, string content) => new(
+        ToolUse("tool_1", "read_base_context", new { }),
+        ToolUse("tool_2", saveToolName, new { content }),
+        EndTurn());
+
+    /// <summary>
+    /// Scripts a single save call for <paramref name="saveToolName"/> with <paramref name="content"/>
+    /// (skipping read_base_context), then an end_turn. Used to script an over-length save attempt
+    /// that gets rejected by ToolOutputValidator before the cycle ends.
+    /// </summary>
+    public static StubClaude ThatSavesOnly(string saveToolName, string content) => new(
+        ToolUse("tool_1", saveToolName, new { content }),
         EndTurn());
 
     private static MessageResponse ToolUse(string id, string name, object args) => new()

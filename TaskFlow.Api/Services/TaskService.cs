@@ -48,10 +48,13 @@ public class TaskService : ITaskService
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
-    public async Task<Result<TaskResponseDto>> UpdateAsync(int id, UpdateTaskDto dto, CancellationToken ct = default)
+    public async Task<Result<TaskResponseDto>> UpdateAsync(int id, UpdateTaskDto dto, int callerId, CancellationToken ct = default)
     {
         var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
         if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         if (dto.AssignedToId.HasValue && !await _users.ExistsAsync(dto.AssignedToId.Value, ct))
@@ -71,10 +74,13 @@ public class TaskService : ITaskService
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(updated!));
     }
 
-    public async Task<Result<TaskResponseDto>> UpdateStatusAsync(int id, UpdateTaskStatusDto dto, CancellationToken ct = default)
+    public async Task<Result<TaskResponseDto>> UpdateStatusAsync(int id, UpdateTaskStatusDto dto, int callerId, CancellationToken ct = default)
     {
         var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
         if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         task.Status = dto.Status;
@@ -83,15 +89,18 @@ public class TaskService : ITaskService
         await _tasks.SaveChangesAsync(ct);
 
         // Broadcast so every connected board updates this one card live (the same seam agents use).
-        await _notifier.TaskMovedAsync(id, dto.Status, ct);
+        await _notifier.TaskMovedAsync(id, dto.Status, task.OwnerId, ct);
 
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
-    public async Task<Result<TaskResponseDto>> ApproveAsync(int id, CancellationToken ct = default)
+    public async Task<Result<TaskResponseDto>> ApproveAsync(int id, int callerId, CancellationToken ct = default)
     {
         var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
         if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         // Guardrail: Done is a human sign-off reachable only from Review. Agents stop at Review.
@@ -103,15 +112,18 @@ public class TaskService : ITaskService
         task.UpdatedAt = DateTime.UtcNow;
 
         await _tasks.SaveChangesAsync(ct);
-        await _notifier.TaskMovedAsync(id, WorkflowStatus.Done, ct);
+        await _notifier.TaskMovedAsync(id, WorkflowStatus.Done, task.OwnerId, ct);
 
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
-    public async Task<Result<TaskResponseDto>> RejectAsync(int id, string reason, CancellationToken ct = default)
+    public async Task<Result<TaskResponseDto>> RejectAsync(int id, string reason, int callerId, CancellationToken ct = default)
     {
         var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
         if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
         if (task.Status != WorkflowStatus.Review)
@@ -136,20 +148,24 @@ public class TaskService : ITaskService
         }, ct);
         await _logs.SaveChangesAsync(ct);
 
-        await _notifier.TaskMovedAsync(id, WorkflowStatus.Todo, ct);
+        await _notifier.TaskMovedAsync(id, WorkflowStatus.Todo, task.OwnerId, ct);
 
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
-    public async Task<Result<TaskResponseDto>> GetByIdAsync(int id, CancellationToken ct = default)
+    public async Task<Result<TaskResponseDto>> GetByIdAsync(int id, int callerId, CancellationToken ct = default)
     {
         var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
-        return task is null
-            ? Result<TaskResponseDto>.NotFound($"Task {id} not found.")
-            : Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
+        if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
-    public async Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, CancellationToken ct = default)
+    public async Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, int callerId, CancellationToken ct = default)
     {
         WorkflowStatus? parsedStatus = null;
         if (!string.IsNullOrWhiteSpace(status))
@@ -169,19 +185,30 @@ public class TaskService : ITaskService
             parsedPriority = p;
         }
 
-        var tasks = await _tasks.GetAllAsync(parsedStatus, parsedPriority, ct);
+        var tasks = await _tasks.GetAllAsync(parsedStatus, parsedPriority, callerId, ct);
         IReadOnlyList<TaskResponseDto> dtos = tasks.Select(TaskResponseDto.FromEntity).ToList();
         return Result<IReadOnlyList<TaskResponseDto>>.Ok(dtos);
     }
 
-    public async Task<Result<bool>> DeleteAsync(int id, CancellationToken ct = default)
+    public async Task<Result<bool>> DeleteAsync(int id, int callerId, CancellationToken ct = default)
     {
         var task = await _tasks.GetByIdAsync(id, ct: ct);
         if (task is null)
+            return Result<bool>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
             return Result<bool>.NotFound($"Task {id} not found.");
 
         _tasks.Remove(task);
         await _tasks.SaveChangesAsync(ct);
         return Result<bool>.Ok(true);
     }
+
+    // T5.0: an Epic 3 sibling task is visible/mutable only to its JobApplication's owner. A generic
+    // task (ApplicationId == null) is the shared board and is never forbidden. Every single-item
+    // action returns the same NotFound a missing id would for a forbidden sibling task - never a
+    // distinguishable error that reveals the task exists (the same IDOR class the PR #45 GetAll fix
+    // closed for the list). Extracted once here (was duplicated verbatim across all six methods).
+    private static bool IsOwnedByAnotherUser(TaskItem task, int callerId) =>
+        task.OwnerId != null && task.OwnerId != callerId;
 }

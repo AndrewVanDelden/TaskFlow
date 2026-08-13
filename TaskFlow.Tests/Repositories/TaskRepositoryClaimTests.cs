@@ -54,6 +54,60 @@ public class TaskRepositoryClaimTests
         second.Should().BeNull();
     }
 
+    [Fact]
+    public async Task TryClaimNext_filters_by_kind_across_generic_resume_and_cover_letter_tasks()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        var repo = new TaskRepository(db.Context);
+        db.Context.Tasks.Add(new TaskItem { Title = "Generic work", Status = WorkflowStatus.Todo, Kind = TaskKind.Generic });
+        db.Context.Tasks.Add(new TaskItem { Title = "Tailor resume", Status = WorkflowStatus.Todo, Kind = TaskKind.ResumeTailoring });
+        db.Context.Tasks.Add(new TaskItem { Title = "Tailor cover letter", Status = WorkflowStatus.Todo, Kind = TaskKind.CoverLetterTailoring });
+        await db.Context.SaveChangesAsync();
+
+        var claimedResume = await repo.TryClaimNextAsync(TaskKind.ResumeTailoring, "ResumeExecutor");
+        var claimedCoverLetter = await repo.TryClaimNextAsync(TaskKind.CoverLetterTailoring, "CoverLetterExecutor");
+        var claimedResumeAgain = await repo.TryClaimNextAsync(TaskKind.ResumeTailoring, "ResumeExecutor");
+        var claimedGeneric = await repo.TryClaimNextAsync(TaskKind.Generic, "GenericExecutor");
+
+        claimedResume.Should().NotBeNull();
+        claimedResume!.Title.Should().Be("Tailor resume");
+        claimedCoverLetter.Should().NotBeNull();
+        claimedCoverLetter!.Title.Should().Be("Tailor cover letter");
+        claimedResumeAgain.Should().BeNull();
+        claimedGeneric.Should().NotBeNull();
+        claimedGeneric!.Title.Should().Be("Generic work");
+    }
+
+    // Epic 3 Pre-Merge Code Review, finding 1.1: agents need the claimed task's owner to scope
+    // SignalR broadcasts, so the claim read must include Application the same way GetByIdAsync
+    // already does - otherwise TaskItem.OwnerId throws (fails closed) the moment an agent tries
+    // to read it off a claimed Epic 3 sibling task.
+    [Fact]
+    public async Task TryClaimNext_includes_the_application_navigation_so_OwnerId_is_available()
+    {
+        using var db = new SqliteInMemoryContext();
+        await StartFromEmptyBoard(db.Context);
+        db.Context.JobApplications.ExecuteDelete();
+        var repo = new TaskRepository(db.Context);
+        var application = new JobApplication { IngestionSessionId = "s", OwnerId = 42 };
+        db.Context.JobApplications.Add(application);
+        await db.Context.SaveChangesAsync();
+        db.Context.Tasks.Add(new TaskItem
+        {
+            Title = "Tailor resume",
+            Status = WorkflowStatus.Todo,
+            Kind = TaskKind.ResumeTailoring,
+            ApplicationId = application.Id
+        });
+        await db.Context.SaveChangesAsync();
+
+        var claimed = await repo.TryClaimNextAsync(TaskKind.ResumeTailoring, "ResumeExecutor");
+
+        claimed.Should().NotBeNull();
+        claimed!.OwnerId.Should().Be(42);
+    }
+
     // The seeded board has Todo tasks; clear it so each test controls exactly which tasks exist.
     private static Task StartFromEmptyBoard(AppDbContext db) => db.Tasks.ExecuteDeleteAsync();
 }

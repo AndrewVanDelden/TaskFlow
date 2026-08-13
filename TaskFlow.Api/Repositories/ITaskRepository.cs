@@ -6,10 +6,22 @@ namespace TaskFlow.Api.Repositories;
 public interface ITaskRepository
 {
     Task<TaskItem?> GetByIdAsync(int id, bool includeAssignee = false, CancellationToken ct = default);
-    Task<List<TaskItem>> GetAllAsync(WorkflowStatus? status, TaskPriority? priority, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns every task the caller is allowed to see: generic tasks (no <c>ApplicationId</c>)
+    /// unconditionally — the shared board is visible to every authenticated user by design — plus
+    /// Epic 3 sibling tasks (<c>ApplicationId</c> set) only when the owning <see cref="JobApplication"/>'s
+    /// <c>OwnerId</c> matches <paramref name="callerId"/>. Without this, a tailored resume/cover letter
+    /// (<see cref="TaskItem.TailoredContent"/>) would be visible to any authenticated user via the
+    /// shared board response (PR #45 review finding).
+    /// </summary>
+    Task<List<TaskItem>> GetAllAsync(WorkflowStatus? status, TaskPriority? priority, int callerId, CancellationToken ct = default);
     Task<List<TaskItem>> GetOpenAsync(CancellationToken ct = default);
     Task<List<TaskItem>> GetStaleAsync(DateTime cutoff, CancellationToken ct = default);
     Task<Dictionary<int, int>> GetOpenCountsByUserAsync(CancellationToken ct = default);
+
+    /// <summary>Returns the sibling tasks (e.g. resume + cover letter) belonging to a JobApplication, ordered by Id.</summary>
+    Task<List<TaskItem>> GetByApplicationIdAsync(int applicationId, CancellationToken ct = default);
 
     /// <summary>Counts tasks that are not Done (Todo + InProgress + Review) — the board's open work.</summary>
     Task<int> CountOpenAsync(CancellationToken ct = default);
@@ -35,6 +47,25 @@ public interface ITaskRepository
     /// an executor cycle fails or is cancelled, so the task is never orphaned InProgress.
     /// </summary>
     Task<bool> ReleaseClaimAsync(int taskId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns every task stuck in InProgress for longer than <paramref name="staleAfter"/> (based on
+    /// UpdatedAt, which is stamped at claim time) back to Todo, clearing ClaimedBy. Recovers work
+    /// orphaned by a process crash or kill mid-cycle, which the agent's own try/catch cannot handle
+    /// since it never runs. Returns the number of tasks recovered.
+    /// </summary>
+    Task<int> RecoverStaleInProgressAsync(TimeSpan staleAfter, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically saves an Epic 3 agent's generated output to <see cref="TaskItem.TailoredContent"/>
+    /// AND moves the task from <see cref="WorkflowStatus.InProgress"/> to <see cref="WorkflowStatus.Review"/>
+    /// in one guarded UPDATE — there is no window where content is saved but the status transition could
+    /// fail separately, or vice versa. Mirrors <see cref="MarkForReviewAsync"/>'s atomicity, extended by
+    /// one more <c>SetProperty</c>. Returns true if a row moved (the task was InProgress).
+    /// Does not itself validate content length — callers must validate before calling (see
+    /// <c>ToolOutputValidator</c>); SQLite's TEXT column type does not enforce <c>[MaxLength]</c>.
+    /// </summary>
+    Task<bool> SaveTailoredContentAndMarkForReviewAsync(int taskId, string content, CancellationToken ct = default);
 
     Task AddAsync(TaskItem task, CancellationToken ct = default);
     void Remove(TaskItem task);

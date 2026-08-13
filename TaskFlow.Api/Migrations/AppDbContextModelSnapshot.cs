@@ -51,10 +51,79 @@ namespace TaskFlow.Api.Migrations
                     b.ToTable("AgentLogs");
                 });
 
+            modelBuilder.Entity("TaskFlow.Api.Models.JobApplication", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IngestionSessionId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("OwnerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IngestionSessionId", "OwnerId");
+
+                    b.ToTable("JobApplications");
+                });
+
+            modelBuilder.Entity("TaskFlow.Api.Models.ResumeContext", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(20000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentFormat")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IngestionSessionId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("OwnerId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IngestionSessionId", "OwnerId")
+                        .IsUnique();
+
+                    b.ToTable("ResumeContexts");
+                });
+
             modelBuilder.Entity("TaskFlow.Api.Models.TaskItem", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ApplicationId")
                         .HasColumnType("INTEGER");
 
                     b.Property<int?>("AssignedToId")
@@ -94,6 +163,10 @@ namespace TaskFlow.Api.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("TailoredContent")
+                        .HasMaxLength(20000)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -103,6 +176,8 @@ namespace TaskFlow.Api.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ApplicationId");
 
                     b.HasIndex("AssignedToId");
 
@@ -217,12 +292,24 @@ namespace TaskFlow.Api.Migrations
 
             modelBuilder.Entity("TaskFlow.Api.Models.TaskItem", b =>
                 {
+                    b.HasOne("TaskFlow.Api.Models.JobApplication", "Application")
+                        .WithMany("Tasks")
+                        .HasForeignKey("ApplicationId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("TaskFlow.Api.Models.User", "AssignedTo")
                         .WithMany("Tasks")
                         .HasForeignKey("AssignedToId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.Navigation("Application");
+
                     b.Navigation("AssignedTo");
+                });
+
+            modelBuilder.Entity("TaskFlow.Api.Models.JobApplication", b =>
+                {
+                    b.Navigation("Tasks");
                 });
 
             modelBuilder.Entity("TaskFlow.Api.Models.User", b =>

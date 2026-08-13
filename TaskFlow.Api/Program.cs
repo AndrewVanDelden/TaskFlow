@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using TaskFlow.Api.Agents;
 using TaskFlow.Api.Data;
+using TaskFlow.Api.Export;
 using TaskFlow.Api.Ingestion;
 using TaskFlow.Api.Services;
 using TaskFlow.Api.Hubs;
@@ -102,6 +103,8 @@ builder.Services.AddAuthorization();
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<ITaskRepository, TaskRepository>();
+builder.Services.AddScoped<IJobApplicationRepository, JobApplicationRepository>();
+builder.Services.AddScoped<IResumeContextRepository, ResumeContextRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IAgentLogRepository, AgentLogRepository>();
 builder.Services.AddScoped<ITaskService, TaskService>();
@@ -113,7 +116,27 @@ builder.Services.AddScoped<ClaudeIngestionParser>();
 builder.Services.AddScoped<IIngestionParser>(sp => new TieredIngestionParser(
     free: sp.GetRequiredService<SpecDocumentParser>(),
     paid: sp.GetRequiredService<ClaudeIngestionParser>()));
+builder.Services.AddScoped<JobPostingParser>();
+builder.Services.AddScoped<ClaudeJobPostingParser>();
+builder.Services.AddScoped<IJobPostingIngestionParser>(sp => new JobPostingIngestionParser(
+    free: sp.GetRequiredService<JobPostingParser>(),
+    paid: sp.GetRequiredService<ClaudeJobPostingParser>()));
 builder.Services.AddScoped<IDraftCommitService, DraftCommitService>();
+builder.Services.AddScoped<IResumeContextService, ResumeContextService>();
+builder.Services.AddScoped<IJobApplicationAssemblyService, JobApplicationAssemblyService>();
+builder.Services.AddScoped<IJobApplicationService, JobApplicationService>();
+// ── Artifact export (Sprint 5) ──────────────────────────────────────────────────
+// ITypstCompiler has no per-request state beyond its constructor-created sandbox directory
+// (created once) - Singleton, matching IExecutorSwitch's precedent for a stateful-at-the-process-
+// level, not per-request, service. TailoredContentTypstRenderer is fully stateless (pure
+// Markdown-in/Typst-out) - Singleton, registered as itself since it has no interface.
+// ITemplateProvider caches successful template reads for its own lifetime, so it must be
+// Singleton too, or the cache would be re-populated once per request scope. IExportService depends
+// on the scoped repositories, so it's Scoped like every other service in this file that touches them.
+builder.Services.AddSingleton<ITypstCompiler, ProcessTypstCompiler>();
+builder.Services.AddSingleton<TailoredContentTypstRenderer>();
+builder.Services.AddSingleton<ITemplateProvider, FileTemplateProvider>();
+builder.Services.AddScoped<IExportService, ExportService>();
 // ── SignalR ──────────────────────────────────────────────────────────────────
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAgentNotifier, SignalRAgentNotifier>();
@@ -130,10 +153,22 @@ builder.Services.AddScoped<ISpendGuard, DailyExecutorSpendGuard>();
 builder.Services.AddScoped<ITaskFlowAgent, TaskPrioritizerAgent>();
 builder.Services.AddScoped<ITaskFlowAgent, StaleTaskAgent>();
 builder.Services.AddScoped<ITaskFlowAgent, GenericExecutorAgent>();
+builder.Services.AddScoped<ITaskFlowAgent, ResumeTailoringAgent>();
+builder.Services.AddScoped<ITaskFlowAgent, CoverLetterAgent>();
 
 // Register the AgentRunner as a hosted background service
 // This starts automatically when the app starts
 builder.Services.AddHostedService<AgentRunner>();
+
+// Plain sweep (not an ITaskFlowAgent) that recovers tasks orphaned InProgress by a crashed/killed
+// agent process — a hard crash mid-cycle leaves no in-process code path to notice, unlike a graceful
+// failure which GenericExecutorAgent's own try/catch already rolls back.
+builder.Services.AddHostedService<StaleClaimReaperService>();
+
+// Plain sweep (not an ITaskFlowAgent) that recovers JobApplications left stuck at Building when
+// both sibling tasks are actually Review — TailoringAgentBase's per-application join right after a
+// save is a best-effort trigger, not a guarantee (PR #43 review, round 2).
+builder.Services.AddHostedService<JobApplicationPromotionReconcilerService>();
 
 // ── CORS ─────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
@@ -144,7 +179,12 @@ builder.Services.AddCors(options =>
             .WithOrigins("http://localhost:5173")
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .AllowCredentials();   // required for SignalR websockets
+            .AllowCredentials()   // required for SignalR websockets
+            // Browsers hide response headers from JS on a cross-origin response unless the server
+            // explicitly exposes them - without this, every file download (Sprint 5) in the
+            // supported cross-origin VITE_API_BASE_URL deployment mode would silently lose its
+            // filename (Copilot review finding, PR #48).
+            .WithExposedHeaders("Content-Disposition");
     });
 });
 

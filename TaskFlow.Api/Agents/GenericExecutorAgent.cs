@@ -103,9 +103,9 @@ public class GenericExecutorAgent : ClaudeAgentBase
                 Details = $"Claimed '{task.Title}' for execution.",
                 Success = true,
                 CreatedAt = DateTime.UtcNow
-            }, cancellationToken);
+            }, task.OwnerId, cancellationToken);
 
-            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, cancellationToken);
+            await NotifyTaskMovedAsync(task.Id, WorkflowStatus.InProgress, task.OwnerId, cancellationToken);
 
             // ── REASON + ACT ───────────────────────────────────────────────────────────
             // Fold any outstanding review feedback into the prompt so a rejection reason is not lost
@@ -145,9 +145,9 @@ public class GenericExecutorAgent : ClaudeAgentBase
                     Details = "Claude ended its turn without requesting review; auto-finalized to Review.",
                     Success = true,
                     CreatedAt = DateTime.UtcNow
-                }, cancellationToken);
+                }, task.OwnerId, cancellationToken);
 
-                await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
+                await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, task.OwnerId, cancellationToken);
 
                 Logger.LogInformation(
                     "[{Agent}] Task {Id} auto-finalized to Review (no explicit review requested).", Name, task.Id);
@@ -181,9 +181,9 @@ public class GenericExecutorAgent : ClaudeAgentBase
             Details = $"Rolled back to Todo: {reason}",
             Success = false,
             CreatedAt = DateTime.UtcNow
-        }, CancellationToken.None);
+        }, task.OwnerId, CancellationToken.None);
 
-        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, CancellationToken.None);
+        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Todo, task.OwnerId, CancellationToken.None);
     }
 
     // ── TOOL DEFINITIONS ───────────────────────────────────────────────────────────
@@ -255,7 +255,7 @@ public class GenericExecutorAgent : ClaudeAgentBase
             Details = args.Note,
             Success = true,
             CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
+        }, task.OwnerId, cancellationToken);
 
         Logger.LogInformation("[{Agent}] Progress on Task {Id}: {Note}", Name, task.Id, args.Note);
         return ToolResult(toolUse, $"Progress recorded for Task {task.Id}.");
@@ -282,9 +282,9 @@ public class GenericExecutorAgent : ClaudeAgentBase
             Details = args.Summary,
             Success = true,
             CreatedAt = DateTime.UtcNow
-        }, cancellationToken);
+        }, task.OwnerId, cancellationToken);
 
-        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, cancellationToken);
+        await NotifyTaskMovedAsync(task.Id, WorkflowStatus.Review, task.OwnerId, cancellationToken);
 
         Logger.LogInformation("[{Agent}] Task {Id} moved to Review: {Summary}", Name, task.Id, args.Summary);
         return ToolResult(toolUse, $"Task {task.Id} moved to Review.");

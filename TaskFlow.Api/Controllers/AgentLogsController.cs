@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TaskFlow.Api.Data;
+using TaskFlow.Api.Common;
+using TaskFlow.Api.Repositories;
 
 namespace TaskFlow.Api.Controllers;
 
@@ -10,26 +10,21 @@ namespace TaskFlow.Api.Controllers;
 [Authorize]
 public class AgentLogsController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IAgentLogRepository _logs;
 
-    public AgentLogsController(AppDbContext db) => _db = db;
+    public AgentLogsController(IAgentLogRepository logs) => _logs = logs;
 
-    /// <summary>Returns the most recent agent activity logs.</summary>
+    /// <summary>Returns the most recent agent activity logs, scoped to the caller the same way
+    /// GET /api/Tasks scopes tasks (see <see cref="IAgentLogRepository.GetRecentAsync"/>).</summary>
     [HttpGet]
     public async Task<IActionResult> GetLogs(
         [FromQuery] string? agentName,
         [FromQuery] int limit = 50)
     {
-        var query = _db.AgentLogs.AsQueryable();
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
 
-        if (!string.IsNullOrWhiteSpace(agentName))
-            query = query.Where(l => l.AgentName == agentName);
-
-        var logs = await query
-            .OrderByDescending(l => l.CreatedAt)
-            .Take(Math.Clamp(limit, 1, 200))
-            .ToListAsync();
-
+        var logs = await _logs.GetRecentAsync(agentName, limit, callerId);
         return Ok(logs);
     }
 }
