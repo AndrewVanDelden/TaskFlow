@@ -1,4 +1,4 @@
-import { renderHook, render, screen } from '@testing-library/react'
+import { renderHook, render, screen, act } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { usePrefersReducedMotion } from './usePrefersReducedMotion'
 import { mockPrefersReducedMotion } from '../test/reducedMotion'
@@ -36,5 +36,17 @@ describe('usePrefersReducedMotion', () => {
     render(<Demo />)
 
     expect(screen.getByTestId('pulse').className).toBe('animate-pulse')
+  })
+
+  it('updates when the OS setting changes live, without remounting', () => {
+    const control = mockPrefersReducedMotion(false)
+    const { result } = renderHook(() => usePrefersReducedMotion())
+    expect(result.current).toBe(false)
+
+    act(() => {
+      control.fireChange(true)
+    })
+
+    expect(result.current).toBe(true)
   })
 })
