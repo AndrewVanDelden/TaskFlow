@@ -83,6 +83,9 @@ public class TaskService : ITaskService
         if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
+        if (dto.Status == WorkflowStatus.Done && IsUnpairedEpic3Kind(task))
+            return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
+
         task.Status = dto.Status;
         task.UpdatedAt = DateTime.UtcNow;
 
@@ -108,6 +111,9 @@ public class TaskService : ITaskService
             return Result<TaskResponseDto>.Invalid(
                 $"Task {id} is {task.Status}; only a task in Review can be approved.");
 
+        if (IsUnpairedEpic3Kind(task))
+            return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
+
         task.Status = WorkflowStatus.Done;
         task.UpdatedAt = DateTime.UtcNow;
 
@@ -129,6 +135,9 @@ public class TaskService : ITaskService
         if (task.Status != WorkflowStatus.Review)
             return Result<TaskResponseDto>.Invalid(
                 $"Task {id} is {task.Status}; only a task in Review can be rejected.");
+
+        if (IsUnpairedEpic3Kind(task))
+            return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
 
         // Send it back to the pool for rework and drop the executor's claim so it can be re-picked.
         task.Status = WorkflowStatus.Todo;
@@ -211,4 +220,26 @@ public class TaskService : ITaskService
     // closed for the list). Extracted once here (was duplicated verbatim across all six methods).
     private static bool IsOwnedByAnotherUser(TaskItem task, int callerId) =>
         task.OwnerId != null && task.OwnerId != callerId;
+
+    // Board bug (found 2026-08-14, reproduced against real data): Epic-3 sibling tasks
+    // (ResumeTailoring/CoverLetterTailoring) must only ever reach Done through the paired
+    // JobApplication approve flow (JobApplicationService.ApproveAsync ->
+    // IJobApplicationRepository.TryApprovePairAsync), which requires both siblings and atomically
+    // promotes the JobApplication to Approved in the same transaction. The single-task
+    // Approve/Reject/UpdateStatus endpoints have no awareness of that pair invariant - approving,
+    // rejecting, or drag-moving one sibling to Done individually here (the realistic trigger: the
+    // resume finishes tailoring and reaches Review well before the cover letter does, so only one
+    // sibling is in Review at a time and the Board doesn't yet group them into one paired review
+    // card) leaves the JobApplication permanently stuck below Approved - no retry path ever fixes
+    // it. That silently broke the Board's export-download gating (real generated content the user
+    // could never retrieve), which PR #48 found and partially addressed once already: it made the
+    // export gate correctly hide instead of lying about a broken "Approved" state, but left this
+    // underlying corruption itself reachable. This closes it at the source instead.
+    private static bool IsUnpairedEpic3Kind(TaskItem task) =>
+        task.Kind is TaskKind.ResumeTailoring or TaskKind.CoverLetterTailoring;
+
+    private static string PairApprovalRequiredMessage(int id) =>
+        $"Task {id} is part of a job application pair; approve or reject it via the JobApplication " +
+        "pair endpoint (POST/DELETE /api/JobApplications/{applicationId}/approve|reject) once both " +
+        "the resume and cover letter are ready for review.";
 }

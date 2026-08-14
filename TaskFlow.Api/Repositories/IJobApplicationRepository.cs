@@ -48,6 +48,19 @@ public interface IJobApplicationRepository
     /// </summary>
     Task<bool> TryRejectPairAsync(int applicationId, int ownerId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Bulk repair sweep: promotes every JobApplication not already Approved where both required
+    /// sibling tasks are already Done, in one guarded UPDATE. Exists to heal applications left stuck
+    /// below Approved by the individual per-task Approve/Reject/UpdateStatus endpoints before they
+    /// gained their pair-invariant guard (TaskService's IsUnpairedEpic3Kind check) - those endpoints
+    /// could previously move one Epic-3 sibling to Done without the JobApplication-level promotion
+    /// TryApprovePairAsync performs, permanently hiding the Board's export-download controls for
+    /// real, already-generated content. <see cref="TaskFlow.Api.Agents.JobApplicationApprovalReconcilerService"/>
+    /// calls this periodically, mirroring PromotePendingReviewReadyApplicationsAsync's shape and
+    /// purpose one stage later in the pipeline. Returns the number of applications promoted.
+    /// </summary>
+    Task<int> PromotePendingApprovedApplicationsAsync(CancellationToken ct = default);
+
     Task AddAsync(JobApplication application, CancellationToken ct = default);
     Task SaveChangesAsync(CancellationToken ct = default);
 }

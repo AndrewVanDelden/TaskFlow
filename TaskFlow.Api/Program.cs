@@ -170,6 +170,11 @@ builder.Services.AddHostedService<StaleClaimReaperService>();
 // save is a best-effort trigger, not a guarantee (PR #43 review, round 2).
 builder.Services.AddHostedService<JobApplicationPromotionReconcilerService>();
 
+// Same shape, one stage later: recovers JobApplications left stuck below Approved when both sibling
+// tasks are actually Done — repairs data corrupted by the pre-guard individual Approve/Reject/
+// UpdateStatus bug (Board bug, found 2026-08-14; see TaskService.IsUnpairedEpic3Kind).
+builder.Services.AddHostedService<JobApplicationApprovalReconcilerService>();
+
 // ── CORS ─────────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
 {
