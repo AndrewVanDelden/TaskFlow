@@ -175,7 +175,7 @@ re-litigate them mid-sprint.
 | Sprint | What | Status |
 |---|---|---|
 | **0** | Design System Foundations, Accessibility & Test Infrastructure | **Shipped** (2026-08-13) — U0.1-U0.6 all green on `feature/epic3.1-sprint-0-foundations`; PR not yet opened |
-| **1** | App Shell (Sidebar + Top Bar) | Ready — architecture below, no code yet |
+| **1** | App Shell (Sidebar + Top Bar) | **Shipped** (2026-08-14) — U1.1-U1.5 all green on `feature/epic3.1-sprint-1-app-shell`; PR not yet opened |
 | **2** | Login | Ready — architecture below, no code yet |
 | **3** | Board (application-centric cards, quiet executor line, Activity rail) | Ready — architecture below, no code yet |
 | **4** | Ingest & Hand-off (restyled paste flow, tailoring square) | Ready — architecture below, no code yet |
@@ -429,9 +429,24 @@ assumed).
 
 *(Not yet started — nothing to record.)*
 
-### Post-sprint retrospective (fill in once this sprint ships)
+### Post-sprint retrospective (2026-08-14)
 
-*(Not yet started — nothing to record.)*
+- **`AgentFeed.tsx` (Board's boxed component) was deliberately left untouched**, exactly as this
+  sprint's own U1.4 GREEN text scoped it — the extraction produced a new `AgentFeedList.tsx`
+  consumed only by `Activity.tsx` here; Dashboard/Board keeps its current boxed rendering until
+  Sprint 3 (U3.6) does the actual swap. Recorded so it isn't mistaken for a missed task.
+- **`formatRelativeTime` added to `lib/formatting.ts`**, new scope not explicitly named as a file to
+  create anywhere in this doc — the design's own "relative time" requirement for feed rows had no
+  existing helper (`formatTime` is absolute, e.g. `3:45:00 PM`). Takes an optional `now` param so
+  tests stay deterministic without mocking the system clock.
+- **`Login.test.tsx`'s "signs in and stores the session" test needed reconciling**, not anticipated
+  by this sprint's Definition of Done (which only covers `Navigation.test.tsx` staying unchanged).
+  It asserted visible `"Ada"` text, written against `NavBar`'s header which displayed the username
+  in plain text. The new icon-only `SideBar` has no visible username text anywhere by design (every
+  control's accessible name comes from `aria-label`), so that assertion started failing — correctly,
+  not a bug in the new shell. Replaced with a `heading`-role assertion that the Dashboard actually
+  rendered, plus a direct `localStorage` check for the persisted username, which is a more precise
+  test than inferring the session succeeded from incidental UI text.
 
 ---
 
