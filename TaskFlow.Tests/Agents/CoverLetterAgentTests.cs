@@ -113,8 +113,11 @@ public class CoverLetterAgentTests
     // Confirms the shared TailoringAgentBase fix (found via live dogfooding, 2026-08-14 - see
     // ResumeTailoringAgentTests for the full rationale) reaches this subclass too, not just
     // ResumeTailoringAgent - both agents inherit the same prompt/token-ceiling logic from one place.
+    // Split into two single-purpose tests (PR #56 review nit) to match ResumeTailoringAgentTests'
+    // granularity for the identical shared behavior - a failure here should say which of the two
+    // regressed, not require reading the assertion order to tell.
     [Fact]
-    public async Task Requests_the_tailoring_specific_higher_token_ceiling_and_the_no_narrate_instruction()
+    public async Task Requests_the_tailoring_specific_higher_token_ceiling_not_the_shared_default()
     {
         using var db = new SqliteInMemoryContext();
         await SeedApplicationAsync(db);
@@ -129,6 +132,23 @@ public class CoverLetterAgentTests
         await sut.RunAsync(CancellationToken.None);
 
         claude.LastRequest!.MaxTokens.Should().Be(TaskFlow.Api.Configuration.AnthropicDefaults.TailoringMaxTokens);
+    }
+
+    [Fact]
+    public async Task Instructs_Claude_not_to_narrate_a_plan_instead_of_calling_the_save_tool()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Cover letter");
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
         var initialPrompt = claude.LastRequest!.Messages[0].Content.OfType<TextContent>().FirstOrDefault()?.Text;
         initialPrompt.Should().Contain("Do not end your turn until you have called");
     }
