@@ -17,6 +17,7 @@ public class JobApplicationResponseDto
     public string IngestionSessionId { get; set; } = string.Empty;
     public int OwnerId { get; set; }
     public DateTime CreatedAt { get; set; }
+    public string? Company { get; set; }
     public List<JobApplicationTaskDto> Tasks { get; set; } = new();
 
     public static JobApplicationResponseDto FromEntity(JobApplication application) => new()
@@ -26,6 +27,7 @@ public class JobApplicationResponseDto
         IngestionSessionId = application.IngestionSessionId,
         OwnerId = application.OwnerId,
         CreatedAt = application.CreatedAt,
+        Company = application.Company,
         Tasks = application.Tasks.Select(JobApplicationTaskDto.FromEntity).ToList()
     };
 
@@ -43,6 +45,7 @@ public class JobApplicationResponseDto
         IngestionSessionId = application.IngestionSessionId,
         OwnerId = application.OwnerId,
         CreatedAt = application.CreatedAt,
+        Company = application.Company,
         Tasks = tasks.Select(JobApplicationTaskDto.FromEntity).ToList()
     };
 }

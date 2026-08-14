@@ -54,7 +54,7 @@ public sealed class JobPostingParser : IIngestionParser
         if (title is null)
             return Task.FromResult(Result<IReadOnlyList<TaskDraft>>.Ok(Array.Empty<TaskDraft>()));
 
-        var draft = new TaskDraft(title, null, TaskKind.ResumeTailoring, company ?? string.Empty);
+        var draft = new TaskDraft(title, null, TaskKind.ResumeTailoring, string.Empty, company);
         return Task.FromResult(Result<IReadOnlyList<TaskDraft>>.Ok(new[] { draft }));
     }
 }

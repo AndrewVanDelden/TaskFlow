@@ -39,7 +39,7 @@ public sealed class ClaudeJobPostingParser : ClaudeJsonExtractionParserBase<Clau
             ? string.Join(", ", parsed.Requirements)
             : null;
 
-        var draft = new TaskDraft(parsed.Title, description, TaskKind.ResumeTailoring, parsed.Company ?? string.Empty);
+        var draft = new TaskDraft(parsed.Title, description, TaskKind.ResumeTailoring, string.Empty, parsed.Company);
         return Result<IReadOnlyList<TaskDraft>>.Ok(new[] { draft });
     }
 
