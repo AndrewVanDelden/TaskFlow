@@ -27,4 +27,8 @@ describe('stripCssLayers', () => {
   it('leaves content outside any @layer untouched', () => {
     expect(stripCssLayers('.plain { color: green; }')).toBe('.plain { color: green; }')
   })
+
+  it('leaves an unterminated @layer (no trailing ; or {) unchanged instead of hanging', () => {
+    expect(stripCssLayers('.a {} @layer utilities')).toBe('.a {} @layer utilities')
+  })
 })

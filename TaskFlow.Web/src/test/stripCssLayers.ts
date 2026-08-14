@@ -19,6 +19,13 @@ export function stripCssLayers(css: string): string {
     const semiIndex = css.indexOf(';', atIndex)
     const braceIndex = css.indexOf('{', atIndex)
 
+    if (semiIndex === -1 && braceIndex === -1) {
+      // Unterminated @layer token — no `;` or `{` before EOF. Nothing can be meaningfully
+      // unwrapped, so leave the malformed remainder as-is and stop scanning.
+      out.push(css.slice(atIndex))
+      break
+    }
+
     if (braceIndex === -1 || (semiIndex !== -1 && semiIndex < braceIndex)) {
       // Bare layer-order declaration, e.g. `@layer theme, base, utilities;` — drop it.
       i = semiIndex + 1
