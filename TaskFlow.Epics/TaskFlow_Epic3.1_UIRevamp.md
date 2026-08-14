@@ -534,9 +534,27 @@ register states of the form pane. GREEN: any labeling/contrast fix the axe run s
 - Unblocks: nothing downstream — Login is a leaf in this epic's dependency graph, which is exactly
   why it's sequenced early, as a low-risk proof that the foundations work.
 
-### Code review findings (fill in after this sprint's PR is reviewed)
+### Code review findings (2026-08-14) — PR #54
 
-*(Not yet started — nothing to record.)*
+Manual review posted directly to the PR as inline comments (high effort, 8 finder angles,
+verified pass) — see
+[review #4934428666](https://github.com/AndrewVanDelden/TaskFlow/pull/54#pullrequestreview-4934428666)
+for the full text, each comment anchored to its exact line. No prior review on this PR to
+cross-check. **Status: RESOLVED — all 4 findings fixed, verified via a fresh `.\test` run (backend
+414/414, frontend 42/42 files, 224/224 tests), and merged to `develop` in PR #54:**
+
+1. `Login.tsx:54` (CONFIRMED, FIXED — e81adc5) — all four spots mapped to Nocturne tokens
+   (`slate-300/400/500` → `textNeutral300`/`textNeutral400`/new `placeholderNeutral500`,
+   preserving the original relative hierarchy).
+2. `Login.tsx:51` (PLAUSIBLE, FIXED — e81adc5) — added a complementary `md:hidden` wordmark in the
+   form pane, mirroring the brand pane's `hidden md:flex`; exactly one is visible at any width.
+3. `Button.test.tsx:63` (PLAUSIBLE, FIXED — 4b79845) — now asserts
+   `getComputedStyle(button).opacity` directly. Caught a real fact wrong along the way: Tailwind
+   v4's `opacity-50` compiles to `opacity: 50%` (percentage syntax), not the `0.5` decimal first
+   assumed — a genuine, verified value, not a jsdom quirk.
+4. `Button.tsx:10` (nit, FIXED — 4b79845) — eliminated the composite `focusRingClasses` constant
+   rather than renaming it; `focusRingAccent` and a new, precisely-named `disabledClasses` are
+   composed directly, so each name matches its content exactly.
 
 ### Post-sprint retrospective (2026-08-14)
 
