@@ -692,9 +692,37 @@ sprint.
 - Unblocks: nothing downstream within this epic — Sprint 4 does not depend on the Board's visual
   state, only on the shell (Sprint 1) and the shared primitives (Sprint 0).
 
-### Code review findings (fill in after this sprint's PR is reviewed)
+### Code review findings (2026-08-14) — PR #55
 
-*(Not yet started — nothing to record.)*
+Manual review posted directly to the PR as inline comments (high effort, 8 finder angles,
+verified pass) — see
+[review #4939746497](https://github.com/AndrewVanDelden/TaskFlow/pull/55#pullrequestreview-4939746497)
+for the full text, each comment anchored to its exact line. No prior review on this PR to
+cross-check. **Status: FIXED — both findings resolved 2026-08-14:**
+
+1. `JobApplicationAssemblyService.cs:44` (CONFIRMED) — `TaskItem.SourceSection` is now always
+   empty for job-posting-sourced tasks (Section moved to `string.Empty`, Company only reaches
+   `application.Company`), but `TailoringAgentBase.FormatJobPosting` (untouched by this PR) still
+   built the Claude prompt's "Company: {SourceSection}" line from `SourceSection` — so tailoring
+   agents silently stopped telling Claude which company a posting is for. Existing tailoring-agent
+   tests masked this because they hand-set `SourceSection` directly, bypassing the real pipeline.
+   **Fix:** `TailoringAgentBase.BuildPrompt`/`FormatJobPosting` now take the already-loaded
+   `JobApplication` and read `application.Company` instead of `task.SourceSection`. RED-first:
+   `ResumeTailoringAgentTests`/`CoverLetterAgentTests`' shared `SeedApplicationAsync` helper now
+   seeds `JobApplication.Company` (not `TaskItem.SourceSection`), matching the real pipeline, and
+   `Wraps_the_job_posting_in_the_initial_prompt...` asserts a `Company: <name>` line inside the
+   wrapped `<job_posting>` block; both failed (`found -1`) before the fix, pass after.
+2. `Dashboard.tsx:9` (PLAUSIBLE) — the Board's Live/Offline SignalR-connection indicator was
+   dropped entirely; `connected` was no longer read from `useAgentFeed()`, and the replacement
+   `AgentFeedList` has no equivalent. **Fix:** `Dashboard.tsx` reads `connected` again and renders
+   the same dot + Live/Offline text next to the Activity heading (mirroring the deleted
+   `AgentFeed.tsx`'s styling), scoped to Dashboard rather than added to the shared `AgentFeedList`
+   since `Activity.tsx` also consumes that component without a connection concept. RED-first:
+   `Dashboard.test.tsx` switched its `useAgentFeed` mock to a controllable `vi.fn()` and added two
+   tests (Live when connected, Offline when not) that failed before the fix, pass after. Verified
+   live in the running app (dev server + real login) — the indicator renders correctly.
+
+Full suite green after both fixes: backend 417/417, frontend 241/241 (up from 239).
 
 ### Post-sprint retrospective (2026-08-14)
 

@@ -6,7 +6,7 @@ import { ExecutorControl } from '../components/ExecutorControl'
 
 // The Board screen. The header/nav and the page wrapper are provided by the ProtectedLayout.
 export function Dashboard() {
-  const { logs, cycles } = useAgentFeed()
+  const { logs, cycles, connected } = useAgentFeed()
 
   return (
     <main className="p-6">
@@ -20,7 +20,15 @@ export function Dashboard() {
 
         <aside>
           <AgentStatus logs={logs} cycles={cycles} />
-          <h2 className="text-sm font-semibold text-slate-300 mb-3">Activity</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-300">Activity</h2>
+            <span className="flex items-center gap-1.5 text-xs text-slate-500">
+              <span
+                className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-slate-600'}`}
+              />
+              {connected ? 'Live' : 'Offline'}
+            </span>
+          </div>
           <AgentFeedList logs={logs} />
         </aside>
       </div>

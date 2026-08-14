@@ -59,7 +59,13 @@ public class CoverLetterAgentTests
         {
             State = ApplicationState.Building,
             IngestionSessionId = SessionId,
-            OwnerId = OwnerId
+            OwnerId = OwnerId,
+            // Mirrors the real assembly pipeline (JobApplicationAssemblyService): Company lives on
+            // the JobApplication, not on TaskItem.SourceSection, which the real job-posting parsers
+            // always leave empty. A prior version of this seed hand-set SourceSection instead - that
+            // masked PR #55's regression, where FormatJobPosting still read SourceSection and so
+            // silently stopped telling Claude which company a posting was for.
+            Company = "Globex Inc"
         };
         db.Context.JobApplications.Add(application);
         await db.Context.SaveChangesAsync();
@@ -68,7 +74,6 @@ public class CoverLetterAgentTests
         {
             Title = "Product Manager",
             Description = "8+ years of product experience required.",
-            SourceSection = "Globex Inc",
             Status = WorkflowStatus.Todo,
             Kind = TaskKind.ResumeTailoring,
             ApplicationId = application.Id
@@ -77,7 +82,6 @@ public class CoverLetterAgentTests
         {
             Title = "Product Manager",
             Description = "8+ years of product experience required.",
-            SourceSection = "Globex Inc",
             Status = WorkflowStatus.Todo,
             Kind = TaskKind.CoverLetterTailoring,
             ApplicationId = application.Id
@@ -172,6 +176,12 @@ public class CoverLetterAgentTests
         jobOpen.Should().BeGreaterThanOrEqualTo(0);
         jobClose.Should().BeGreaterThan(jobOpen);
         initialPrompt.IndexOf(coverLetterTask.Title, StringComparison.Ordinal).Should().BeInRange(jobOpen, jobClose);
+
+        // PR #55 review (finding 1, CONFIRMED): the company must reach the prompt via the
+        // JobApplication (application.Company), since TaskItem.SourceSection is always empty for
+        // job-posting-sourced tasks in the real pipeline.
+        var companyLine = initialPrompt.IndexOf("Company: Globex Inc", StringComparison.Ordinal);
+        companyLine.Should().BeInRange(jobOpen, jobClose);
 
         var allText = claude.LastRequest!.Messages
             .SelectMany(m => m.Content)
