@@ -106,4 +106,14 @@ describe('navigation', () => {
 
     expect(await screen.findByPlaceholderText('Email')).toBeInTheDocument()
   })
+
+  it('gives the shell a bounded height so the sidebar stays pinned while content scrolls', async () => {
+    authenticate()
+    renderAt('/board')
+
+    const nav = await screen.findByRole('navigation')
+    const shell = nav.parentElement as HTMLElement
+
+    expect(getComputedStyle(shell).height).toBe('100vh')
+  })
 })

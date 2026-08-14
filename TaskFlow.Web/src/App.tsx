@@ -32,7 +32,7 @@ function ProtectedLayout() {
 
   return (
     <AgentHubProvider>
-      <div className={`min-h-screen flex ${bgPage} ${textPrimary}`}>
+      <div className={`h-screen flex ${bgPage} ${textPrimary}`}>
         <SideBar />
         <div className="flex-1 overflow-y-auto">
           <Outlet />
