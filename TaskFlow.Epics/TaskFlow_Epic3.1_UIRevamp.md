@@ -176,7 +176,7 @@ re-litigate them mid-sprint.
 |---|---|---|
 | **0** | Design System Foundations, Accessibility & Test Infrastructure | **Shipped** (2026-08-13) — U0.1-U0.6 all green on `feature/epic3.1-sprint-0-foundations`; PR not yet opened |
 | **1** | App Shell (Sidebar + Top Bar) | **Shipped** (2026-08-14) — U1.1-U1.5 all green on `feature/epic3.1-sprint-1-app-shell`; PR not yet opened |
-| **2** | Login | Ready — architecture below, no code yet |
+| **2** | Login | **Shipped** (2026-08-14) — U2.1-U2.3 all green on `feature/epic3.1-sprint-2-login`; PR not yet opened |
 | **3** | Board (application-centric cards, quiet executor line, Activity rail) | Ready — architecture below, no code yet |
 | **4** | Ingest & Hand-off (restyled paste flow, tailoring square) | Ready — architecture below, no code yet |
 
@@ -538,9 +538,23 @@ register states of the form pane. GREEN: any labeling/contrast fix the axe run s
 
 *(Not yet started — nothing to record.)*
 
-### Post-sprint retrospective (fill in once this sprint ships)
+### Post-sprint retrospective (2026-08-14)
 
-*(Not yet started — nothing to record.)*
+- **All three tasks (U2.1/U2.2/U2.3) were built as one unit, not delegated to separate parallel
+  agents** — unlike Sprint 0/1's disjoint-file tasks, all three converge on the same two files
+  (`Login.tsx`, `Login.test.tsx`), so splitting them would have meant multiple agents editing the
+  same files concurrently. Recorded as a reusable pattern: parallelize by file ownership, not by
+  the doc's own task numbering.
+- **`Button` gained `disabled:opacity-50 disabled:cursor-not-allowed`**, not previously needed by
+  any Sprint 0/1 consumer. Small, backward-compatible addition to the shared primitive, with its
+  own test — Login's submit button is the first consumer to need a disabled state.
+- **Caught during review, not anticipated by the sprint's own task list: Login's input fields still
+  had the pre-Nocturne `focus:ring-blue-500` outline**, missed by the first restyle pass since the
+  brief only specified button and field background/border styling, not focus-ring treatment.
+  Violates Sprint 0's own locked "kill the default blue ring everywhere" rule. Fixed by extracting
+  `focusRingAccent` into `lib/tokens.ts` as a shared constant (Button and Login's inputs now both
+  import the same declaration, rather than duplicating the literal a second time) — this is now the
+  established shared source for any future interactive element needing the accent focus ring.
 
 ---
 

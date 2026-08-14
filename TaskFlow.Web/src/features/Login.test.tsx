@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import App from '../App'
+import { axe } from '../test/axe'
 
 // After sign-in, the router navigates to the Board, which opens a SignalR connection.
 // The shared manual mock at __mocks__/@microsoft/signalr.ts prevents a real negotiate.
@@ -67,10 +68,81 @@ describe('Login flow', () => {
     expect(screen.queryByPlaceholderText('Name')).toBeNull()
     expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: /need an account\? register/i }))
+    await userEvent.click(screen.getByRole('button', { name: /create an account/i }))
 
     // Register mode: Name field appears and the submit becomes "Create account".
     expect(screen.getByPlaceholderText('Name')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Create account' })).toBeInTheDocument()
+  })
+
+  it('renders the split-card layout with the brand pane copy and working fields', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Your autonomous application workspace')).toBeInTheDocument()
+    expect(screen.getByText('Executor tailoring Anthropic resume…')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Email')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Password')).toBeInTheDocument()
+  })
+
+  it('gives fields the accent focus ring, never the browser default blue', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    const email = screen.getByPlaceholderText('Email')
+    expect(email.className).toContain('focus-visible:outline-[#9184d9]')
+    expect(email.className).not.toContain('focus:ring-blue-500')
+  })
+
+  it('has no accessibility violations in sign-in mode', async () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('has no accessibility violations in register mode', async () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /create an account/i }))
+
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('keeps the TaskFlow wordmark reachable regardless of viewport (one copy per pane)', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getAllByText('TaskFlow')).toHaveLength(2)
+  })
+
+  it('uses Nocturne neutral tokens, not raw Tailwind slate classes, for muted text', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    const tagline = screen.getByText('Your autonomous application workspace')
+    expect(tagline.className).not.toMatch(/text-slate-\d/)
+
+    const email = screen.getByPlaceholderText('Email')
+    expect(email.className).not.toMatch(/placeholder-slate-\d/)
   })
 })

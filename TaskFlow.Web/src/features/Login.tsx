@@ -2,9 +2,28 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { login, register } from '../api/auth'
 import { useAuth } from '../hooks/AuthContext'
+import { Button } from '../components/ui/Button'
+import {
+  bgPage,
+  bgSurface,
+  textNeutral300,
+  textNeutral400,
+  textNeutral500,
+  placeholderNeutral500,
+  textPrimary,
+  focusRingAccent,
+} from '../lib/tokens'
 
-const inputClass =
-  'w-full px-3 py-2.5 rounded-lg bg-slate-950/60 text-white border border-slate-700 placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500'
+const inputClass = `w-full h-10 px-3 rounded-lg bg-[#232532] border border-white/10 text-white ${placeholderNeutral500} ${focusRingAccent}`
+
+const labelClass = `block mb-1 text-xs ${textNeutral500}`
+
+// Static placeholder copy for the brand pane - not wired to any live data source (locked spec).
+const teasers = [
+  'Executor tailoring Anthropic resume…',
+  'Notion application ready for review',
+  '2 applications submitted today',
+]
 
 export function Login() {
   const { signIn } = useAuth()
@@ -36,80 +55,109 @@ export function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-6">
-          <span className="text-2xl font-bold text-white">TaskFlow</span>
-          <p className="text-slate-500 text-sm mt-1">Autonomous agent workspace</p>
+    <div className={`min-h-screen flex items-center justify-center ${bgPage} px-4`}>
+      <div className="w-full max-w-[920px] min-h-[560px] flex rounded-2xl overflow-hidden border border-white/10 shadow-xl shadow-black/30">
+        <div className="hidden md:flex w-1/2 flex-col justify-center gap-10 p-10 bg-gradient-to-br from-[#423a6a] to-[#161826]">
+          <div>
+            <span className={`text-2xl font-bold ${textPrimary}`}>TaskFlow</span>
+            <p className={`${textNeutral300} text-sm mt-1`}>Your autonomous application workspace</p>
+          </div>
+
+          <ul className="space-y-3">
+            {teasers.map((teaser) => (
+              <li key={teaser} className={`flex items-center gap-2 text-sm ${textNeutral300}`}>
+                <span className="h-1.5 w-1.5 rounded-full bg-[#9184d9]" />
+                {teaser}
+              </li>
+            ))}
+          </ul>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl shadow-black/30"
-        >
-          <h1 className="text-lg font-semibold text-white mb-1">
-            {isRegistering ? 'Create your account' : 'Welcome back'}
-          </h1>
-          <p className="text-slate-400 text-sm mb-5">
-            {isRegistering ? 'Sign up to get started' : 'Sign in to continue'}
-          </p>
+        <div className={`w-full md:w-1/2 ${bgSurface} p-8 flex flex-col justify-center`}>
+          <div className="mb-6 md:hidden">
+            <span className={`text-2xl font-bold ${textPrimary}`}>TaskFlow</span>
+          </div>
 
-          {isRegistering && (
-            <input
-              className={`${inputClass} mb-3`}
-              placeholder="Name"
-              aria-label="Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-          )}
+          <form onSubmit={handleSubmit}>
+            <h1 className={`text-lg font-semibold ${textPrimary} mb-1`}>
+              {isRegistering ? 'Create your account' : 'Welcome back'}
+            </h1>
+            <p className={`${textNeutral400} text-sm mb-5`}>
+              {isRegistering ? 'Sign up to get started' : 'Sign in to continue'}
+            </p>
 
-          <input
-            className={`${inputClass} mb-3`}
-            type="email"
-            placeholder="Email"
-            aria-label="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+            {isRegistering && (
+              <div className="mb-3">
+                <label htmlFor="login-name" className={labelClass}>
+                  Name
+                </label>
+                <input
+                  id="login-name"
+                  className={inputClass}
+                  placeholder="Name"
+                  aria-label="Name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                />
+              </div>
+            )}
 
-          <input
-            className={`${inputClass} mb-4`}
-            type="password"
-            placeholder="Password"
-            aria-label="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-
-          {error && (
-            <div role="alert" className="mb-4 text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
-              {error}
+            <div className="mb-3">
+              <label htmlFor="login-email" className={labelClass}>
+                Email
+              </label>
+              <input
+                id="login-email"
+                className={inputClass}
+                type="email"
+                placeholder="Email"
+                aria-label="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg transition-colors"
-          >
-            {busy ? 'Working...' : isRegistering ? 'Create account' : 'Sign in'}
-          </button>
+            <div className="mb-4">
+              <label htmlFor="login-password" className={labelClass}>
+                Password
+              </label>
+              <input
+                id="login-password"
+                className={inputClass}
+                type="password"
+                placeholder="Password"
+                aria-label="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setIsRegistering(!isRegistering)
-              setError(null)
-            }}
-            className="w-full mt-4 text-sm text-slate-400 hover:text-slate-200"
-          >
-            {isRegistering ? 'Already have an account? Sign in' : 'Need an account? Register'}
-          </button>
-        </form>
+            {error && (
+              <div role="alert" className="mb-4 text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+                {error}
+              </div>
+            )}
+
+            <Button type="submit" variant="primary" className="w-full" disabled={busy}>
+              {busy ? 'Working...' : isRegistering ? 'Create account' : 'Sign in'}
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full mt-4 text-sm"
+              onClick={() => {
+                setIsRegistering(!isRegistering)
+                setError(null)
+              }}
+            >
+              {isRegistering ? 'Already have an account? Sign in' : 'Create an account'}
+            </Button>
+          </form>
+        </div>
       </div>
     </div>
   )
