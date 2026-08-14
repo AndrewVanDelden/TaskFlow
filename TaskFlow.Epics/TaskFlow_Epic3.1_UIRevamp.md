@@ -309,9 +309,29 @@ installed, one working import proven.
 - Depends on: nothing — this is foundational, like Epic 3's Sprint 0.
 - Unblocks: every other sprint in this epic. No screen work starts before this sprint is green.
 
-### Code review findings (fill in after this sprint's PR is reviewed)
+### Code review findings (2026-08-13) — PR #52
 
-*(Not yet started — nothing to record.)*
+Manual review posted directly to the PR as inline comments (high effort, 8 finder angles,
+verified pass) — see
+[review #4933068259](https://github.com/AndrewVanDelden/TaskFlow/pull/52#pullrequestreview-4933068259)
+for the full text, each comment anchored to its exact line. No prior Copilot review to cross-check
+(its automated pass on this PR hit its quota and returned no findings). **Status: RESOLVED — all 4
+findings fixed, verified via a fresh `.\test` run (backend 414/414, frontend 39/39 files, 194/194
+tests), and merged to `develop` in PR #52:**
+
+1. `stripCssLayers.ts:24` (CONFIRMED, FIXED — d871bba) — infinite loop on an unterminated `@layer`
+   token (both `semiIndex`/`braceIndex` at `-1` reset the scan cursor to 0 instead of advancing past
+   it). Added a RED test for the exact malformed input, then a guard that leaves the unterminated
+   remainder unchanged instead of looping.
+2. `usePrefersReducedMotion.ts:5` (PLAUSIBLE, FIXED — 40085cb) — no `change`-event subscription,
+   unlike every other hook in this codebase. Architect ruling: fix now, not defer — every other
+   external-source hook here subscribes live, and the epic doc already states later sprints are
+   "required to use" this hook for live motion-sensitivity, so a static snapshot didn't meet its own
+   stated contract. Added a `useEffect` subscription (with cleanup) and a live-update RED test.
+3. `package.json:26` (CONFIRMED, FIXED — df4f678) — `vitest-axe` moved from `dependencies` to
+   `devDependencies`, matching every other test-only tool in this project.
+4. `Button.test.tsx:49` (CONFIRMED, nit, FIXED — df4f678) — dynamic `import()` replaced with the
+   codebase's standard static import.
 
 ### Post-sprint retrospective (fill in once this sprint ships)
 
