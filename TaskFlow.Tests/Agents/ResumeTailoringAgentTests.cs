@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Anthropic.SDK.Messaging;
@@ -192,6 +193,116 @@ public class ResumeTailoringAgentTests
         resumeOpen.Should().BeGreaterThanOrEqualTo(0);
         resumeClose.Should().BeGreaterThan(resumeOpen);
         allText.IndexOf(BaseResumeText, StringComparison.Ordinal).Should().BeInRange(resumeOpen, resumeClose);
+    }
+
+    // Bug found via live dogfooding (2026-08-14): the shared 1024-token default (meant for short,
+    // structured outputs like TaskPrioritizerAgent's tool args) is too tight for a full tailored
+    // resume, causing Claude to run out of output budget mid-cycle and end its turn without ever
+    // calling the save tool - the task then rolls back and gets reclaimed forever, since no
+    // retry-limit/backoff mechanism exists (Epic 2's "Claude retry/resilience" was deliberately
+    // deferred and never built). Tailoring agents get their own, larger ceiling instead of raising
+    // the shared default for every agent (TaskPrioritizer/StaleTaskDetector need far less).
+    [Fact]
+    public async Task Requests_the_tailoring_specific_higher_token_ceiling_not_the_shared_default()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Tailored resume");
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
+        claude.LastRequest!.MaxTokens.Should().Be(TaskFlow.Api.Configuration.AnthropicDefaults.TailoringMaxTokens);
+    }
+
+    [Fact]
+    public async Task Honors_a_configured_TailoringMaxTokens_override_instead_of_the_code_default()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Tailored resume");
+        var configuredConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Anthropic:ApiKey"] = "test",
+            ["Anthropic:TailoringMaxTokens"] = "2048"
+        }).Build();
+
+        var sut = new ResumeTailoringAgent(claude, tasks, resumeContexts, jobApplications, logs,
+            Mock.Of<IAgentNotifier>(), configuredConfig, NullLogger<ResumeTailoringAgent>.Instance);
+        await sut.RunAsync(CancellationToken.None);
+
+        claude.LastRequest!.MaxTokens.Should().Be(2048);
+    }
+
+    // The narrow fix for the token ceiling alone does not stop Claude from spending its (now
+    // larger) budget narrating a plan in text instead of calling the save tool - this is a
+    // complementary, cheap mitigation for the exact failure mode observed live: a coherent-sounding
+    // "Let me carefully tailor..." final message with zero tool_use in that turn.
+    [Fact]
+    public async Task Instructs_Claude_not_to_narrate_a_plan_instead_of_calling_the_save_tool()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Tailored resume");
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
+        var initialPrompt = claude.LastRequest!.Messages[0].Content.OfType<TextContent>().FirstOrDefault()?.Text;
+        initialPrompt.Should().Contain("Do not end your turn until you have called");
+    }
+
+    // PR #56 review finding (CONFIRMED): the token-ceiling raise alone doesn't fix the code that
+    // actually mishandled the live incident - a response cut off at the token limit (StopReason
+    // "max_tokens") before ever calling a tool was previously logged identically to a normal short
+    // completion, with no way to tell them apart if a resume still exceeds the raised ceiling.
+    [Fact]
+    public async Task Logs_a_warning_distinctly_when_the_response_is_truncated_at_the_token_limit()
+    {
+        using var db = new SqliteInMemoryContext();
+        var (_, resumeTask, _) = await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatTruncatesAtMaxTokens("Now I have everything I need. Let me carefully tailor...");
+        var logger = new Mock<ILogger<ResumeTailoringAgent>>();
+
+        var sut = new ResumeTailoringAgent(claude, tasks, resumeContexts, jobApplications, logs,
+            Mock.Of<IAgentNotifier>(), Config(), logger.Object);
+        await sut.RunAsync(CancellationToken.None);
+
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => true),
+                It.IsAny<Exception>(),
+                It.Is<Func<It.IsAnyType, Exception?, string>>((v, t) => true)),
+            Times.Once);
+
+        // The truncation is still handled safely end-to-end, not just logged: nothing was ever
+        // saved, so the existing "ended without saving" rollback still applies.
+        db.Context.ChangeTracker.Clear();
+        var updated = await tasks.GetByIdAsync(resumeTask.Id);
+        updated!.Status.Should().Be(WorkflowStatus.Todo);
+        updated.ClaimedBy.Should().BeNull();
     }
 
     [Fact]

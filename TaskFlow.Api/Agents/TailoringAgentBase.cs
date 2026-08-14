@@ -3,6 +3,7 @@ using Anthropic.SDK.Messaging;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TaskFlow.Api.Configuration;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Repositories;
 using TaskFlow.Api.Security;
@@ -129,11 +130,13 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
                 return;
             }
 
+            var maxTokens = Config.GetValue("Anthropic:TailoringMaxTokens", AnthropicDefaults.TailoringMaxTokens);
             var actions = await RunToolConversationAsync(
                 prompt: BuildPrompt(task),
                 tools: BuildTools(),
                 dispatch: (toolUse, ct) => ExecuteToolAsync(task, application, resumeContext, toolUse, ct),
-                cancellationToken);
+                cancellationToken,
+                maxTokensOverride: maxTokens);
 
             Logger.LogInformation(
                 "[{Agent}] Cycle complete for Task {Id}. {Count} tool action(s).", Name, task.Id, actions);
@@ -216,7 +219,10 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
         return
             "You are working one task in a job-application pipeline. Below is the job posting you " +
             "are tailoring output for. First call read_base_context to fetch the candidate's base " +
-            "resume, then produce your output and save it using the save tool described below.\n\n" +
+            "resume, then produce your output and save it using the save tool described below. " +
+            "Do not describe your plan in a text response - go directly from reading the base " +
+            "resume to calling the save tool with your final output. Do not end your turn until " +
+            "you have called the save tool.\n\n" +
             wrappedJobPosting + "\n\n" +
             BuildInstructions();
     }
