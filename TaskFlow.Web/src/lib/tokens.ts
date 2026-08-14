@@ -23,6 +23,12 @@ export const textNeutral400 = 'text-[#b2b6ca]'
 export const textNeutral500 = 'text-[#9397ab]'
 export const textNeutral600 = 'text-[#75798c]'
 
+// Global rule (design system): every interactive element gets this accent focus-visible ring,
+// never the browser default blue — shared here so it can't drift between consumers (Button,
+// form fields, etc.) the way Login's inputs once did with a stale focus:ring-blue-500.
+export const focusRingAccent =
+  'outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9184d9]'
+
 type ComputedColorProperty = 'backgroundColor' | 'color'
 
 interface DesignToken {
