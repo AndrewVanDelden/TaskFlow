@@ -64,7 +64,7 @@ describe('Button', () => {
     render(<Button disabled>Save</Button>)
     const button = screen.getByRole('button', { name: 'Save' })
 
-    expect(button.className).toContain('disabled:opacity-50')
+    expect(getComputedStyle(button).opacity).toBe('50%')
   })
 
   it('has no accessibility violations for either variant', async () => {

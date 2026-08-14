@@ -7,7 +7,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant
 }
 
-const focusRingClasses = `${focusRingAccent} disabled:opacity-50 disabled:cursor-not-allowed`
+const disabledClasses = 'disabled:opacity-50 disabled:cursor-not-allowed'
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary: `border ${borderAccent} ${textAccent} hover:bg-[#9184d9]/15 rounded-lg`,
@@ -15,7 +15,7 @@ const variantClasses: Record<ButtonVariant, string> = {
 }
 
 export function Button({ variant = 'primary', className = '', ...props }: ButtonProps) {
-  const classes = [variantClasses[variant], focusRingClasses, className].filter(Boolean).join(' ')
+  const classes = [variantClasses[variant], focusRingAccent, disabledClasses, className].filter(Boolean).join(' ')
 
   return <button className={classes} {...props} />
 }
