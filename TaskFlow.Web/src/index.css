@@ -1,1 +1,16 @@
 @import "tailwindcss";
+
+/* Epic 3.1 Sprint 4 (U4.4): TailorButton's busy-state animation. Not built into Tailwind, so these
+   are plain @keyframes referenced via Tailwind v4 arbitrary-value utilities
+   (animate-[goGlow_0.7s_ease-out], animate-[sparkFly_0.8s_ease-out_forwards]) - values copied
+   verbatim from the design handoff's <style> block, not re-derived. */
+@keyframes goGlow {
+  0% { transform: scale(.2); opacity: .7 }
+  100% { transform: scale(3); opacity: 0 }
+}
+
+@keyframes sparkFly {
+  0% { opacity: 1; transform: translate(-50%,-50%) scale(.3) }
+  60% { opacity: 1 }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.1) }
+}

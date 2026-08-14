@@ -829,6 +829,106 @@ base-resume preview) and build the "Start tailoring" hand-off square with its cl
   reasoning Sprint 6 already recorded: it's real, separately-tested capability, not something this
   epic was asked to remove.
 
+### Implementation decisions, locked before dispatching engineers (2026-08-14)
+
+Pulled directly from `design_handoff_ui_revamp/TaskFlow Board Revamp (standalone).html`'s own
+`<style>` block and the `.tailor-square` markup (grepped and read verbatim, not paraphrased from
+the EPIC.md summary), plus this doc's own established patterns from Sprints 0–3:
+
+- **Task split, by file ownership (Sprint 0/1's parallel-by-disjoint-file precedent, not Sprint
+  2's single-unit precedent — these files don't overlap):**
+  - **Engineer A — U4.4 only.** `TailorButton.tsx` (new) + `useIntakeFlow.ts` (navigate-on-success)
+    + their own tests. Fully self-contained; touches nothing Engineer B touches.
+  - **Engineer B — U4.1 + U4.2 + U4.3 + U4.5.** `IngestDocument.tsx` + `IngestDocument.test.tsx`
+    only — one unit, same file, sequential tasks, mirroring Sprint 2's reasoning for converging
+    tasks. Mounts Engineer A's `TailorButton` in place of the current inline "Start tailoring"
+    button, against the locked prop contract below (built and merged after Engineer A, not in
+    parallel, so B's integration and full-stage `vitest-axe` pass runs against real code, not a
+    guessed interface).
+- **`TailorButton` prop contract, locked so both engineers can work from it independently:**
+  `{ onClick: () => void; disabled: boolean; busy: boolean }` — purely presentational, no internal
+  state or hook access of its own (mirrors `TaskCardView` taking fully-resolved props rather than
+  deriving them). `IngestDocument` keeps owning the existing eligibility condition
+  (`!intake.baseResumeText || intake.stage !== 'review'`) and passes `busy={intake.stage ===
+  'starting'}`.
+- **`startTailoring` navigates via `useNavigate()` called inside `useIntakeFlow` itself**, not
+  passed in from the component. `useIntakeFlow` is only ever consumed by `IngestDocument`, which
+  always renders under the app's router, so this is safe; it also keeps "reached building / it
+  worked, go to the board" as one behavior in one place instead of splitting the stage transition
+  and the navigation across two files. Real, necessary consequence: `useIntakeFlow.test.ts`'s
+  `renderHook` calls gain a `MemoryRouter` wrapper — test-infrastructure work, not a workaround.
+- **Animation implementation — exact values taken from the design, not invented:**
+  - `spin` reuses Tailwind's **built-in** `animate-spin` utility (`spin 1s linear infinite`) — it
+    is already byte-for-byte the design's own `@keyframes spin{to{transform:rotate(360deg)}}`, so
+    no custom keyframe is needed for the "Tailoring…" label's spinning icon.
+  - `goGlow` and `sparkFly` are **not** built into Tailwind and must be added as plain `@keyframes`
+    in `TaskFlow.Web/src/index.css` (still just the global stylesheet Sprint 0 already owns — not
+    a `tailwind.config.js`/theme file, so this doesn't violate the "utilities only" constraint),
+    referenced via Tailwind v4 arbitrary-value utilities so no other build config changes:
+    - `@keyframes goGlow { 0% { transform: scale(.2); opacity: .7 } 100% { transform: scale(3); opacity: 0 } }`
+      → `animate-[goGlow_0.7s_ease-out]`
+    - `@keyframes sparkFly { 0% { opacity: 1; transform: translate(-50%,-50%) scale(.3) } 60% { opacity: 1 } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.1) } }`
+      → `animate-[sparkFly_0.8s_ease-out_forwards]`
+  - **8 sparks**, each `SparkleIcon` or `StarFourIcon` (`@phosphor-icons/react`, already installed
+    — Sprint 0), positioned via inline `--dx`/`--dy` CSS custom properties the `sparkFly` keyframe
+    reads, exact values from the design's markup:
+
+    | # | dx | dy | icon | size | color token |
+    |---|---|---|---|---|---|
+    | 1 | -54px | -42px | SparkleIcon | 13px | `textAccent300` |
+    | 2 | 50px | -46px | SparkleIcon | 11px | `textAccent200` |
+    | 3 | 60px | 22px | StarFourIcon | 12px | `textAccent300` |
+    | 4 | -60px | 18px | SparkleIcon | 10px | `textAccent200` |
+    | 5 | -22px | -62px | StarFourIcon | 10px | `textAccent200` (see substitution note) |
+    | 6 | 28px | 58px | SparkleIcon | 12px | `textAccent300` |
+    | 7 | -32px | 54px | SparkleIcon | 11px | `textAccent200` |
+    | 8 | 14px | -60px | StarFourIcon | 9px | `textAccent300` |
+
+    **Substitution note (spark #5):** the design uses a bare `accent-100` for this one spark, which
+    has no equivalent in this codebase's locked token set (`lib/tokens.ts` only defines
+    accent-200/300/400/500/700/800). Rather than adding a ninth token for one decorative spark,
+    it's substituted with `textAccent200` — a deliberate, recorded downgrade, not a silent drop.
+  - Trigger is `busy` (see prop contract above), **not** the design's CSS-only checkbox-input hack
+    — real component state replaces that static-prototype trick.
+  - Gated by `usePrefersReducedMotion()` (existing hook, Sprint 0/3 precedent — `TaskCardView`'s
+    progress-line pulse is the direct precedent here): when `true`, the `animate-[goGlow...]`,
+    `animate-[sparkFly...]`, and `animate-spin` classes are all omitted entirely — `busy`'s label
+    swap ("Start tailoring" → "Tailoring…") and the click's `onClick` call are unaffected, per the
+    epic-wide rule that triggered animations collapse to an instant state change under reduced
+    motion, never removed functionality.
+- **3-step indicator labels are this doc's own choice, not lifted from the design** (a quick,
+  reasonable search of the extracted prototype turned up no literal step-label copy near the 3a
+  section — not worth further excavation for non-load-bearing presentational text): **"1 Provide"
+  → "2 Review" → "3 Generate"**, mapped from `useIntakeFlow`'s stage
+  (`provide`/`parsing` → step 1, `review`/`starting` → step 2, `building` → step 3), current step
+  marked with `aria-current="step"` (a real, standard ARIA pattern for step indicators, not
+  invented here).
+- **"Requirement chips" on the parsed-result card are explicitly NOT built — a real, deliberate
+  scope cut, not an oversight.** Checked directly: `TaskDraft` (`TaskFlow.Api/Ingestion/TaskDraft.cs`
+  and its frontend mirror in `types.ts`) has exactly `title`, `description`, `kind`, `section`,
+  `company` — no structured requirements list of any kind, and a repo-wide search of the design
+  prototype's own markup for a "chip" component near the Ingest section turned up nothing either
+  (only unrelated icon-font glyph names). Rendering "requirement chips" would mean fabricating
+  data that was never parsed — this epic's own standing rule elsewhere (never invent scope, never
+  fabricate) applies exactly here. **The parsed-result card shows title (role), company (with the
+  same em-dash `—` quiet-placeholder convention `TaskCardView.tsx` already established for a null
+  company), and description** — real fields only, sourced exactly as the epic doc's own Decisions
+  section already said ("whatever `ClaudeJobPostingParser` already returns plus Sprint 3's new
+  `Company` field — no new parser capability needed").
+- **`TailorButton` replaces both the current `stage === 'review'` button block and the separate
+  `stage === 'starting'` "Starting…" paragraph** — `TailorButton` renders across both stages
+  (`busy={intake.stage === 'starting'}`) and its own "Tailoring…" label already communicates the
+  busy state, so the standalone paragraph is redundant once it's wired in, not a second thing to
+  keep in parallel.
+- **The click-to-expand base-resume preview is additive, not a replacement of the existing
+  textarea.** The Sprint 4 Definition of Done's own phrasing ("not a raw textarea") is read
+  against the more precise, binding U4.3 task text and this sprint's own locked "underlying
+  textarea-based capture/save behavior is unchanged" decision above: you cannot edit resume text
+  through a rendered Markdown preview, so the `id="base-resume"`/`<label>` textarea pair stays
+  exactly as-is (existing tests type into it via `getByLabelText(/base resume/i)` and must keep
+  passing unchanged) — the collapsed-thumbnail/expand-to-`MarkdownPreview` piece is a new sibling
+  element next to it, not a swap.
+
 ### Tasks
 
 **U4.1 — Restyled 3-step Ingest layout.** RED: the existing stage-model assertions
@@ -877,9 +977,50 @@ fix the axe run surfaces.
 
 *(Not yet started — nothing to record.)*
 
-### Post-sprint retrospective (fill in once this sprint ships)
+### Post-sprint retrospective (2026-08-14)
 
-*(Not yet started — nothing to record.)*
+- **A real, discovered consequence of U4.4's navigate-on-success, not invented scope: `IntakeProgress`
+  became dead code and was deleted.** `startTailoring()` calls `setStage('building')` immediately
+  followed by `navigate('/board')`, both synchronous (no `await` between them) — React 18's
+  automatic batching means these land in one commit, and since the navigation swaps `<Routes>` at
+  an ancestor of `IngestDocument`, that commit unmounts `IngestDocument` rather than ever painting
+  it with `stage === 'building'`. Verified empirically (a scratch test proved the pre-existing
+  "renders live per-item progress rows once building is reached" test only passed if changed to
+  assert navigation instead), not assumed from reading the code alone. Confirmed via a repo-wide
+  `IntakeProgress` search that `IngestDocument.tsx` was its only consumer, then deleted
+  `IntakeProgress.tsx`/`IntakeProgress.test.tsx` outright along with the now-unreachable `stage ===
+  'building'` branch and the `useAgentFeed` subscription that only fed it — full scoped suite
+  (47/47) still green after the deletion. **This is judged a genuine improvement, not a
+  regression**: Sprint 3 (U3.4) already built equivalent live per-task progress directly on the
+  Board (`TaskCardView`'s in-progress shimmer + "Tailoring {kind}…" line), so a user who lands on
+  the Board immediately after starting tailoring sees real, live progress there — a bespoke
+  progress widget on the page they've already left would have been redundant, not missing
+  functionality.
+- **"Requirement chips" (from the original design mockup's parsed-result card) were not built.**
+  Checked directly, not assumed: `TaskDraft` (backend and its `types.ts` mirror) has no structured
+  requirements field, and a search of the design prototype's own markup near the Ingest section
+  found no real chip data source either. Building them would have meant fabricating data that was
+  never parsed — descoped explicitly, recorded in this sprint's own "Implementation decisions"
+  above before any engineer started, not discovered after the fact.
+- **Two-engineer split by file ownership (Sprint 0/1's precedent, not Sprint 2's) worked cleanly**:
+  Engineer A's `TailorButton.tsx`/`useIntakeFlow.ts` slice and Engineer B's `IngestDocument.tsx`
+  slice never touched the same file, and B integrated against A's already-finished, verified work
+  (not a guessed interface) since the two were run sequentially, not in parallel, specifically
+  because B's integration and full-stage `vitest-axe` pass depended on A's component actually
+  existing.
+- **`useIntakeFlow.test.ts`'s `renderHook` calls all needed a real `MemoryRouter` wrapper** once
+  `startTailoring` started calling `useNavigate()` internally — written with `React.createElement`
+  rather than JSX since the file is `.test.ts`, not `.test.tsx` (matching the path this doc itself
+  specifies), proven equivalent to a JSX version.
+- **`stepForStage` (U4.1's stage→step mapping) was extracted to a new `lib/intakeSteps.ts`**, not
+  named as a file to create anywhere in this doc — `eslint`'s `react-refresh/only-export-components`
+  rejects a non-component export from a component file, and this codebase's own `lib/board.ts`
+  already established the "small pure helpers live in `lib/`" convention this follows.
+- **Independently verified, not just trusted**: both engineers' diffs were read directly (not just
+  their self-reports), their scoped tests re-run independently by the architect pass, `tsc -b`
+  checked (surfaced only a pre-existing, repo-wide `vitest-axe` type-declaration gap affecting
+  every axe test file, not something either engineer introduced), and the dead-code consequence
+  above was verified by direct repo search before deleting anything.
 
 ---
 
