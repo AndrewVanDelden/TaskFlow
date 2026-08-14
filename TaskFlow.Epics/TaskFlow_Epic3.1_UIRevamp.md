@@ -724,6 +724,31 @@ cross-check. **Status: FIXED — both findings resolved 2026-08-14:**
 
 Full suite green after both fixes: backend 417/417, frontend 241/241 (up from 239).
 
+### Post-ship fix (2026-08-14) — Board screenshot feedback
+
+Two real usability regressions found after shipping, on `fix/board-executor-control-and-agent-status-alignment` (off `develop`, separate from this sprint's own PR since these are Sprint 3 files):
+
+1. **`ExecutorControl`'s status dot lost any glanceable running/stopped distinction** — `bgAccent400`
+   (running) vs. `bg-white/20` (paused, near-invisible). Fixed to match this same Board screen's own
+   existing vocabulary rather than inventing a third one: `bg-emerald-400` (running, pulsing) matches
+   `AgentStatus`'s "Running" pill and Dashboard's "Live" connection dot; `bg-slate-500` (paused, solid)
+   matches `AgentStatus`'s "Idle" dot. No red anywhere — no adjacent precedent for it on this screen,
+   and "paused" isn't an error state.
+2. **`ExecutorControl` renders full-width in Dashboard's `<main>`, above the two-column split** — the
+   old bare `flex-1` row stretched the whole page width, stranding the Pause/Enable button far from
+   its own status text. Fixed by capping the row at `max-w-sm`.
+3. **`AgentStatus`'s two agent cards didn't vertically align** — "Stale Task Detector" wraps to two
+   lines while "Task Prioritizer" fits one, and since the cards size independently in a `grid-cols-2`
+   layout with no shared row height, that extra line pushed everything below it (the stats rows) down
+   relative to the shorter card. Fixed with `truncate` (plus `min-w-0` on the flex parent, required
+   for truncate to engage inside a flex item) so both headers stay exactly one line regardless of
+   label length.
+
+All three RED-tested first, verified live in the running app (capped row width, emerald/slate dot
+colors, and identical `Actions logged` row `top` position between both cards, confirmed via direct
+DOM measurement at a real 1280px desktop viewport). Full suite green: backend 424/424, frontend
+245/245.
+
 ### Post-sprint retrospective (2026-08-14)
 
 - **Real tooling-boundary checkpoint, confirmed not hypothetical: an EF Core migration was actually
