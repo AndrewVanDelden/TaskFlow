@@ -177,7 +177,7 @@ re-litigate them mid-sprint.
 | **0** | Design System Foundations, Accessibility & Test Infrastructure | **Shipped** (2026-08-13) — U0.1-U0.6 all green on `feature/epic3.1-sprint-0-foundations`; PR not yet opened |
 | **1** | App Shell (Sidebar + Top Bar) | **Shipped** (2026-08-14) — U1.1-U1.5 all green on `feature/epic3.1-sprint-1-app-shell`; PR not yet opened |
 | **2** | Login | **Shipped** (2026-08-14) — U2.1-U2.3 all green on `feature/epic3.1-sprint-2-login`; PR not yet opened |
-| **3** | Board (application-centric cards, quiet executor line, Activity rail) | Ready — architecture below, no code yet |
+| **3** | Board (application-centric cards, quiet executor line, Activity rail) | **Shipped** (2026-08-14) — U3.1-U3.7 all green on `feature/epic3.1-sprint-3-board`; PR not yet opened |
 | **4** | Ingest & Hand-off (restyled paste flow, tailoring square) | Ready — architecture below, no code yet |
 
 ## Definition of Done (Epic 3.1)
@@ -696,9 +696,57 @@ sprint.
 
 *(Not yet started — nothing to record.)*
 
-### Post-sprint retrospective (fill in once this sprint ships)
+### Post-sprint retrospective (2026-08-14)
 
-*(Not yet started — nothing to record.)*
+- **Real tooling-boundary checkpoint, confirmed not hypothetical: an EF Core migration was actually
+  required.** Backend tests use two different DB-provisioning paths — unit tests via
+  `SqliteInMemoryContext.EnsureCreated()` (builds schema straight from the live model, no migration
+  needed) and integration tests via `TestWebAppFactory` running real `Program.cs` startup, which
+  calls `Database.Migrate()` and throws `PendingModelChangesWarning` if the model and migration
+  history disagree. Checking only the first path before starting led to a wrong initial assumption
+  that no migration was needed — caught for real (not by re-reasoning) when the first post-U3.1
+  `.\test` run came back with 48 failures, all the identical error. `dotnet ef migrations add` isn't
+  covered by the standing `.\test`-only self-run permission, so this was handed to the user
+  ("done" — user ran it); the resulting migration is purely additive, matching what was expected.
+- **Both job-posting parsers already extracted a company name before this sprint** — they were
+  smuggling it through `TaskDraft.Section` (meant for document-section provenance) for lack of a
+  real field. `TaskDraft.Company` was added as an *optional trailing* record parameter (default
+  `null`) specifically so every unrelated 4-arg call site (`ClaudeIngestionParser`,
+  `SpecDocumentParser`, and their tests) kept compiling unchanged. Two existing parser tests
+  (`JobPostingParserTests`, `ClaudeJobPostingParserTests`) needed a deliberate, named reconciliation
+  from asserting company-in-Section to company-in-Company — their own names already said "extracts
+  title and company," so this was always their real intent.
+- **`TaskResponseDto` (not `JobApplicationResponseDto`) is what actually reaches the Board's
+  cards** — traced end-to-end via the existing `task.Application?.State` → `ApplicationState`
+  precedent before writing any code, not assumed from the epic doc's own "audited at task time" note.
+- **`TaskItem.company`/`TaskDraft.company` made optional** (`company?: string | null`), mirroring
+  this codebase's own existing `applicationState?` precedent and its stated reason verbatim —
+  existing fixtures across `KanbanColumn.test.tsx`/`TaskCard.test.tsx`/`ApplicationReviewCard.test.tsx`
+  don't need updating.
+- **`ExecutorControl`'s summary line uses only `enabled`/`busy`, not the design mockup's task-count
+  example** ("2 working · 3 queued · 6 done today") — that data isn't available from
+  `useExecutorControl()`, and the epic's own locked decision says the hook stays unchanged. Adding
+  counts would have meant quietly expanding scope into hook changes explicitly ruled out.
+- **Done-column's muted/dimmed treatment and "Approved · exported" checkmark line (from the raw
+  design mockup) were deliberately not built** — neither is in this epic doc's own locked U3.3/U3.4
+  task text, only in the source design's Story 2 description, so building it would have been
+  scope invented beyond what was actually asked for here.
+- **Board rail kept at its existing 360px, not the design's descriptive 300px** — `AgentStatus`'s
+  two-card `grid-cols-2` layout risks real wrapping at 300px with no test to catch it, and 300px
+  isn't a locked, RED-tested requirement anywhere in this sprint's actual task list.
+- **A genuine cross-cutting gap, caught by an agent and correctly escalated rather than silently
+  patched**: `TaskCardView` now calls `usePrefersReducedMotion()` unconditionally (Rules of Hooks),
+  and jsdom has no real `window.matchMedia` — every test rendering `TaskCardView`, directly or via
+  `TaskCard`/`KanbanColumn`/`KanbanBoard`'s `DragOverlay`, would throw. Fixed once, centrally: a
+  default `mockPrefersReducedMotion(false)` in `test/setup.ts`'s `beforeEach`, benefiting every
+  current and future animated component's tests, not a per-file patch repeated three times.
+- **`TaskCard.test.tsx` had its own separate `'Unassigned'` assertion** neither the TaskCardView
+  restyle task nor its own test file's brief covered (different file, missed in initial planning) —
+  caught by running the full suite, not by re-reading the brief, and fixed with the same deliberate
+  em-dash reconciliation as `TaskCardView.test.tsx`'s own equivalent case.
+- **`AgentFeed.tsx` deleted and `lib/styles.ts`'s `priorityStyles`/`actionStyles` retired**, confirmed
+  via repo-wide import search after both became genuinely unused (Dashboard's U3.6 swap and
+  TaskCardView's U3.3 restyle respectively) — `neutralStyle` kept, still used by `AgentStatus.tsx`.
 
 ---
 
