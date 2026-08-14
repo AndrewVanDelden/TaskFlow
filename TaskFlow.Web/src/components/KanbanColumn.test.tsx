@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { DndContext } from '@dnd-kit/core'
 import { KanbanColumn } from './KanbanColumn'
 import type { TaskItem, TaskKind } from '../types'
+import { axe } from '../test/axe'
 
 const task: TaskItem = {
   id: 1, title: 'Ship it', description: null, status: 'Todo',
@@ -109,5 +110,15 @@ describe('KanbanColumn', () => {
     const coverLetterCard = screen.getByText('Tailor cover letter').closest('[role="button"]')
     expect(resumeCard).toHaveAttribute('tabindex', '0')
     expect(coverLetterCard).toHaveAttribute('tabindex', '0')
+  })
+
+  it('has no accessibility violations', async () => {
+    const { container } = render(
+      <DndContext>
+        <KanbanColumn status="Todo" label="To Do" tasks={[task]} />
+      </DndContext>,
+    )
+
+    expect(await axe(container)).toHaveNoViolations()
   })
 })
