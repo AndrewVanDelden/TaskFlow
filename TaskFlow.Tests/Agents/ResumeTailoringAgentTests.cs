@@ -194,6 +194,78 @@ public class ResumeTailoringAgentTests
         allText.IndexOf(BaseResumeText, StringComparison.Ordinal).Should().BeInRange(resumeOpen, resumeClose);
     }
 
+    // Bug found via live dogfooding (2026-08-14): the shared 1024-token default (meant for short,
+    // structured outputs like TaskPrioritizerAgent's tool args) is too tight for a full tailored
+    // resume, causing Claude to run out of output budget mid-cycle and end its turn without ever
+    // calling the save tool - the task then rolls back and gets reclaimed forever, since no
+    // retry-limit/backoff mechanism exists (Epic 2's "Claude retry/resilience" was deliberately
+    // deferred and never built). Tailoring agents get their own, larger ceiling instead of raising
+    // the shared default for every agent (TaskPrioritizer/StaleTaskDetector need far less).
+    [Fact]
+    public async Task Requests_the_tailoring_specific_higher_token_ceiling_not_the_shared_default()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Tailored resume");
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
+        claude.LastRequest!.MaxTokens.Should().Be(TaskFlow.Api.Configuration.AnthropicDefaults.TailoringMaxTokens);
+    }
+
+    [Fact]
+    public async Task Honors_a_configured_TailoringMaxTokens_override_instead_of_the_code_default()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Tailored resume");
+        var configuredConfig = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Anthropic:ApiKey"] = "test",
+            ["Anthropic:TailoringMaxTokens"] = "2048"
+        }).Build();
+
+        var sut = new ResumeTailoringAgent(claude, tasks, resumeContexts, jobApplications, logs,
+            Mock.Of<IAgentNotifier>(), configuredConfig, NullLogger<ResumeTailoringAgent>.Instance);
+        await sut.RunAsync(CancellationToken.None);
+
+        claude.LastRequest!.MaxTokens.Should().Be(2048);
+    }
+
+    // The narrow fix for the token ceiling alone does not stop Claude from spending its (now
+    // larger) budget narrating a plan in text instead of calling the save tool - this is a
+    // complementary, cheap mitigation for the exact failure mode observed live: a coherent-sounding
+    // "Let me carefully tailor..." final message with zero tool_use in that turn.
+    [Fact]
+    public async Task Instructs_Claude_not_to_narrate_a_plan_instead_of_calling_the_save_tool()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Tailored resume");
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
+        var initialPrompt = claude.LastRequest!.Messages[0].Content.OfType<TextContent>().FirstOrDefault()?.Text;
+        initialPrompt.Should().Contain("Do not end your turn until you have called");
+    }
+
     [Fact]
     public async Task Rejects_over_length_content_and_rolls_back_to_Todo_since_nothing_was_saved()
     {

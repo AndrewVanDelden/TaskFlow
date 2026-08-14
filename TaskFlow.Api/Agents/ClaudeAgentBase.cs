@@ -87,17 +87,20 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
     /// Runs the full tool-use conversation: send the prompt, let Claude call tools,
     /// execute each via <paramref name="dispatch"/>, feed results back, and repeat
     /// until Claude ends its turn or the iteration cap is hit. Model and token
-    /// limit come from configuration (falling back to <see cref="AnthropicDefaults"/>).
+    /// limit come from configuration (falling back to <see cref="AnthropicDefaults"/>),
+    /// unless the caller supplies its own resolved <paramref name="maxTokensOverride"/>
+    /// (e.g. TailoringAgentBase, whose agents need a higher ceiling than the shared default).
     /// </summary>
     /// <returns>The number of tool calls that completed successfully.</returns>
     protected async Task<int> RunToolConversationAsync(
         string prompt,
         IReadOnlyList<Tool> tools,
         ToolDispatcher dispatch,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? maxTokensOverride = null)
     {
         var model = Config["Anthropic:Model"] ?? AnthropicDefaults.Model;
-        var maxTokens = Config.GetValue("Anthropic:MaxTokens", AnthropicDefaults.MaxTokens);
+        var maxTokens = maxTokensOverride ?? Config.GetValue("Anthropic:MaxTokens", AnthropicDefaults.MaxTokens);
 
         var messages = new List<Message> { new(RoleType.User, prompt) };
         var successfulActions = 0;

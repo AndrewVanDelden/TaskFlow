@@ -110,6 +110,29 @@ public class CoverLetterAgentTests
         updated!.ClaimedBy.Should().Be(AgentNames.CoverLetter);
     }
 
+    // Confirms the shared TailoringAgentBase fix (found via live dogfooding, 2026-08-14 - see
+    // ResumeTailoringAgentTests for the full rationale) reaches this subclass too, not just
+    // ResumeTailoringAgent - both agents inherit the same prompt/token-ceiling logic from one place.
+    [Fact]
+    public async Task Requests_the_tailoring_specific_higher_token_ceiling_and_the_no_narrate_instruction()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Cover letter");
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
+        claude.LastRequest!.MaxTokens.Should().Be(TaskFlow.Api.Configuration.AnthropicDefaults.TailoringMaxTokens);
+        var initialPrompt = claude.LastRequest!.Messages[0].Content.OfType<TextContent>().FirstOrDefault()?.Text;
+        initialPrompt.Should().Contain("Do not end your turn until you have called");
+    }
+
     [Fact]
     public async Task Saves_cover_letter_moves_to_Review_and_leaves_sibling_and_application_untouched()
     {
