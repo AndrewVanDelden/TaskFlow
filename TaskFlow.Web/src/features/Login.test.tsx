@@ -121,4 +121,28 @@ describe('Login flow', () => {
 
     expect(await axe(container)).toHaveNoViolations()
   })
+
+  it('keeps the TaskFlow wordmark reachable regardless of viewport (one copy per pane)', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getAllByText('TaskFlow')).toHaveLength(2)
+  })
+
+  it('uses Nocturne neutral tokens, not raw Tailwind slate classes, for muted text', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    const tagline = screen.getByText('Your autonomous application workspace')
+    expect(tagline.className).not.toMatch(/text-slate-\d/)
+
+    const email = screen.getByPlaceholderText('Email')
+    expect(email.className).not.toMatch(/placeholder-slate-\d/)
+  })
 })

@@ -21,6 +21,7 @@ export const bgAccent800 = 'bg-[#423a6a]'
 export const textNeutral300 = 'text-[#cfd3e5]'
 export const textNeutral400 = 'text-[#b2b6ca]'
 export const textNeutral500 = 'text-[#9397ab]'
+export const placeholderNeutral500 = 'placeholder-[#9397ab]'
 export const textNeutral600 = 'text-[#75798c]'
 
 // Global rule (design system): every interactive element gets this accent focus-visible ring,

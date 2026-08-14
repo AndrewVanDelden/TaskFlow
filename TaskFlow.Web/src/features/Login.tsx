@@ -3,9 +3,18 @@ import { useNavigate } from 'react-router-dom'
 import { login, register } from '../api/auth'
 import { useAuth } from '../hooks/AuthContext'
 import { Button } from '../components/ui/Button'
-import { bgPage, bgSurface, textNeutral500, textPrimary, focusRingAccent } from '../lib/tokens'
+import {
+  bgPage,
+  bgSurface,
+  textNeutral300,
+  textNeutral400,
+  textNeutral500,
+  placeholderNeutral500,
+  textPrimary,
+  focusRingAccent,
+} from '../lib/tokens'
 
-const inputClass = `w-full h-10 px-3 rounded-lg bg-[#232532] border border-white/10 text-white placeholder-slate-500 ${focusRingAccent}`
+const inputClass = `w-full h-10 px-3 rounded-lg bg-[#232532] border border-white/10 text-white ${placeholderNeutral500} ${focusRingAccent}`
 
 const labelClass = `block mb-1 text-xs ${textNeutral500}`
 
@@ -51,12 +60,12 @@ export function Login() {
         <div className="hidden md:flex w-1/2 flex-col justify-center gap-10 p-10 bg-gradient-to-br from-[#423a6a] to-[#161826]">
           <div>
             <span className={`text-2xl font-bold ${textPrimary}`}>TaskFlow</span>
-            <p className="text-slate-300 text-sm mt-1">Your autonomous application workspace</p>
+            <p className={`${textNeutral300} text-sm mt-1`}>Your autonomous application workspace</p>
           </div>
 
           <ul className="space-y-3">
             {teasers.map((teaser) => (
-              <li key={teaser} className="flex items-center gap-2 text-sm text-slate-300">
+              <li key={teaser} className={`flex items-center gap-2 text-sm ${textNeutral300}`}>
                 <span className="h-1.5 w-1.5 rounded-full bg-[#9184d9]" />
                 {teaser}
               </li>
@@ -65,11 +74,15 @@ export function Login() {
         </div>
 
         <div className={`w-full md:w-1/2 ${bgSurface} p-8 flex flex-col justify-center`}>
+          <div className="mb-6 md:hidden">
+            <span className={`text-2xl font-bold ${textPrimary}`}>TaskFlow</span>
+          </div>
+
           <form onSubmit={handleSubmit}>
             <h1 className={`text-lg font-semibold ${textPrimary} mb-1`}>
               {isRegistering ? 'Create your account' : 'Welcome back'}
             </h1>
-            <p className="text-slate-400 text-sm mb-5">
+            <p className={`${textNeutral400} text-sm mb-5`}>
               {isRegistering ? 'Sign up to get started' : 'Sign in to continue'}
             </p>
 
