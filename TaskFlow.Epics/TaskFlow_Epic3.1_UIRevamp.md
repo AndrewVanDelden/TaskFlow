@@ -425,9 +425,29 @@ assumed).
 - Unblocks: Sprints 2–4, all of which render inside this shell (Login is the one exception —
   see Sprint 2 — it renders outside the authenticated shell entirely, matching today's behavior).
 
-### Code review findings (fill in after this sprint's PR is reviewed)
+### Code review findings (2026-08-14) — PR #53
 
-*(Not yet started — nothing to record.)*
+Manual review posted directly to the PR as inline comments (high effort, 8 finder angles,
+verified pass) — see
+[review #4934165150](https://github.com/AndrewVanDelden/TaskFlow/pull/53#pullrequestreview-4934165150)
+for the full text, each comment anchored to its exact line. No prior review on this PR to
+cross-check. **Status: RESOLVED — all 4 findings fixed, verified via a fresh `.\test` run (backend
+414/414, frontend 42/42 files, 217/217 tests), and merged to `develop` in PR #53:**
+
+1. `App.tsx:35` (CONFIRMED, FIXED — 89e2588) — outer shell changed from `min-h-screen` to
+   `h-screen`, so the fixed-height `SideBar` no longer scrolls out of view on tall pages. Verified
+   via `getComputedStyle` (a real, non-flaky check — `h-screen`/`min-h-screen` set genuinely
+   different CSS properties, `height` vs `min-height`).
+2. `SideBar.tsx:33` (PLAUSIBLE, FIXED — 8c6d941) — added `aria-haspopup`/`aria-expanded`, and a
+   `useLocation`-driven effect that closes the menu on route change (the actual correctness bug,
+   since `SideBar` isn't remounted on navigation). **Deliberately not added**: outside-click/Escape
+   dismissal — scoped out as separate UX polish, not the correctness bug the review found.
+3. `formatting.ts:11` (PLAUSIBLE, FIXED — e6ffe6a) — `formatRelativeTime` now clamps explicitly via
+   `Math.max(0, ...)` instead of relying on the accidental fallthrough that already produced
+   `'just now'` for negative diffs. Behavior is unchanged by design (this is an agent-activity feed;
+   clock-skew-as-"just now" is correct) — the fix makes the intent real, tested code.
+4. `AgentFeedList.tsx:15` (PLAUSIBLE, FIXED — 8e0aad7) — `log.details ?? log.action` changed to
+   `log.details || log.action`, so an empty-string `details` now falls back to `action` too.
 
 ### Post-sprint retrospective (2026-08-14)
 
