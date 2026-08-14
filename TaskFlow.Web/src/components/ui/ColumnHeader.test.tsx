@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { ColumnHeader } from './ColumnHeader'
+import { axe } from '../../test/axe'
 
 // U0.3 — shared ColumnHeader primitive. Both label and count must render in neutral-500, not
 // neutral-600 — the design handoff's cheat sheet had the count in neutral-600, but the epic doc's
@@ -32,5 +33,11 @@ describe('ColumnHeader', () => {
     render(<ColumnHeader label="To Do" count={12} />)
 
     expect(screen.getByRole('heading', { name: 'To Do' })).toBeInTheDocument()
+  })
+
+  it('has no accessibility violations', async () => {
+    const { container } = render(<ColumnHeader label="To Do" count={12} />)
+
+    expect(await axe(container)).toHaveNoViolations()
   })
 })

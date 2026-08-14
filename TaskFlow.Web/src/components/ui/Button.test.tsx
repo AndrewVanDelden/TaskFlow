@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { Button } from './Button'
+import { axe } from '../../test/axe'
 
 // U0.2 — shared Button primitive. Primary is an accent outline, not a fill; ghost is transparent
 // with a muted label. Base-state colors are asserted via getComputedStyle (reliable now that
@@ -57,5 +58,16 @@ describe('Button', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(clicked).toBe(true)
+  })
+
+  it('has no accessibility violations for either variant', async () => {
+    const { container } = render(
+      <>
+        <Button variant="primary">Save</Button>
+        <Button variant="ghost">Cancel</Button>
+      </>,
+    )
+
+    expect(await axe(container)).toHaveNoViolations()
   })
 })
