@@ -381,7 +381,7 @@ public class TaskServiceTests
     [Fact]
     public async Task GetAll_rejects_an_invalid_status_string()
     {
-        var result = await CreateSut().GetAllAsync("Nonsense", null, callerId: 1);
+        var result = await CreateSut().GetAllAsync("Nonsense", null, archived: false, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.Validation);
     }
@@ -389,7 +389,7 @@ public class TaskServiceTests
     [Fact]
     public async Task GetAll_rejects_an_invalid_priority_string()
     {
-        var result = await CreateSut().GetAllAsync(null, "Ultra", callerId: 1);
+        var result = await CreateSut().GetAllAsync(null, "Ultra", archived: false, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.Validation);
     }
@@ -397,10 +397,10 @@ public class TaskServiceTests
     [Fact]
     public async Task GetAll_returns_the_mapped_list()
     {
-        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync(new List<TaskItem> { SampleTask(1), SampleTask(2) });
 
-        var result = await CreateSut().GetAllAsync(null, null, callerId: 1);
+        var result = await CreateSut().GetAllAsync(null, null, archived: false, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Should().HaveCount(2);
@@ -413,13 +413,28 @@ public class TaskServiceTests
     [Fact]
     public async Task GetAll_forwards_the_callerId_to_the_repository()
     {
-        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), 7, It.IsAny<CancellationToken>()))
+        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<bool>(), 7, It.IsAny<CancellationToken>()))
               .ReturnsAsync(new List<TaskItem>());
 
-        var result = await CreateSut().GetAllAsync(null, null, callerId: 7);
+        var result = await CreateSut().GetAllAsync(null, null, archived: false, callerId: 7);
 
         result.IsSuccess.Should().BeTrue();
-        _tasks.Verify(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), 7, It.IsAny<CancellationToken>()), Times.Once);
+        _tasks.Verify(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), false, 7, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Board archive feature: the archived flag itself must reach the repository unmolested - proven
+    // separately from callerId forwarding above, so a bug that hardcodes/ignores the flag can't hide
+    // behind the other passing test.
+    [Fact]
+    public async Task GetAll_forwards_the_archived_flag_to_the_repository()
+    {
+        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), true, It.IsAny<int>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(new List<TaskItem>());
+
+        var result = await CreateSut().GetAllAsync(null, null, archived: true, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        _tasks.Verify(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), true, It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // Sprint 4R, Task 1: TaskResponseDto gains Kind, ApplicationId, TailoredContent so a second
@@ -432,16 +447,149 @@ public class TaskServiceTests
         task.Kind = TaskKind.ResumeTailoring;
         task.ApplicationId = 5;
         task.TailoredContent = "Tailored resume markdown.";
-        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _tasks.Setup(t => t.GetAllAsync(It.IsAny<WorkflowStatus?>(), It.IsAny<TaskPriority?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync(new List<TaskItem> { task });
 
-        var result = await CreateSut().GetAllAsync(null, null, callerId: 1);
+        var result = await CreateSut().GetAllAsync(null, null, archived: false, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         var dto = result.Value!.Single();
         dto.Kind.Should().Be(nameof(TaskKind.ResumeTailoring));
         dto.ApplicationId.Should().Be(5);
         dto.TailoredContent.Should().Be("Tailored resume markdown.");
+    }
+
+    // ── Archive (Done -> soft-archived, restorable via the Archive view) ───────
+    [Fact]
+    public async Task Archive_archives_a_Done_task_and_returns_the_updated_dto()
+    {
+        var doneTask = SampleTask();
+        doneTask.Status = WorkflowStatus.Done;
+        var archivedTask = SampleTask();
+        archivedTask.Status = WorkflowStatus.Done;
+        archivedTask.ArchivedAt = DateTime.UtcNow;
+        // Matches UpdateAsync's re-fetch pattern: ArchiveAsync is a repository ExecuteUpdateAsync
+        // bypass, so the service must not trust the pre-mutation in-memory instance it already holds.
+        _tasks.SetupSequence(t => t.GetByIdAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(doneTask)
+              .ReturnsAsync(archivedTask);
+        _tasks.Setup(t => t.ArchiveAsync(1, 1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var result = await CreateSut().ArchiveAsync(1, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ArchivedAt.Should().NotBeNull();
+        _tasks.Verify(t => t.ArchiveAsync(1, 1, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Archive_rejects_a_task_that_is_not_Done()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Todo;
+        SetupGetById(task);
+
+        var result = await CreateSut().ArchiveAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.ArchiveAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Archive_returns_NotFound_when_task_missing()
+    {
+        SetupGetById(null);
+
+        var result = await CreateSut().ArchiveAsync(9, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
+    [Fact]
+    public async Task Archive_returns_NotFound_when_caller_is_not_the_owner_of_an_Epic3_sibling_task()
+    {
+        // Status is Done (unlike Epic3TaskOwnedBy's Review default), so an unguarded call would
+        // otherwise pass the status guard too - this proves the block is the ownership check.
+        var task = Epic3TaskOwnedBy(ownerId: 99);
+        task.Status = WorkflowStatus.Done;
+        SetupGetById(task);
+
+        var result = await CreateSut().ArchiveAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.ArchiveAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Unarchive (restore) ──────────────────────────────────────────────────
+    [Fact]
+    public async Task Unarchive_restores_an_archived_task_and_returns_the_updated_dto()
+    {
+        var archivedTask = SampleTask();
+        archivedTask.Status = WorkflowStatus.Done;
+        archivedTask.ArchivedAt = DateTime.UtcNow;
+        var restoredTask = SampleTask();
+        restoredTask.Status = WorkflowStatus.Done;
+        _tasks.SetupSequence(t => t.GetByIdAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(archivedTask)
+              .ReturnsAsync(restoredTask);
+        _tasks.Setup(t => t.UnarchiveAsync(1, 1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var result = await CreateSut().UnarchiveAsync(1, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.ArchivedAt.Should().BeNull();
+        _tasks.Verify(t => t.UnarchiveAsync(1, 1, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Unarchive_rejects_a_task_that_is_not_archived()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Done;
+        SetupGetById(task);
+
+        var result = await CreateSut().UnarchiveAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.UnarchiveAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Unarchive_returns_NotFound_when_task_missing()
+    {
+        SetupGetById(null);
+
+        var result = await CreateSut().UnarchiveAsync(9, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+    }
+
+    [Fact]
+    public async Task Unarchive_returns_NotFound_when_caller_is_not_the_owner_of_an_Epic3_sibling_task()
+    {
+        // ArchivedAt is set (unlike Epic3TaskOwnedBy's default null), so an unguarded call would
+        // otherwise pass the "is archived" guard too - this proves the block is the ownership check.
+        var task = Epic3TaskOwnedBy(ownerId: 99);
+        task.ArchivedAt = DateTime.UtcNow;
+        SetupGetById(task);
+
+        var result = await CreateSut().UnarchiveAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.UnarchiveAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── ArchiveAllDone (bulk "clear all Done") ──────────────────────────────
+    [Fact]
+    public async Task ArchiveAllDone_forwards_the_callerId_and_returns_the_repositorys_count()
+    {
+        _tasks.Setup(t => t.ArchiveAllDoneAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(3);
+
+        var result = await CreateSut().ArchiveAllDoneAsync(callerId: 7);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value.Should().Be(3);
+        _tasks.Verify(t => t.ArchiveAllDoneAsync(7, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── Delete ────────────────────────────────────────────────────────────────

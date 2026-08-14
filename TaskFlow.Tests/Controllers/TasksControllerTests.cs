@@ -29,7 +29,7 @@ public class TasksControllerTests
     public async Task GetAll_returns_200_and_forwards_the_current_user_id()
     {
         var service = new Mock<ITaskService>();
-        service.Setup(s => s.GetAllAsync(null, null, 3, It.IsAny<CancellationToken>()))
+        service.Setup(s => s.GetAllAsync(null, null, false, 3, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Result<IReadOnlyList<TaskResponseDto>>.Ok(new List<TaskResponseDto>()));
         var sut = new TasksController(service.Object)
         {
@@ -39,10 +39,32 @@ public class TasksControllerTests
             }
         };
 
-        var result = await sut.GetAll(null, null);
+        var result = await sut.GetAll(null, null, archived: false);
 
         result.Should().BeOfType<OkObjectResult>();
-        service.Verify(s => s.GetAllAsync(null, null, 3, It.IsAny<CancellationToken>()), Times.Once);
+        service.Verify(s => s.GetAllAsync(null, null, false, 3, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Board archive feature: the archived flag must reach the service - proven separately from the
+    // default-false case above so a bug that ignores the query parameter can't hide behind it.
+    [Fact]
+    public async Task GetAll_forwards_archived_true_to_the_service()
+    {
+        var service = new Mock<ITaskService>();
+        service.Setup(s => s.GetAllAsync(null, null, true, 3, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result<IReadOnlyList<TaskResponseDto>>.Ok(new List<TaskResponseDto>()));
+        var sut = new TasksController(service.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = PrincipalFor(3) }
+            }
+        };
+
+        var result = await sut.GetAll(null, null, archived: true);
+
+        result.Should().BeOfType<OkObjectResult>();
+        service.Verify(s => s.GetAllAsync(null, null, true, 3, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -57,10 +79,10 @@ public class TasksControllerTests
             }
         };
 
-        var result = await sut.GetAll(null, null);
+        var result = await sut.GetAll(null, null, archived: false);
 
         result.Should().BeOfType<UnauthorizedObjectResult>();
-        service.Verify(s => s.GetAllAsync(It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        service.Verify(s => s.GetAllAsync(It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -285,6 +307,122 @@ public class TasksControllerTests
 
         result.Should().BeOfType<UnauthorizedObjectResult>();
         service.Verify(s => s.RejectAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Archive / Unarchive / ArchiveAllDone (Done column "clear" actions) ──────
+    [Fact]
+    public async Task Archive_forwards_the_current_user_id_to_the_service()
+    {
+        var service = new Mock<ITaskService>();
+        service.Setup(s => s.ArchiveAsync(1, 3, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result<TaskResponseDto>.Ok(new TaskResponseDto()));
+        var sut = new TasksController(service.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = PrincipalFor(3) }
+            }
+        };
+
+        var result = await sut.Archive(1);
+
+        result.Should().BeOfType<OkObjectResult>();
+        service.Verify(s => s.ArchiveAsync(1, 3, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Archive_returns_401_when_the_identity_claim_is_missing()
+    {
+        var service = new Mock<ITaskService>();
+        var sut = new TasksController(service.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity()) }
+            }
+        };
+
+        var result = await sut.Archive(1);
+
+        result.Should().BeOfType<UnauthorizedObjectResult>();
+        service.Verify(s => s.ArchiveAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Unarchive_forwards_the_current_user_id_to_the_service()
+    {
+        var service = new Mock<ITaskService>();
+        service.Setup(s => s.UnarchiveAsync(1, 3, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result<TaskResponseDto>.Ok(new TaskResponseDto()));
+        var sut = new TasksController(service.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = PrincipalFor(3) }
+            }
+        };
+
+        var result = await sut.Unarchive(1);
+
+        result.Should().BeOfType<OkObjectResult>();
+        service.Verify(s => s.UnarchiveAsync(1, 3, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Unarchive_returns_401_when_the_identity_claim_is_missing()
+    {
+        var service = new Mock<ITaskService>();
+        var sut = new TasksController(service.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity()) }
+            }
+        };
+
+        var result = await sut.Unarchive(1);
+
+        result.Should().BeOfType<UnauthorizedObjectResult>();
+        service.Verify(s => s.UnarchiveAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ArchiveDone_forwards_the_current_user_id_and_returns_the_count()
+    {
+        var service = new Mock<ITaskService>();
+        service.Setup(s => s.ArchiveAllDoneAsync(3, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result<int>.Ok(5));
+        var sut = new TasksController(service.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = PrincipalFor(3) }
+            }
+        };
+
+        var result = await sut.ArchiveDone();
+
+        result.Should().BeOfType<OkObjectResult>();
+        ((OkObjectResult)result).Value.Should().BeEquivalentTo(new { archivedCount = 5 });
+        service.Verify(s => s.ArchiveAllDoneAsync(3, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ArchiveDone_returns_401_when_the_identity_claim_is_missing()
+    {
+        var service = new Mock<ITaskService>();
+        var sut = new TasksController(service.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity()) }
+            }
+        };
+
+        var result = await sut.ArchiveDone();
+
+        result.Should().BeOfType<UnauthorizedObjectResult>();
+        service.Verify(s => s.ArchiveAllDoneAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

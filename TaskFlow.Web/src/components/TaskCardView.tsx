@@ -3,22 +3,26 @@ import { formatDate } from '../lib/formatting'
 import { taskKindLabel } from '../lib/taskKind'
 import { ReviewActions } from './ReviewActions'
 import { ExportDownloadControls } from './ExportDownloadControls'
+import { Button } from './ui/Button'
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
 import { bgSurface, textAccent200, textAccent300, textNeutral500 } from '../lib/tokens'
 
 // Presentational card with no drag behavior, so it can render both inside the sortable TaskCard
 // and inside the DragOverlay (which has no SortableContext). On Review cards it shows the executor's
-// output and the Approve/Reject controls (when onApprove + onReject are supplied).
+// output and the Approve/Reject controls (when onApprove + onReject are supplied). On Done cards it
+// shows a Board Done-column soft-archive control (when onArchive is supplied).
 export function TaskCardView({
   task,
   output,
   onApprove,
   onReject,
+  onArchive,
 }: {
   task: TaskItem
   output?: string[]
   onApprove?: () => void
   onReject?: (reason: string) => void
+  onArchive?: () => void
 }) {
   const prefersReducedMotion = usePrefersReducedMotion()
   const isInProgress = task.status === 'InProgress'
@@ -67,6 +71,16 @@ export function TaskCardView({
 
       {task.status === 'Done' && task.applicationId !== null && task.applicationState === 'Approved' && (
         <ExportDownloadControls applicationId={task.applicationId} kind={task.kind} />
+      )}
+
+      {task.status === 'Done' && onArchive && (
+        // Stop the drag sensor from treating this click as the start of a drag, same convention
+        // as ReviewActions/ExportDownloadControls above.
+        <div className="mt-2" onPointerDown={(e) => e.stopPropagation()}>
+          <Button variant="ghost" onClick={onArchive} className="text-xs px-2 py-1">
+            Archive
+          </Button>
+        </div>
       )}
 
       {isInProgress && (

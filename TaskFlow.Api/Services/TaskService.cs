@@ -165,7 +165,7 @@ public class TaskService : ITaskService
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
-    public async Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, int callerId, CancellationToken ct = default)
+    public async Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, bool archived, int callerId, CancellationToken ct = default)
     {
         WorkflowStatus? parsedStatus = null;
         if (!string.IsNullOrWhiteSpace(status))
@@ -185,7 +185,7 @@ public class TaskService : ITaskService
             parsedPriority = p;
         }
 
-        var tasks = await _tasks.GetAllAsync(parsedStatus, parsedPriority, callerId, ct);
+        var tasks = await _tasks.GetAllAsync(parsedStatus, parsedPriority, archived, callerId, ct);
         IReadOnlyList<TaskResponseDto> dtos = tasks.Select(TaskResponseDto.FromEntity).ToList();
         return Result<IReadOnlyList<TaskResponseDto>>.Ok(dtos);
     }
@@ -202,6 +202,51 @@ public class TaskService : ITaskService
         _tasks.Remove(task);
         await _tasks.SaveChangesAsync(ct);
         return Result<bool>.Ok(true);
+    }
+
+    public async Task<Result<TaskResponseDto>> ArchiveAsync(int id, int callerId, CancellationToken ct = default)
+    {
+        var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
+        if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (task.Status != WorkflowStatus.Done)
+            return Result<TaskResponseDto>.Invalid(
+                $"Task {id} is {task.Status}; only a Done task can be archived.");
+
+        await _tasks.ArchiveAsync(id, callerId, ct);
+
+        // Re-fetch: ArchiveAsync is a repository ExecuteUpdateAsync bypass, so the tracked instance
+        // above never saw ArchivedAt get set (matches UpdateAsync's read-fresh-state-after pattern).
+        var archived = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(archived!));
+    }
+
+    public async Task<Result<TaskResponseDto>> UnarchiveAsync(int id, int callerId, CancellationToken ct = default)
+    {
+        var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
+        if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (task.ArchivedAt is null)
+            return Result<TaskResponseDto>.Invalid($"Task {id} is not archived.");
+
+        await _tasks.UnarchiveAsync(id, callerId, ct);
+
+        var restored = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(restored!));
+    }
+
+    public async Task<Result<int>> ArchiveAllDoneAsync(int callerId, CancellationToken ct = default)
+    {
+        var count = await _tasks.ArchiveAllDoneAsync(callerId, ct);
+        return Result<int>.Ok(count);
     }
 
     // T5.0: an Epic 3 sibling task is visible/mutable only to its JobApplication's owner. A generic

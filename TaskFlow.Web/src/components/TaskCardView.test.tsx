@@ -160,4 +160,37 @@ describe('TaskCardView', () => {
     expect(screen.queryByText('Resume')).toBeNull()
     expect(screen.queryByText('Cover letter')).toBeNull()
   })
+
+  it('shows no Archive button for a non-Done task even when onArchive is supplied', () => {
+    const onArchive = vi.fn()
+    render(<TaskCardView task={task} onArchive={onArchive} />)
+
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull()
+  })
+
+  it('shows no Archive button for a Done task when onArchive is omitted', () => {
+    const doneTask: TaskItem = { ...task, status: 'Done' }
+    render(<TaskCardView task={doneTask} />)
+
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull()
+  })
+
+  it('shows an Archive button for a Done task when onArchive is supplied, and calls it on click', async () => {
+    const onArchive = vi.fn()
+    const doneTask: TaskItem = { ...task, status: 'Done' }
+    render(<TaskCardView task={doneTask} onArchive={onArchive} />)
+
+    const archiveButton = screen.getByRole('button', { name: 'Archive' })
+    await userEvent.click(archiveButton)
+
+    expect(onArchive).toHaveBeenCalledOnce()
+  })
+
+  it('has no accessibility violations with the Archive button present', async () => {
+    const onArchive = vi.fn()
+    const doneTask: TaskItem = { ...task, status: 'Done' }
+    const { container } = render(<TaskCardView task={doneTask} onArchive={onArchive} />)
+
+    expect(await axe(container)).toHaveNoViolations()
+  })
 })

@@ -8,6 +8,7 @@ import { Login } from './features/Login'
 import { Dashboard } from './features/Dashboard'
 import { IngestDocument } from './features/IngestDocument'
 import { Activity } from './features/Activity'
+import { Archive } from './features/Archive'
 import { bgPage, textPrimary } from './lib/tokens'
 
 // Keep authenticated users off the login screen.
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="/ingest" element={<IngestRedirect />} />
           <Route path="/ingest/:sessionId" element={<IngestDocument />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/archive" element={<Archive />} />
         </Route>
         <Route path="*" element={<Navigate to="/board" replace />} />
       </Routes>

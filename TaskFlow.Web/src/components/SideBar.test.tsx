@@ -20,12 +20,13 @@ function renderAt(path: string) {
 }
 
 describe('SideBar', () => {
-  it('renders Board, Ingest, and Activity nav links', () => {
+  it('renders Board, Ingest, Activity, and Archive nav links', () => {
     renderAt('/board')
 
     expect(screen.getByRole('link', { name: 'Board' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Ingest' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Activity' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Archive' })).toBeInTheDocument()
   })
 
   it('marks the active nav item with the active classes, leaving inactive items unstyled', () => {
@@ -36,6 +37,12 @@ describe('SideBar', () => {
 
     expect(board.className).toContain('bg-[#9184d9]/15')
     expect(ingest.className).not.toContain('bg-[#9184d9]/15')
+  })
+
+  it('marks Archive as the active nav item on /archive', () => {
+    renderAt('/archive')
+
+    expect(screen.getByRole('link', { name: 'Archive' }).className).toContain('bg-[#9184d9]/15')
   })
 
   it('reveals a Sign out control when the avatar is clicked, and calls signOut when clicked', async () => {
