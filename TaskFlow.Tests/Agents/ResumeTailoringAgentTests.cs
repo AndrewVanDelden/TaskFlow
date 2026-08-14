@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Anthropic.SDK.Messaging;
@@ -264,6 +265,44 @@ public class ResumeTailoringAgentTests
 
         var initialPrompt = claude.LastRequest!.Messages[0].Content.OfType<TextContent>().FirstOrDefault()?.Text;
         initialPrompt.Should().Contain("Do not end your turn until you have called");
+    }
+
+    // PR #56 review finding (CONFIRMED): the token-ceiling raise alone doesn't fix the code that
+    // actually mishandled the live incident - a response cut off at the token limit (StopReason
+    // "max_tokens") before ever calling a tool was previously logged identically to a normal short
+    // completion, with no way to tell them apart if a resume still exceeds the raised ceiling.
+    [Fact]
+    public async Task Logs_a_warning_distinctly_when_the_response_is_truncated_at_the_token_limit()
+    {
+        using var db = new SqliteInMemoryContext();
+        var (_, resumeTask, _) = await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatTruncatesAtMaxTokens("Now I have everything I need. Let me carefully tailor...");
+        var logger = new Mock<ILogger<ResumeTailoringAgent>>();
+
+        var sut = new ResumeTailoringAgent(claude, tasks, resumeContexts, jobApplications, logs,
+            Mock.Of<IAgentNotifier>(), Config(), logger.Object);
+        await sut.RunAsync(CancellationToken.None);
+
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, t) => true),
+                It.IsAny<Exception>(),
+                It.Is<Func<It.IsAnyType, Exception?, string>>((v, t) => true)),
+            Times.Once);
+
+        // The truncation is still handled safely end-to-end, not just logged: nothing was ever
+        // saved, so the existing "ended without saving" rollback still applies.
+        db.Context.ChangeTracker.Clear();
+        var updated = await tasks.GetByIdAsync(resumeTask.Id);
+        updated!.Status.Should().Be(WorkflowStatus.Todo);
+        updated.ClaimedBy.Should().BeNull();
     }
 
     [Fact]

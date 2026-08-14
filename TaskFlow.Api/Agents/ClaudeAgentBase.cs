@@ -144,15 +144,30 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
             }
             else
             {
-                // StopReason is "end_turn" — Claude is finished.
+                // Claude did not call a tool this turn. Usually StopReason is "end_turn" (a normal
+                // completion), but it can also be "max_tokens" if the response was cut off
+                // mid-generation before it reached a tool call — exactly the live incident this
+                // fix addresses (PR #56): a truncated response looks identical to a short, complete
+                // one unless distinguished here. Logged as a warning, not the routine summary line,
+                // so a recurrence (e.g. a resume that still exceeds the raised ceiling) is visible
+                // in logs instead of indistinguishable from Claude just finishing early.
                 continueLoop = false;
 
                 var finalText = response.Content
                     .OfType<TextContent>()
                     .FirstOrDefault()?.Text;
 
-                if (!string.IsNullOrWhiteSpace(finalText))
+                if (response.StopReason == "max_tokens")
+                {
+                    Logger.LogWarning(
+                        "[{Agent}] Response was truncated at the token limit before calling a tool. " +
+                        "Consider raising the configured max tokens for this agent. Partial text: {Text}",
+                        Name, finalText);
+                }
+                else if (!string.IsNullOrWhiteSpace(finalText))
+                {
                     Logger.LogInformation("[{Agent}] Claude summary: {Text}", Name, finalText);
+                }
             }
         }
 
