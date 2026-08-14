@@ -89,4 +89,21 @@ describe('navigation', () => {
     expect(secondPathname).toMatch(SESSION_URL)
     expect(firstPathname).not.toBe(secondPathname)
   })
+
+  it('shows the Activity page when authenticated at /activity', async () => {
+    authenticate()
+    renderAt('/activity')
+
+    expect(await screen.findByRole('heading', { name: 'Activity' })).toBeInTheDocument()
+  })
+
+  it('signing out from the sidebar redirects to the login form', async () => {
+    authenticate()
+    renderAt('/board')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Account' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByPlaceholderText('Email')).toBeInTheDocument()
+  })
 })
