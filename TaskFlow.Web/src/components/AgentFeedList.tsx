@@ -12,7 +12,7 @@ export function AgentFeedList({ logs }: { logs: AgentLog[] }) {
       {logs.map((log) => (
         <li key={`${log.id}-${log.createdAt}`} className="border-b border-white/10 py-2.5 text-xs">
           <span className={textNeutral400}>{log.agentName}</span>{' '}
-          <span>{log.details ?? log.action}</span>{' '}
+          <span>{log.details || log.action}</span>{' '}
           <span className={`${textNeutral500} float-right`}>{formatRelativeTime(log.createdAt)}</span>
         </li>
       ))}

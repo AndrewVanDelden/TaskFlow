@@ -23,6 +23,12 @@ describe('AgentFeedList', () => {
     expect(screen.getByText('Escalated')).toBeInTheDocument()
   })
 
+  it('falls back to the action when details is an empty string', () => {
+    render(<AgentFeedList logs={[{ ...log, details: '' }]} />)
+
+    expect(screen.getByText('Escalated')).toBeInTheDocument()
+  })
+
   it('renders a relative-time string for each log', () => {
     render(<AgentFeedList logs={[log]} />)
 
