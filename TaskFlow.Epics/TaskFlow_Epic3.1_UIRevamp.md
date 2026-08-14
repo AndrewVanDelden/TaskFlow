@@ -174,7 +174,7 @@ re-litigate them mid-sprint.
 
 | Sprint | What | Status |
 |---|---|---|
-| **0** | Design System Foundations, Accessibility & Test Infrastructure | Ready — architecture below, no code yet |
+| **0** | Design System Foundations, Accessibility & Test Infrastructure | **Shipped** (2026-08-13) — U0.1-U0.6 all green on `feature/epic3.1-sprint-0-foundations`; PR not yet opened |
 | **1** | App Shell (Sidebar + Top Bar) | Ready — architecture below, no code yet |
 | **2** | Login | Ready — architecture below, no code yet |
 | **3** | Board (application-centric cards, quiet executor line, Activity rail) | Ready — architecture below, no code yet |
