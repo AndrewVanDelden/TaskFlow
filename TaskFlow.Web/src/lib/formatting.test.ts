@@ -44,4 +44,10 @@ describe('formatRelativeTime', () => {
 
     expect(formatRelativeTime(iso, now)).toBe('2d ago')
   })
+
+  it('clamps a future timestamp (e.g. clock skew) to "just now" instead of a negative duration', () => {
+    const iso = new Date(now.getTime() + 5 * 60 * 1000).toISOString()
+
+    expect(formatRelativeTime(iso, now)).toBe('just now')
+  })
 })
