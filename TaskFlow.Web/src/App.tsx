@@ -3,10 +3,12 @@ import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { AuthProvider } from './hooks/AuthProvider'
 import { useAuth } from './hooks/AuthContext'
 import { AgentHubProvider } from './lib/agentHub'
-import { NavBar } from './components/NavBar'
+import { SideBar } from './components/SideBar'
 import { Login } from './features/Login'
 import { Dashboard } from './features/Dashboard'
 import { IngestDocument } from './features/IngestDocument'
+import { Activity } from './features/Activity'
+import { bgPage, textPrimary } from './lib/tokens'
 
 // Keep authenticated users off the login screen.
 function LoginRoute() {
@@ -22,17 +24,19 @@ function IngestRedirect() {
   return <Navigate to={`/ingest/${sessionId}`} replace />
 }
 
-// Guards the authenticated area and provides the shared shell: one SignalR connection and the nav bar
-// around every authenticated screen. Board and Ingest render into the <Outlet/>.
+// Guards the authenticated area and provides the shared shell: one SignalR connection and the side
+// bar around every authenticated screen. Board and Ingest render into the <Outlet/>.
 function ProtectedLayout() {
   const { isAuthenticated } = useAuth()
   if (!isAuthenticated) return <Navigate to="/login" replace />
 
   return (
     <AgentHubProvider>
-      <div className="min-h-screen bg-slate-950 text-white">
-        <NavBar />
-        <Outlet />
+      <div className={`h-screen flex ${bgPage} ${textPrimary}`}>
+        <SideBar />
+        <div className="flex-1 overflow-y-auto">
+          <Outlet />
+        </div>
       </div>
     </AgentHubProvider>
   )
@@ -47,6 +51,7 @@ export default function App() {
           <Route path="/board" element={<Dashboard />} />
           <Route path="/ingest" element={<IngestRedirect />} />
           <Route path="/ingest/:sessionId" element={<IngestDocument />} />
+          <Route path="/activity" element={<Activity />} />
         </Route>
         <Route path="*" element={<Navigate to="/board" replace />} />
       </Routes>

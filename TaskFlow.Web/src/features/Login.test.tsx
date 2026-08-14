@@ -22,10 +22,15 @@ describe('Login flow', () => {
     await userEvent.type(screen.getByPlaceholderText('Password'), 'password1')
     await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
 
-    // MSW returns a token named "Ada"; App replaces Login with the Dashboard, whose header
-    // shows the signed-in user. findByText waits for that async re-render to land.
-    expect(await screen.findByText('Ada')).toBeInTheDocument()
+    // App replaces Login with the Dashboard once sign-in resolves; findByRole waits for that
+    // async re-render to land. Was previously asserted via visible "Ada" text in NavBar's header,
+    // but the Sprint 1 icon-only SideBar has no visible username text anywhere (by design - every
+    // icon-only control carries its accessible name via aria-label, not display text) - so the
+    // session's username is now asserted directly against localStorage instead of inferred from
+    // incidental UI text.
+    expect(await screen.findByRole('heading', { name: 'Board' })).toBeInTheDocument()
     expect(localStorage.getItem('taskflow_token')).toBe('fake.jwt.token')
+    expect(localStorage.getItem('taskflow_user')).toBe('Ada')
   })
 
   // Epic 3 Pre-Merge Code Review, finding 6.4: no test simulated a failed login, so the catch
