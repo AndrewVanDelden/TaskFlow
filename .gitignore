@@ -43,6 +43,12 @@ appsettings.Secrets.json
 Thumbs.db
 
 # ─────────────────────────────────────────────────────────────
+# Claude Code — machine-local tool-permission cache, never shared.
+# .claude/launch.json (dev-server preview config) IS committed.
+# ─────────────────────────────────────────────────────────────
+.claude/settings.local.json
+
+# ─────────────────────────────────────────────────────────────
 # Test / coverage
 # ─────────────────────────────────────────────────────────────
 [Tt]est[Rr]esults/
