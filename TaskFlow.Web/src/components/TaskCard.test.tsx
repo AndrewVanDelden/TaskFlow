@@ -19,8 +19,8 @@ describe('TaskCard', () => {
     expect(screen.getByText('High')).toBeInTheDocument()
   })
 
-  it('shows Unassigned when there is no assignee', () => {
+  it('shows the em-dash placeholder when there is no company', () => {
     render(<DndContext><TaskCard task={task} /></DndContext>)
-    expect(screen.getByText('Unassigned')).toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument()
   })
 })

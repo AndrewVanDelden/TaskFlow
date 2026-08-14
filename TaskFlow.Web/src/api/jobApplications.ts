@@ -33,7 +33,7 @@ export function parseJobPosting(content: string): Promise<TaskDraft[]> {
 // Assembles the parsed posting into a JobApplication with two Todo sibling tasks (resume + cover letter).
 export function assembleApplication(
   ingestionSessionId: string,
-  posting: { title: string; description: string | null; section: string },
+  posting: { title: string; description: string | null; section: string; company: string | null },
 ): Promise<JobApplicationResponse> {
   return request<JobApplicationResponse>('/api/JobApplications', {
     method: 'POST',

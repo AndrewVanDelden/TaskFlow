@@ -60,7 +60,13 @@ public class ResumeTailoringAgentTests
         {
             State = ApplicationState.Building,
             IngestionSessionId = SessionId,
-            OwnerId = OwnerId
+            OwnerId = OwnerId,
+            // Mirrors the real assembly pipeline (JobApplicationAssemblyService): Company lives on
+            // the JobApplication, not on TaskItem.SourceSection, which the real job-posting parsers
+            // always leave empty. A prior version of this seed hand-set SourceSection instead - that
+            // masked PR #55's regression, where FormatJobPosting still read SourceSection and so
+            // silently stopped telling Claude which company a posting was for.
+            Company = "Acme Corp"
         };
         db.Context.JobApplications.Add(application);
         await db.Context.SaveChangesAsync();
@@ -69,7 +75,6 @@ public class ResumeTailoringAgentTests
         {
             Title = "Senior Backend Engineer",
             Description = "5+ years of backend experience required.",
-            SourceSection = "Acme Corp",
             Status = WorkflowStatus.Todo,
             Kind = TaskKind.ResumeTailoring,
             ApplicationId = application.Id
@@ -78,7 +83,6 @@ public class ResumeTailoringAgentTests
         {
             Title = "Senior Backend Engineer",
             Description = "5+ years of backend experience required.",
-            SourceSection = "Acme Corp",
             Status = WorkflowStatus.Todo,
             Kind = TaskKind.CoverLetterTailoring,
             ApplicationId = application.Id
@@ -176,6 +180,12 @@ public class ResumeTailoringAgentTests
         jobOpen.Should().BeGreaterThanOrEqualTo(0);
         jobClose.Should().BeGreaterThan(jobOpen);
         initialPrompt.IndexOf(resumeTask.Title, StringComparison.Ordinal).Should().BeInRange(jobOpen, jobClose);
+
+        // PR #55 review (finding 1, CONFIRMED): the company must reach the prompt via the
+        // JobApplication (application.Company), since TaskItem.SourceSection is always empty for
+        // job-posting-sourced tasks in the real pipeline.
+        var companyLine = initialPrompt.IndexOf("Company: Acme Corp", StringComparison.Ordinal);
+        companyLine.Should().BeInRange(jobOpen, jobClose);
 
         // The read_base_context tool result (fed back into the conversation) carries the base
         // resume wrapped as untrusted input under its own distinct label, with the real content

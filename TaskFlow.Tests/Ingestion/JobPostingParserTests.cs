@@ -19,7 +19,8 @@ public class JobPostingParserTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Should().ContainSingle(d =>
             d.Title == "Senior Backend Engineer" &&
-            d.Section == "Acme Corp" &&
+            d.Company == "Acme Corp" &&
+            d.Section == string.Empty &&
             d.Kind == TaskKind.ResumeTailoring &&
             d.Description == null);
     }
@@ -36,6 +37,7 @@ public class JobPostingParserTests
         draft.Title.Should().Be("Senior Backend Engineer");
         draft.Section.Should().Be(string.Empty);
         draft.Section.Should().NotBeNull();
+        draft.Company.Should().BeNull();
     }
 
     [Fact]
@@ -59,7 +61,8 @@ public class JobPostingParserTests
         result.IsSuccess.Should().BeTrue();
         var draft = result.Value!.Single();
         draft.Title.Should().Be("Senior Backend Engineer");
-        draft.Section.Should().Be("Acme Corp");
+        draft.Company.Should().Be("Acme Corp");
+        draft.Section.Should().Be(string.Empty);
     }
 
     [Fact]
@@ -72,7 +75,8 @@ public class JobPostingParserTests
         result.IsSuccess.Should().BeTrue();
         var draft = result.Value!.Single();
         draft.Title.Should().Be("Actual Title");
-        draft.Section.Should().Be("Actual Company");
+        draft.Company.Should().Be("Actual Company");
+        draft.Section.Should().Be(string.Empty);
     }
 
     [Fact]

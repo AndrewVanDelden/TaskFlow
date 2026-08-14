@@ -1,6 +1,6 @@
 import { useAgentFeed } from '../hooks/useAgentFeed'
 import { KanbanBoard } from './KanbanBoard'
-import { AgentFeed } from '../components/AgentFeed'
+import { AgentFeedList } from '../components/AgentFeedList'
 import { AgentStatus } from '../components/AgentStatus'
 import { ExecutorControl } from '../components/ExecutorControl'
 
@@ -20,7 +20,16 @@ export function Dashboard() {
 
         <aside>
           <AgentStatus logs={logs} cycles={cycles} />
-          <AgentFeed logs={logs} connected={connected} />
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-300">Activity</h2>
+            <span className="flex items-center gap-1.5 text-xs text-slate-500">
+              <span
+                className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-slate-600'}`}
+              />
+              {connected ? 'Live' : 'Offline'}
+            </span>
+          </div>
+          <AgentFeedList logs={logs} />
         </aside>
       </div>
     </main>

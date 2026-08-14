@@ -4,6 +4,7 @@ import type { TaskItem, TaskStatus } from '../types'
 import { groupSiblingCards, type ApplicationPair } from '../lib/board'
 import { TaskCard } from './TaskCard'
 import { ApplicationReviewCard } from './ApplicationReviewCard'
+import { ColumnHeader } from './ui/ColumnHeader'
 
 interface Props {
   status: TaskStatus
@@ -37,12 +38,7 @@ export function KanbanColumn({ status, label, tasks, onApprove, onReject, output
         isOver ? 'border-blue-500' : 'border-slate-800'
       }`}
     >
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-slate-300">{label}</h2>
-        <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">
-          {tasks.length}
-        </span>
-      </div>
+      <ColumnHeader label={label} count={tasks.length} />
 
       {pairs && pairs.length > 0 && (
         <div className="mb-2">

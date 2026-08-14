@@ -128,4 +128,24 @@ public class JobApplicationAssemblyServiceTests
         var siblings = await ctx.Tasks.Where(t => t.ApplicationId == result.Value!.Id).ToListAsync();
         siblings.Should().OnlyContain(t => t.Title.Length <= TaskItem.TitleMaxLength);
     }
+
+    // Epic 3.1, U3.1: Company now has its own field on TaskDraft/JobApplication instead of being
+    // smuggled through Section. This proves it round-trips both through the returned DTO and
+    // through real persistence (read back via the DbContext, not just the in-memory result).
+    [Fact]
+    public async Task Assembling_with_a_company_on_the_posting_persists_and_returns_it()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedResumeContextAsync(db.Context, "session-A", 1);
+        var (sut, ctx) = CreateSut(db);
+        var posting = new TaskDraft("Backend Engineer", "Great role", TaskKind.ResumeTailoring, "Job Posting", "Acme Corp");
+
+        var result = await sut.AssembleAsync("session-A", 1, posting);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Value!.Company.Should().Be("Acme Corp");
+
+        var persisted = await ctx.JobApplications.FindAsync(result.Value!.Id);
+        persisted!.Company.Should().Be("Acme Corp");
+    }
 }

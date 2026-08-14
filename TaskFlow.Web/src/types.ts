@@ -26,6 +26,10 @@ export interface TaskItem {
   // Optional so existing fixtures that don't care about it don't need updating; absent/undefined
   // correctly fails an === 'Approved' check, matching the safe default (don't assume approved).
   applicationState?: string | null
+  // Epic 3.1, U3.2: sourced from the task's parent JobApplication (TaskResponseDto.Company).
+  // Optional for the same reason as applicationState above - existing fixtures across the test
+  // suite that don't care about company don't need updating.
+  company?: string | null
 }
 
 export interface AuthResponse {
@@ -52,6 +56,10 @@ export interface TaskDraft {
   description: string | null
   kind: TaskKind
   section: string
+  // Epic 3.1, U3.2: optional, matching the same existing-fixture safety rationale as
+  // TaskItem.applicationState above - mock API responses across the test suite that don't set it
+  // stay valid.
+  company?: string | null
 }
 
 // Mirrors TaskFlow.Api's JobApplicationResponseDto: the approve/reject response shape.

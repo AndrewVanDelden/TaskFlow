@@ -1,8 +1,10 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { TaskCardView } from './TaskCardView'
 import type { TaskItem } from '../types'
+import { mockPrefersReducedMotion } from '../test/reducedMotion'
+import { axe } from '../test/axe'
 
 const task: TaskItem = {
   id: 1,
@@ -18,15 +20,58 @@ const task: TaskItem = {
   kind: 'Generic',
   applicationId: null,
   tailoredContent: null,
+  company: null,
 }
 
 describe('TaskCardView', () => {
+  // TaskCardView now calls usePrefersReducedMotion() unconditionally (Rules of Hooks - it can't be
+  // called only for InProgress cards), and jsdom has no real window.matchMedia. Every test that
+  // renders the component needs it mocked, not just the ones asserting on the progress bar.
+  beforeEach(() => {
+    mockPrefersReducedMotion(false)
+  })
+
   // The DragOverlay renders this outside any SortableContext, so it must work with no drag context.
-  it('renders standalone with the title, priority, and assignee fallback', () => {
+  it('renders standalone with the title, priority, and company fallback', () => {
     render(<TaskCardView task={task} />)
     expect(screen.getByText('Ship it')).toBeInTheDocument()
     expect(screen.getByText('High')).toBeInTheDocument()
-    expect(screen.getByText('Unassigned')).toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('shows the company when provided', () => {
+    const taskWithCompany: TaskItem = { ...task, company: 'Acme Corp' }
+    render(<TaskCardView task={taskWithCompany} />)
+    expect(screen.getByText('Acme Corp')).toBeInTheDocument()
+  })
+
+  it('shows the in-progress tailoring status line', () => {
+    const inProgressTask: TaskItem = { ...task, status: 'InProgress', kind: 'ResumeTailoring' }
+    render(<TaskCardView task={inProgressTask} />)
+    expect(screen.getByText('Tailoring Resume…')).toBeInTheDocument()
+  })
+
+  it('animates the in-progress bar when motion is not reduced', () => {
+    mockPrefersReducedMotion(false)
+    const inProgressTask: TaskItem = { ...task, status: 'InProgress', kind: 'ResumeTailoring' }
+    render(<TaskCardView task={inProgressTask} />)
+    expect(screen.getByTestId('progress-fill').className).toBe(
+      'absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-[#796cbf] to-[#d2cefd] animate-pulse',
+    )
+  })
+
+  it('shows a static progress bar when motion is reduced', () => {
+    mockPrefersReducedMotion(true)
+    const inProgressTask: TaskItem = { ...task, status: 'InProgress', kind: 'ResumeTailoring' }
+    render(<TaskCardView task={inProgressTask} />)
+    expect(screen.getByTestId('progress-fill').className).toBe(
+      'absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-[#796cbf] to-[#d2cefd]',
+    )
+  })
+
+  it('has no accessibility violations', async () => {
+    const { container } = render(<TaskCardView task={task} />)
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('shows no review controls by default', () => {

@@ -123,14 +123,39 @@ describe('assembleApplication', () => {
       title: 'Backend Engineer',
       description: 'Build things.',
       section: 'Job Posting',
+      company: null,
     })
 
     expect(capturedBody).toEqual({
       ingestionSessionId: '11111111-1111-1111-1111-111111111111',
-      posting: { title: 'Backend Engineer', description: 'Build things.', section: 'Job Posting' },
+      posting: { title: 'Backend Engineer', description: 'Build things.', section: 'Job Posting', company: null },
     })
     expect(result.state).toBe('Building')
     expect(result.tasks[0].status).toBe('Todo')
+  })
+
+  // Epic 3.1, U3.2: company must reach the request body unchanged, same request-body-capture
+  // convention as the test above (not just asserted on the mocked response).
+  it('posts the posting company', async () => {
+    let capturedBody: unknown = null
+    server.use(
+      http.post('*/api/JobApplications', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json(applicationResponse('Building', 'Todo'))
+      }),
+    )
+
+    await assembleApplication('11111111-1111-1111-1111-111111111111', {
+      title: 'Backend Engineer',
+      description: 'Build things.',
+      section: 'Job Posting',
+      company: 'Acme Corp',
+    })
+
+    expect(capturedBody).toEqual({
+      ingestionSessionId: '11111111-1111-1111-1111-111111111111',
+      posting: { title: 'Backend Engineer', description: 'Build things.', section: 'Job Posting', company: 'Acme Corp' },
+    })
   })
 
   it('rejects when the server refuses to assemble (e.g. no saved resume context)', async () => {
@@ -143,6 +168,7 @@ describe('assembleApplication', () => {
         title: 'Backend Engineer',
         description: 'Build things.',
         section: 'Job Posting',
+        company: null,
       }),
     ).rejects.toThrow()
   })

@@ -41,6 +41,7 @@ public sealed class JobApplicationAssemblyService : IJobApplicationAssemblyServi
             State = ApplicationState.Building,
             IngestionSessionId = ingestionSessionId,
             OwnerId = ownerId,
+            Company = posting.Company,
             Tasks = new List<TaskItem>
             {
                 new TaskItem
