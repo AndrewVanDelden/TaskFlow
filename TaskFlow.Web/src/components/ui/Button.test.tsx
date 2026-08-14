@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, it, expect } from 'vitest'
 import { Button } from './Button'
 import { axe } from '../../test/axe'
@@ -46,7 +47,6 @@ describe('Button', () => {
   })
 
   it('forwards native button props (onClick, disabled, type)', async () => {
-    const { default: userEvent } = await import('@testing-library/user-event')
     const user = userEvent.setup()
     let clicked = false
 
