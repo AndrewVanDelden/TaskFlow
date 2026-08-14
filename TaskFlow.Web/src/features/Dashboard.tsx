@@ -1,12 +1,12 @@
 import { useAgentFeed } from '../hooks/useAgentFeed'
 import { KanbanBoard } from './KanbanBoard'
-import { AgentFeed } from '../components/AgentFeed'
+import { AgentFeedList } from '../components/AgentFeedList'
 import { AgentStatus } from '../components/AgentStatus'
 import { ExecutorControl } from '../components/ExecutorControl'
 
 // The Board screen. The header/nav and the page wrapper are provided by the ProtectedLayout.
 export function Dashboard() {
-  const { logs, cycles, connected } = useAgentFeed()
+  const { logs, cycles } = useAgentFeed()
 
   return (
     <main className="p-6">
@@ -20,7 +20,8 @@ export function Dashboard() {
 
         <aside>
           <AgentStatus logs={logs} cycles={cycles} />
-          <AgentFeed logs={logs} connected={connected} />
+          <h2 className="text-sm font-semibold text-slate-300 mb-3">Activity</h2>
+          <AgentFeedList logs={logs} />
         </aside>
       </div>
     </main>
