@@ -230,6 +230,11 @@ dependency.
   every component test rather than configured per file)
 - `TaskFlow.Web/src/test/reducedMotion.ts` (new — shared helper to mock `window.matchMedia` for
   reduced-motion assertions, reused across every animated component's tests)
+- `TaskFlow.Web/src/lib/tokens.ts` (new — token class-name constants and the `designTokens` list
+  the RED test iterates)
+- `TaskFlow.Web/src/test/stripCssLayers.ts` (new — see U0.1 finding below)
+- `TaskFlow.Web/src/test/setup.ts` (edit — injects the real, layer-stripped Tailwind stylesheet
+  into every test's jsdom document; see U0.1 finding below)
 
 ### Tasks
 
@@ -263,6 +268,25 @@ animation renders with the animation's static end-state class when `window.match
 otherwise. GREEN: the shared `reducedMotion.ts` test helper plus the CSS pattern (a
 `motion-reduce:` Tailwind variant or equivalent media-query rule) every animated component in
 later sprints is required to use.
+
+**U0.1 finding (2026-08-13, discovered mid-task, not assumed going in): jsdom does not apply CSS
+inside `@layer` blocks when computing style, and Tailwind v4 wraps every generated utility class
+in `@layer utilities`.** First GREEN attempt (`tokens.ts` + a plain `import '../index.css'` in
+`setup.ts`) still failed all 14 assertions with browser-default values
+(`rgba(0, 0, 0, 0)` / `rgb(0, 0, 0)`) even though the compiled CSS contained the exact expected
+rule (`.bg-\[\#161826\] { background-color: rgb(22, 24, 38); }`, confirmed by dumping
+`document.styleSheets` in a throwaway diagnostic test). Isolated by hand-injecting a `<style>` tag
+with the identical rule both inside and outside a manually-written `@layer utilities { }` wrapper:
+outside, `getComputedStyle` resolved correctly; inside, it did not — confirming this is a jsdom
+`@layer` gap, not a bug in the token classes, the selector escaping, or the injection mechanism.
+Fix: `src/test/stripCssLayers.ts` (new, own unit test), a small parser that unwraps `@layer name {
+... }` blocks to their plain contents and drops bare layer-order declarations (`@layer a, b;`),
+preserving rule text and order. `setup.ts` now imports `../index.css?inline` (raw CSS, not
+auto-injected), runs it through `stripCssLayers`, and appends the result as a `<style>` tag once in
+a `beforeAll`. This is test-infrastructure only — production CSS via `main.tsx`'s plain
+`import './index.css'` is untouched and still real, layered Tailwind output. Every later sprint's
+`getComputedStyle`-based assertions (e.g. U0.2's focus-ring color, U0.3's contrast check) rely on
+this fix already being in place.
 
 **U0.6 — Phosphor icons installed and smoke-tested.** RED: one icon (e.g. the sidebar's board
 icon) renders via `@phosphor-icons/react` without throwing and exposes the expected `aria-hidden`/
