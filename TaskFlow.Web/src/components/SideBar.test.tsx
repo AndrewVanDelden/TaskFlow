@@ -56,4 +56,29 @@ describe('SideBar', () => {
 
     expect(await axe(container)).toHaveNoViolations()
   })
+
+  it('exposes ARIA disclosure state on the account button', async () => {
+    renderAt('/board')
+    const user = userEvent.setup()
+    const accountButton = screen.getByRole('button', { name: 'Account' })
+
+    expect(accountButton).toHaveAttribute('aria-haspopup', 'true')
+    expect(accountButton).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(accountButton)
+
+    expect(accountButton).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('closes the account menu when the route changes', async () => {
+    renderAt('/board')
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: 'Account' }))
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('link', { name: 'Ingest' }))
+
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+  })
 })

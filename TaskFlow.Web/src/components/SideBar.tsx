@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
 import { KanbanIcon, TrayIcon, PulseIcon, UserCircleIcon } from '@phosphor-icons/react'
 import { useAuth } from '../hooks/AuthContext'
 import { Button } from './ui/Button'
@@ -14,6 +14,11 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
 export function SideBar() {
   const { signOut } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
+  const location = useLocation()
+
+  useEffect(() => {
+    setMenuOpen(false)
+  }, [location.pathname])
 
   return (
     <nav className="w-[60px] h-screen flex flex-col items-center py-4 gap-2">
@@ -31,6 +36,8 @@ export function SideBar() {
         <button
           type="button"
           aria-label="Account"
+          aria-haspopup="true"
+          aria-expanded={menuOpen}
           onClick={() => setMenuOpen((open) => !open)}
           className={`flex items-center justify-center w-10 h-10 rounded-[10px] ${textNeutral500}`}
         >
