@@ -116,4 +116,73 @@ describe('useIntakeFlow', () => {
     await waitFor(() => expect(result.current.stage).toBe('review'))
     expect(result.current.error).not.toBeNull()
   })
+
+  // Epic 3.1, U3.2: threads TaskDraft.company through to the assemble call.
+  it('startTailoring() sends the parsed draft\'s company on the assemble call', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse', () =>
+        HttpResponse.json([
+          { title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting', company: 'Acme Corp' },
+        ])),
+    )
+    const result = await reachReview()
+
+    act(() => {
+      result.current.setBaseResumeText('My base resume text')
+    })
+
+    let capturedBody: unknown = null
+    server.use(
+      http.post('*/api/JobApplications', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({
+          id: 1, state: 'Building', ingestionSessionId: '', ownerId: 1, createdAt: '',
+          tasks: [
+            { id: 101, title: 'Tailor resume', kind: 'ResumeTailoring', status: 'Todo' },
+            { id: 102, title: 'Cover letter', kind: 'CoverLetterTailoring', status: 'Todo' },
+          ],
+        })
+      }),
+    )
+
+    await act(async () => {
+      await result.current.startTailoring()
+    })
+
+    await waitFor(() => expect(result.current.stage).toBe('building'))
+    expect((capturedBody as { posting: { company: string | null } }).posting.company).toBe('Acme Corp')
+  })
+
+  // Epic 3.1, U3.2: a draft with no parsed company (undefined, per the default parse handler)
+  // must normalize to null on the wire, not be sent as undefined (which JSON.stringify would drop).
+  it('startTailoring() normalizes an absent draft company to null on the assemble call', async () => {
+    const result = await reachReview()
+
+    act(() => {
+      result.current.setBaseResumeText('My base resume text')
+    })
+
+    let capturedBody: unknown = null
+    server.use(
+      http.post('*/api/JobApplications', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json({
+          id: 1, state: 'Building', ingestionSessionId: '', ownerId: 1, createdAt: '',
+          tasks: [
+            { id: 101, title: 'Tailor resume', kind: 'ResumeTailoring', status: 'Todo' },
+            { id: 102, title: 'Cover letter', kind: 'CoverLetterTailoring', status: 'Todo' },
+          ],
+        })
+      }),
+    )
+
+    expect(result.current.drafts[0].company).toBeUndefined()
+
+    await act(async () => {
+      await result.current.startTailoring()
+    })
+
+    await waitFor(() => expect(result.current.stage).toBe('building'))
+    expect((capturedBody as { posting: { company: string | null } }).posting.company).toBeNull()
+  })
 })

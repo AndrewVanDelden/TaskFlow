@@ -46,6 +46,7 @@ export function useIntakeFlow(sessionId: string) {
         title: posting.title,
         description: posting.description,
         section: posting.section,
+        company: posting.company ?? null,
       })
       const resumeTask = application.tasks.find((t) => t.kind === 'ResumeTailoring')
       const coverLetterTask = application.tasks.find((t) => t.kind === 'CoverLetterTailoring')
