@@ -48,6 +48,21 @@ public class TaskServiceTests
         Application = new JobApplication { Id = 5, OwnerId = ownerId }
     };
 
+    // A real (owner == caller) Epic 3 sibling task, for the individual-mutation guard tests below -
+    // distinct from Epic3TaskOwnedBy, which exists to prove the ownership check specifically.
+    private static TaskItem Epic3SiblingTask(TaskKind kind, WorkflowStatus status = WorkflowStatus.Review, int id = 1) => new()
+    {
+        Id = id,
+        Title = "Sample",
+        Status = status,
+        Priority = TaskPriority.Medium,
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+        Kind = kind,
+        ApplicationId = 5,
+        Application = new JobApplication { Id = 5, OwnerId = 1 }
+    };
+
     // ── Create ────────────────────────────────────────────────────────────────
     [Fact]
     public async Task Create_fails_validation_when_assignee_does_not_exist()
@@ -198,6 +213,61 @@ public class TaskServiceTests
             Times.Never);
     }
 
+    // Board bug (found 2026-08-14, reproduced against real data): an Epic 3 sibling task moved to
+    // Done individually - via drag-and-drop hitting this generic status endpoint, with no Review-only
+    // guard at all - leaves its JobApplication permanently stuck below Approved, since only the
+    // paired approve flow (TryApprovePairAsync) ever promotes it. PR #48 already found and partially
+    // addressed this exact root cause once (by making the frontend's export gate correctly hide
+    // instead of lying about a broken "Approved" state) but left the underlying corruption itself
+    // reachable. Scoped narrowly to reaching Done specifically - the one transition that actually
+    // corrupts the pair invariant - not a general lockdown of this endpoint for Epic-3 kinds.
+    [Theory]
+    [InlineData(TaskKind.ResumeTailoring)]
+    [InlineData(TaskKind.CoverLetterTailoring)]
+    public async Task UpdateStatus_rejects_moving_an_Epic3_sibling_task_directly_to_Done(TaskKind kind)
+    {
+        SetupGetById(Epic3SiblingTask(kind, status: WorkflowStatus.Review));
+
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.Done }, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_still_allows_a_non_Done_status_change_for_an_Epic3_sibling_task()
+    {
+        SetupGetById(Epic3SiblingTask(TaskKind.ResumeTailoring, status: WorkflowStatus.Todo));
+
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.InProgress }, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // PR #58 review finding (correctness, PLAUSIBLE): the guard above fired on the requested target
+    // status and task kind alone, never checking the task's own current status - so a task that
+    // already legitimately reached Done via TryApprovePairAsync would get its own status rejected
+    // on a no-op re-PATCH (a retried/duplicate request, a direct API call, or any future UI feature
+    // that re-sends the current status), even though nothing would actually change. The guard must
+    // only block a real transition INTO Done from elsewhere, not every request whose target happens
+    // to already match the task's current state.
+    [Theory]
+    [InlineData(TaskKind.ResumeTailoring)]
+    [InlineData(TaskKind.CoverLetterTailoring)]
+    public async Task UpdateStatus_allows_a_no_op_rePATCH_of_an_already_Done_Epic3_sibling_task(TaskKind kind)
+    {
+        SetupGetById(Epic3SiblingTask(kind, status: WorkflowStatus.Done));
+
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.Done }, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── Approve (Review -> Done, human only) ──────────────────────────────────
     [Fact]
     public async Task Approve_moves_a_Review_task_to_Done_and_broadcasts()
@@ -250,6 +320,25 @@ public class TaskServiceTests
         var result = await CreateSut().ApproveAsync(1, callerId: 1);
 
         result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    // Same defect as UpdateStatus's guard above, hit via the dedicated Approve button/endpoint this
+    // time - the more likely real-world trigger (a user approving the resume the moment it reaches
+    // Review, before the cover letter sibling has caught up).
+    [Theory]
+    [InlineData(TaskKind.ResumeTailoring)]
+    [InlineData(TaskKind.CoverLetterTailoring)]
+    public async Task Approve_rejects_an_Epic3_sibling_task_individually(TaskKind kind)
+    {
+        SetupGetById(Epic3SiblingTask(kind, status: WorkflowStatus.Review));
+
+        var result = await CreateSut().ApproveAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _notifier.Verify(
             n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
@@ -311,6 +400,26 @@ public class TaskServiceTests
         var result = await CreateSut().RejectAsync(1, "reason", callerId: 1);
 
         result.Status.Should().Be(ResultStatus.NotFound);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _logs.Verify(l => l.AddAsync(It.IsAny<AgentLog>(), It.IsAny<CancellationToken>()), Times.Never);
+        _notifier.Verify(
+            n => n.TaskMovedAsync(It.IsAny<int>(), It.IsAny<WorkflowStatus>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    // Same defect, reject direction: an individually-rejected sibling returns to Todo for rework
+    // while its sibling may already be anywhere else in the pipeline (or already Done), corrupting
+    // the pair invariant the same way approving one individually does.
+    [Theory]
+    [InlineData(TaskKind.ResumeTailoring)]
+    [InlineData(TaskKind.CoverLetterTailoring)]
+    public async Task Reject_rejects_an_Epic3_sibling_task_individually(TaskKind kind)
+    {
+        SetupGetById(Epic3SiblingTask(kind, status: WorkflowStatus.Review));
+
+        var result = await CreateSut().RejectAsync(1, "reason", callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         _logs.Verify(l => l.AddAsync(It.IsAny<AgentLog>(), It.IsAny<CancellationToken>()), Times.Never);
         _notifier.Verify(

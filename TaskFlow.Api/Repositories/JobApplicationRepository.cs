@@ -127,6 +127,20 @@ public class JobApplicationRepository : IJobApplicationRepository
         return true;
     }
 
+    // Shared by PromotePendingApprovedApplicationsAsync only (no per-application TryPromote... form
+    // exists here, unlike BothRequiredSiblingsAreReview above - the per-application promotion at
+    // this stage is TryApprovePairAsync, which requires ReviewReady and moves the tasks itself; this
+    // predicate is purely for the bulk repair sweep, matched against tasks already Done).
+    private static readonly Expression<Func<JobApplication, bool>> BothRequiredSiblingsAreDone = a =>
+        a.Tasks.Any(t => t.Kind == TaskKind.ResumeTailoring && t.Status == WorkflowStatus.Done)
+        && a.Tasks.Any(t => t.Kind == TaskKind.CoverLetterTailoring && t.Status == WorkflowStatus.Done);
+
+    public async Task<int> PromotePendingApprovedApplicationsAsync(CancellationToken ct = default) =>
+        await _db.JobApplications
+            .Where(a => a.State != ApplicationState.Approved)
+            .Where(BothRequiredSiblingsAreDone)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, ApplicationState.Approved), ct);
+
     public async Task AddAsync(JobApplication application, CancellationToken ct = default) =>
         await _db.JobApplications.AddAsync(application, ct);
 

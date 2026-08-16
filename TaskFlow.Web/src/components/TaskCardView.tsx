@@ -63,7 +63,22 @@ export function TaskCardView({
         </div>
       )}
 
-      {onApprove && onReject && <ReviewActions onApprove={onApprove} onReject={onReject} />}
+      {onApprove && onReject && (
+        task.kind === 'Generic' ? (
+          <ReviewActions onApprove={onApprove} onReject={onReject} />
+        ) : (
+          // Board bug (found 2026-08-14): KanbanBoard only groups an Epic-3 sibling pair into
+          // ApplicationReviewCard once BOTH tasks are Review, so a lone sibling (the resume usually
+          // finishes tailoring well before the cover letter) still reaches here individually.
+          // Approving/rejecting it alone used to permanently strand its JobApplication below
+          // Approved - the API now rejects that (TaskService's pair guard), so this replaces the
+          // dead-end controls with an explanation instead of a button that would just error.
+          <p className={`text-xs ${textNeutral500} mt-2`}>
+            Waiting for the {task.kind === 'ResumeTailoring' ? 'cover letter' : 'resume'} to finish,
+            so both can be reviewed together.
+          </p>
+        )
+      )}
 
       {task.status === 'Done' && task.applicationId !== null && task.applicationState === 'Approved' && (
         <ExportDownloadControls applicationId={task.applicationId} kind={task.kind} />

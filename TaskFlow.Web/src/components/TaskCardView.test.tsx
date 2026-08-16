@@ -103,6 +103,29 @@ describe('TaskCardView', () => {
     expect(onReject).toHaveBeenCalledWith('Needs work')
   })
 
+  // Board bug (found 2026-08-14): KanbanBoard only groups an Epic-3 sibling pair into
+  // ApplicationReviewCard once BOTH tasks are Review, so a lone sibling in Review (the realistic
+  // case - the resume usually finishes tailoring well before the cover letter) still reaches this
+  // plain TaskCardView with onApprove/onReject supplied. Approving/rejecting it individually here
+  // used to permanently strand its JobApplication below Approved (fixed at the API layer via
+  // TaskService's new pair guard) - this replaces the dead-end Approve/Reject controls with an
+  // explanation instead of a button that would now just error.
+  it('shows a waiting message instead of Approve/Reject for a lone Epic-3 sibling in Review', () => {
+    const loneResumeInReview: TaskItem = { ...task, status: 'Review', kind: 'ResumeTailoring', applicationId: 10 }
+    render(<TaskCardView task={loneResumeInReview} onApprove={vi.fn()} onReject={vi.fn()} />)
+
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull()
+    expect(screen.getByText(/waiting for the cover letter/i)).toBeInTheDocument()
+  })
+
+  it('shows a waiting message naming the resume for a lone cover-letter sibling in Review', () => {
+    const loneCoverLetterInReview: TaskItem = { ...task, status: 'Review', kind: 'CoverLetterTailoring', applicationId: 10 }
+    render(<TaskCardView task={loneCoverLetterInReview} onApprove={vi.fn()} onReject={vi.fn()} />)
+
+    expect(screen.getByText(/waiting for the resume/i)).toBeInTheDocument()
+  })
+
   it('shows export download controls for a Done task whose application is Approved', () => {
     const doneResumeTask: TaskItem = { ...task, status: 'Done', applicationId: 10, kind: 'ResumeTailoring', applicationState: 'Approved' }
     render(<TaskCardView task={doneResumeTask} />)

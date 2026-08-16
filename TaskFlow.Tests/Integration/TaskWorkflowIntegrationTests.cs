@@ -236,16 +236,20 @@ public class TaskWorkflowIntegrationTests
         reject.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
-    // Copilot review finding (PR #48): TaskCardView's new export buttons (Sprint 5, T5.3) gate on
-    // task.status === 'Done' && applicationId != null, assuming that implies the JobApplication is
-    // Approved. But the individual per-task approve endpoint used here is reachable through the
-    // real Review-column UI whenever a sibling isn't also Review-ready yet (KanbanBoard.tsx's
-    // pairedTaskIds only excludes a task from solo rendering once BOTH siblings are Review) - so an
-    // owner can approve one sibling alone, reaching Done while the application itself is still
-    // ReviewReady/Building. Proves GET /api/Tasks reports the real ApplicationState for that task,
-    // which the frontend needs to gate correctly instead of assuming Done implies Approved.
+    // Board bug (found 2026-08-14), superseding this test's previous form: Copilot's PR #48 review
+    // found that the individual per-task approve endpoint is reachable through the real
+    // Review-column UI whenever a sibling isn't also Review-ready yet (KanbanBoard.tsx's
+    // pairedTaskIds only excludes a task from solo rendering once BOTH siblings are Review) - an
+    // owner could approve one sibling alone, reaching Done while the application itself stayed
+    // ReviewReady/Building forever, with no retry path. PR #48 only fixed the symptom (made GET
+    // /api/Tasks report the real ApplicationState so the frontend's export gate wouldn't lie) and
+    // this test used to prove exactly that: the individual approve succeeding (200) while the
+    // resulting inconsistent state was merely reported honestly. That left the underlying
+    // corruption reachable - real, already-generated content became permanently unretrievable.
+    // TaskService now closes it at the source instead (RequiresPairApproval): the individual approve
+    // is rejected outright, and the task is left exactly where it was, not silently moved to Done.
     [Fact]
-    public async Task GetAll_reports_the_real_ApplicationState_for_an_Epic3_sibling_task_approved_individually_before_its_pair()
+    public async Task Approve_rejects_an_Epic3_sibling_task_approved_individually_before_its_pair()
     {
         var owner = await AuthedClientAsync();
         var sessionId = Guid.NewGuid().ToString("N");
@@ -259,13 +263,11 @@ public class TaskWorkflowIntegrationTests
 
         await MoveToReviewAsync(owner, resumeTaskId);
         var approve = await owner.PostAsync($"/api/Tasks/{resumeTaskId}/approve", null);
-        approve.EnsureSuccessStatusCode();
 
+        approve.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var tasks = await owner.GetFromJsonAsync<List<TaskResponseDto>>("/api/Tasks");
-
         var resumeTask = tasks!.Should().ContainSingle(t => t.Id == resumeTaskId).Subject;
-        resumeTask.Status.Should().Be(nameof(WorkflowStatus.Done));
-        resumeTask.ApplicationState.Should().NotBe(nameof(ApplicationState.Approved));
+        resumeTask.Status.Should().Be(nameof(WorkflowStatus.Review));
     }
 
     // Local shapes: read the switch state, and read drafts/tasks with their enum fields as plain
