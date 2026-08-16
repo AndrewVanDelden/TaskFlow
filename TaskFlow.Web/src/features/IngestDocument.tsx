@@ -136,17 +136,19 @@ export function IngestDocument() {
             </div>
           </>
         ) : (
-          // U4.2: restyled parsed-result card. Title/company/description/section text nodes are
-          // kept literal and unchanged (existing tests assert on them directly) - only the
-          // surrounding markup and tokens change. No requirement chips: a real, deliberate scope
-          // cut (locked in the epic doc) - TaskDraft has no structured requirements field to build
-          // them from.
+          // U4.2: restyled parsed-result card. Title/company/description text nodes are kept
+          // literal and unchanged (existing tests assert on them directly) - only the surrounding
+          // markup and tokens change. No requirement chips: a real, deliberate scope cut (locked in
+          // the epic doc) - TaskDraft has no structured requirements field to build them from.
+          // PR #57 review: dropped the drafts[0].section paragraph entirely - Section is always ''
+          // for this flow (ClaudeJobPostingParser/JobPostingParser, Sprint 3/PR #55, both set it to
+          // string.Empty; Company carries the real value instead), so it could never render in
+          // production and was dead code.
           <div className={`rounded-xl border ${borderDivider} ${bgSurface} p-4`}>
             <p className={`text-sm ${textNeutral400}`}>Job posting: {intake.drafts[0]?.title}</p>
             <p data-testid="parsed-company" className={`mt-1 text-xs ${textNeutral500}`}>
               {intake.drafts[0]?.company ?? '—'}
             </p>
-            {intake.drafts[0]?.section && <p className={`mt-2 text-sm ${textNeutral400}`}>{intake.drafts[0].section}</p>}
             {intake.drafts[0]?.description && <p className={`mt-1 text-sm ${textNeutral400}`}>{intake.drafts[0].description}</p>}
           </div>
         )}

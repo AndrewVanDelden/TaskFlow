@@ -146,16 +146,23 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
   })
 
   // Copilot review finding (PR #49): T6.2 says "review drafts" - the review-stage summary must let
-  // the user actually verify what the parser extracted (company and requirements), not just the
+  // the user actually verify what the parser extracted (company and description), not just the
   // title, before they commit to starting tailoring against it.
-  it('the review-stage summary shows the parsed company and requirements, not just the title', async () => {
+  //
+  // PR #57 review: this test previously also asserted `screen.getByText('Job Posting')` - the
+  // default MSW handler's `section` fixture value - which only ever passed because IngestDocument
+  // still rendered a `drafts[0].section` paragraph at the time. That render was dead code in
+  // production (Section is always '' for this flow since Sprint 3/PR #55) and has been removed;
+  // this test is reconciled to assert only what the real pipeline actually threads through
+  // (company, description), not the now-unrendered section fixture value.
+  it('the review-stage summary shows the parsed company and description, not just the title', async () => {
     renderIngestDocument()
 
     await userEvent.type(screen.getByLabelText(/^job posting$/i), 'Backend Engineer job posting text')
     await userEvent.click(screen.getByRole('button', { name: /parse posting/i }))
     await screen.findByText(/job posting:\s*Backend Engineer/i)
 
-    expect(screen.getByText('Job Posting')).toBeInTheDocument()
+    expect(screen.getByTestId('parsed-company')).toBeInTheDocument()
     expect(screen.getByText('Build things.')).toBeInTheDocument()
   })
 
@@ -217,11 +224,13 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
   // dedicated test, pre-Sprint-4) is removed rather than reconciled: it asserted IntakeProgress's
   // rows render inside IngestDocument once stage reaches 'building', but Sprint 4's
   // navigate-on-success change (previous test above) means IngestDocument unmounts in the same
-  // commit that stage flips to 'building' - that render is real code (kept, not deleted, in case
-  // the navigation timing ever changes) but is empirically unreachable through this component's own
-  // tests. IntakeProgress's rendering behavior itself stays covered by its own dedicated
-  // IntakeProgress.test.tsx, which does not depend on this navigation path. Flagged in the Sprint 4
-  // (U4.1-U4.5) report as a discovered consequence of U4.4's navigation change, not invented scope.
+  // commit that stage flips to 'building', so that render was empirically unreachable through this
+  // component's own tests. PR #57 review: this comment previously claimed the render branch was
+  // "kept, not deleted" and that IntakeProgress.test.tsx still covered it - both false. This same
+  // PR deletes IntakeProgress.tsx, IntakeProgress.test.tsx, and the 'building'-stage render branch
+  // outright, confirmed dead code with zero remaining consumers (see the epic doc's Sprint 4
+  // retrospective). Flagged in the Sprint 4 (U4.1-U4.5) report as a discovered consequence of
+  // U4.4's navigation change, not invented scope.
 
   it('shows an error banner when parsing fails', async () => {
     server.use(

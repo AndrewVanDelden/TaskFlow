@@ -973,9 +973,29 @@ fix the axe run surfaces.
   the navigate-to-`/board` call lands on).
 - Unblocks: nothing further within this epic — this is the last sprint.
 
-### Code review findings (fill in after this sprint's PR is reviewed)
+### Code review findings (2026-08-16) — PR #57
 
-*(Not yet started — nothing to record.)*
+Manual review posted directly to the PR as inline comments (high effort, 8 finder angles,
+verified pass) — see
+[review #4946723549](https://github.com/AndrewVanDelden/TaskFlow/pull/57#pullrequestreview-4946723549)
+for the full text, each comment anchored to its exact line. No prior review on this PR to
+cross-check. **Status: FIXED — both findings resolved 2026-08-16:**
+
+1. `IngestDocument.test.tsx:216` (conventions) — a comment claimed the old `IntakeProgress` render
+   branch was "kept, not deleted" and that `IntakeProgress.test.tsx` still covers it; this same PR
+   deletes both, so the comment was factually wrong. **Fix:** corrected the comment to state plainly
+   that `IntakeProgress.tsx`, its test, and the render branch are all deleted outright, confirmed
+   dead code with zero remaining consumers.
+2. `IngestDocument.tsx:149` (simplification) — the parsed-result card's Section paragraph was dead
+   code: Sprint 3 (PR #55) made `Section` always empty for job-posting-sourced drafts, so this
+   conditional never rendered in the flow it's part of. **Fix:** removed the paragraph. This broke
+   one existing test that only passed because the shared MSW fixture's stale `section: 'Job
+   Posting'` value happened to render there — reconciled by name (not silently patched): the test
+   now asserts on `parsed-company`/description only, matching what the real pipeline actually
+   threads through. Confirmed via a RED run that removing the dead render broke exactly that one
+   assertion and nothing else, before fixing the test.
+
+Full suite green after both fixes: backend 424/424, frontend 262/262.
 
 ### Post-sprint retrospective (2026-08-14)
 
