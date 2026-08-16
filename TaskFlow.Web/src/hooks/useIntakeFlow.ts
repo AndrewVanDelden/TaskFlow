@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { TaskDraft } from '../types'
 import { parseJobPosting, saveResumeContext, assembleApplication } from '../api/jobApplications'
 
@@ -7,6 +8,7 @@ import { parseJobPosting, saveResumeContext, assembleApplication } from '../api/
 export type IntakeStage = 'provide' | 'parsing' | 'review' | 'starting' | 'building'
 
 export function useIntakeFlow(sessionId: string) {
+  const navigate = useNavigate()
   const [stage, setStage] = useState<IntakeStage>('provide')
   const [jobPostingText, setJobPostingText] = useState('')
   const [baseResumeText, setBaseResumeText] = useState('')
@@ -54,6 +56,10 @@ export function useIntakeFlow(sessionId: string) {
       setResumeTaskId(resumeTask?.id ?? null)
       setCoverLetterTaskId(coverLetterTask?.id ?? null)
       setStage('building')
+      // Epic 3.1 Sprint 4 (U4.4): a real, intentional behavior change - on success only, hand off
+      // to the Board where the newly-created tasks actually build. Never navigate on failure (see
+      // catch below); the user needs to stay on Ingest to see the error and retry.
+      navigate('/board')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start tailoring.')
       setStage('review')

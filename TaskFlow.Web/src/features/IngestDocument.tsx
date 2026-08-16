@@ -4,9 +4,17 @@ import { useIngestion } from '../hooks/useIngestion'
 import { useBaseResumeCapture } from '../hooks/useBaseResumeCapture'
 import { useBaseResumeReuse } from '../hooks/useBaseResumeReuse'
 import { useIntakeFlow } from '../hooks/useIntakeFlow'
-import { useAgentFeed } from '../hooks/useAgentFeed'
-import { IntakeProgress } from '../components/IntakeProgress'
+import { TailorButton } from '../components/TailorButton'
+import { MarkdownPreview } from '../components/MarkdownPreview'
 import { formatDate } from '../lib/formatting'
+import { stepForStage } from '../lib/intakeSteps'
+import { bgSurface, borderDivider, textAccent200, textNeutral400, textNeutral500 } from '../lib/tokens'
+
+const STEPS: Array<{ step: 1 | 2 | 3; label: string }> = [
+  { step: 1, label: '1 Provide' },
+  { step: 2, label: '2 Review' },
+  { step: 3, label: '3 Generate' },
+]
 
 const fileInputClasses =
   'text-xs text-slate-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-slate-700 ' +
@@ -34,10 +42,6 @@ export function IngestDocument() {
   const intake = useIntakeFlow(ingestionSessionId)
   const reuse = useBaseResumeReuse()
   const baseResumeCapture = useBaseResumeCapture()
-  // T6.3: same shared AgentLog/SignalR feed the Kanban board already consumes - IngestDocument is
-  // its own top-level route (not under Dashboard), so it subscribes directly rather than receiving
-  // logs as a prop. No new SignalR event type; IntakeProgress derives per-item stage from it.
-  const { logs } = useAgentFeed()
 
   // T6.5: move focus to the current stage's primary heading on every stage transition, so a
   // keyboard/screen-reader user is never left focused on a control that just disappeared.
@@ -67,11 +71,26 @@ export function IngestDocument() {
     }
   }
 
+  const currentStep = stepForStage(intake.stage)
+  const trimmedBaseResumeText = intake.baseResumeText.trim()
+
   return (
     <div className="max-w-2xl mx-auto p-6 text-white">
       <h1 ref={stageHeadingRef} tabIndex={-1} className="text-lg font-bold mb-3 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded">
         Start a job application
       </h1>
+
+      <ol aria-label="Progress" className={`flex items-center gap-4 mb-6 text-xs font-medium ${textNeutral500}`}>
+        {STEPS.map(({ step, label }) => (
+          <li
+            key={step}
+            aria-current={step === currentStep ? 'step' : undefined}
+            className={step === currentStep ? `${textAccent200} font-semibold` : undefined}
+          >
+            {label}
+          </li>
+        ))}
+      </ol>
 
       {intake.error && (
         <div
@@ -117,10 +136,20 @@ export function IngestDocument() {
             </div>
           </>
         ) : (
-          <div className="text-sm text-slate-400">
-            <p>Job posting: {intake.drafts[0]?.title}</p>
-            {intake.drafts[0]?.section && <p className="mt-1">{intake.drafts[0].section}</p>}
-            {intake.drafts[0]?.description && <p className="mt-1">{intake.drafts[0].description}</p>}
+          // U4.2: restyled parsed-result card. Title/company/description text nodes are kept
+          // literal and unchanged (existing tests assert on them directly) - only the surrounding
+          // markup and tokens change. No requirement chips: a real, deliberate scope cut (locked in
+          // the epic doc) - TaskDraft has no structured requirements field to build them from.
+          // PR #57 review: dropped the drafts[0].section paragraph entirely - Section is always ''
+          // for this flow (ClaudeJobPostingParser/JobPostingParser, Sprint 3/PR #55, both set it to
+          // string.Empty; Company carries the real value instead), so it could never render in
+          // production and was dead code.
+          <div className={`rounded-xl border ${borderDivider} ${bgSurface} p-4`}>
+            <p className={`text-sm ${textNeutral400}`}>Job posting: {intake.drafts[0]?.title}</p>
+            <p data-testid="parsed-company" className={`mt-1 text-xs ${textNeutral500}`}>
+              {intake.drafts[0]?.company ?? '—'}
+            </p>
+            {intake.drafts[0]?.description && <p className={`mt-1 text-sm ${textNeutral400}`}>{intake.drafts[0].description}</p>}
           </div>
         )}
       </section>
@@ -165,32 +194,38 @@ export function IngestDocument() {
             {baseResumeCapture.saved && (
               <p className="mt-3 text-sm text-emerald-400">Base resume saved.</p>
             )}
+
+            {/* U4.3: additive click-to-expand preview, a sibling of the textarea above - not a
+                replacement (the textarea/label pair stays exactly as-is, per the epic doc's own
+                locked decision, and existing tests keep typing into it unchanged). Hidden entirely
+                while there's nothing to preview (empty or whitespace-only base resume text): a
+                native <details> with nothing behind it collapsed is a confusing affordance, and an
+                empty MarkdownPreview isn't useful, so this renders nothing rather than a disabled
+                state. */}
+            {trimmedBaseResumeText !== '' && (
+              <details className="mt-4">
+                <summary className="cursor-pointer text-xs text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded">
+                  Preview base resume
+                </summary>
+                <div className="mt-3 rounded bg-slate-900/60 border border-slate-800 p-3">
+                  <MarkdownPreview content={intake.baseResumeText} />
+                </div>
+              </details>
+            )}
           </>
         ) : (
           <p className="text-sm text-slate-400">Base resume provided.</p>
         )}
       </section>
 
-      {intake.stage === 'review' && (
+      {(intake.stage === 'review' || intake.stage === 'starting') && (
         <div className="mt-4">
-          <button
+          <TailorButton
             onClick={() => intake.startTailoring()}
             disabled={!intake.baseResumeText || intake.stage !== 'review'}
-            className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold px-4 py-2 rounded"
-          >
-            Start tailoring
-          </button>
+            busy={intake.stage === 'starting'}
+          />
         </div>
-      )}
-
-      {intake.stage === 'starting' && (
-        <p className="mt-4 text-sm text-slate-400" aria-busy="true">
-          Starting…
-        </p>
-      )}
-
-      {intake.stage === 'building' && intake.resumeTaskId !== null && intake.coverLetterTaskId !== null && (
-        <IntakeProgress logs={logs} resumeTaskId={intake.resumeTaskId} coverLetterTaskId={intake.coverLetterTaskId} />
       )}
 
       <details className="mt-8 pt-6 border-t border-slate-800">
