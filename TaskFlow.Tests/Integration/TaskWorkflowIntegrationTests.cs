@@ -246,7 +246,7 @@ public class TaskWorkflowIntegrationTests
     // this test used to prove exactly that: the individual approve succeeding (200) while the
     // resulting inconsistent state was merely reported honestly. That left the underlying
     // corruption reachable - real, already-generated content became permanently unretrievable.
-    // TaskService now closes it at the source instead (IsUnpairedEpic3Kind): the individual approve
+    // TaskService now closes it at the source instead (RequiresPairApproval): the individual approve
     // is rejected outright, and the task is left exactly where it was, not silently moved to Done.
     [Fact]
     public async Task Approve_rejects_an_Epic3_sibling_task_approved_individually_before_its_pair()

@@ -83,7 +83,12 @@ public class TaskService : ITaskService
         if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
 
-        if (dto.Status == WorkflowStatus.Done && IsUnpairedEpic3Kind(task))
+        // PR #58 review finding (correctness): only block a real transition INTO Done from
+        // elsewhere - task.Status != Done is required here, or a no-op re-PATCH of a task that
+        // already legitimately reached Done via TryApprovePairAsync (a retried/duplicate request,
+        // a direct API call, or any future UI feature that re-sends the current status) would be
+        // wrongly rejected even though nothing would actually change.
+        if (dto.Status == WorkflowStatus.Done && task.Status != WorkflowStatus.Done && RequiresPairApproval(task))
             return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
 
         task.Status = dto.Status;
@@ -111,7 +116,7 @@ public class TaskService : ITaskService
             return Result<TaskResponseDto>.Invalid(
                 $"Task {id} is {task.Status}; only a task in Review can be approved.");
 
-        if (IsUnpairedEpic3Kind(task))
+        if (RequiresPairApproval(task))
             return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
 
         task.Status = WorkflowStatus.Done;
@@ -136,7 +141,7 @@ public class TaskService : ITaskService
             return Result<TaskResponseDto>.Invalid(
                 $"Task {id} is {task.Status}; only a task in Review can be rejected.");
 
-        if (IsUnpairedEpic3Kind(task))
+        if (RequiresPairApproval(task))
             return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
 
         // Send it back to the pool for rework and drop the executor's claim so it can be re-picked.
@@ -235,7 +240,12 @@ public class TaskService : ITaskService
     // could never retrieve), which PR #48 found and partially addressed once already: it made the
     // export gate correctly hide instead of lying about a broken "Approved" state, but left this
     // underlying corruption itself reachable. This closes it at the source instead.
-    private static bool IsUnpairedEpic3Kind(TaskItem task) =>
+    //
+    // PR #58 review (nit): unconditional on Kind by design, not a pairing-state check - every
+    // Epic-3 sibling task requires pair approval, full stop, regardless of whether its sibling
+    // happens to be paired/ready right now. Renamed from IsUnpairedEpic3Kind, whose name implied
+    // (incorrectly) that it inspected pairing state.
+    private static bool RequiresPairApproval(TaskItem task) =>
         task.Kind is TaskKind.ResumeTailoring or TaskKind.CoverLetterTailoring;
 
     private static string PairApprovalRequiredMessage(int id) =>

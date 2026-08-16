@@ -248,6 +248,26 @@ public class TaskServiceTests
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // PR #58 review finding (correctness, PLAUSIBLE): the guard above fired on the requested target
+    // status and task kind alone, never checking the task's own current status - so a task that
+    // already legitimately reached Done via TryApprovePairAsync would get its own status rejected
+    // on a no-op re-PATCH (a retried/duplicate request, a direct API call, or any future UI feature
+    // that re-sends the current status), even though nothing would actually change. The guard must
+    // only block a real transition INTO Done from elsewhere, not every request whose target happens
+    // to already match the task's current state.
+    [Theory]
+    [InlineData(TaskKind.ResumeTailoring)]
+    [InlineData(TaskKind.CoverLetterTailoring)]
+    public async Task UpdateStatus_allows_a_no_op_rePATCH_of_an_already_Done_Epic3_sibling_task(TaskKind kind)
+    {
+        SetupGetById(Epic3SiblingTask(kind, status: WorkflowStatus.Done));
+
+        var result = await CreateSut().UpdateStatusAsync(1, new UpdateTaskStatusDto { Status = WorkflowStatus.Done }, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── Approve (Review -> Done, human only) ──────────────────────────────────
     [Fact]
     public async Task Approve_moves_a_Review_task_to_Done_and_broadcasts()
