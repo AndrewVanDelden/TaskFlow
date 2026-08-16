@@ -1187,7 +1187,7 @@ confirmed deleted (repo-wide search, zero remaining references); `priorityStyles
 are confirmed retired from `lib/styles.ts` (only `neutralStyle` remains, still used by
 `AgentStatus.tsx`).
 
-#### Decisions (2026-08-16) — resolved, not yet implemented
+#### Decisions (2026-08-16)
 
 Ruling applied throughout: a deliberate, specifically-scoped choice gets recorded as a locked
 exception; anything that just drifted unscoped gets fixed. Checked against real evidence
@@ -1205,7 +1205,17 @@ exception; anything that just drifted unscoped gets fixed. Checked against real 
    remaining elements (both textareas, "Parse posting"/"Save base resume" buttons, their labels,
    both file inputs, the generic-document `<details>` flow) up to Nocturne tokens, and kill the 5
    remaining `focus-visible:ring-blue-500` occurrences in favor of the locked `focusRingAccent`
-   token. Not yet started — this is a documentation-only pass; implementation is separate work.
+   token.
+
+   **Status: Fixed (2026-08-16), branch `feature/epic3.1-closeout-ingest-restyle`.** Implemented
+   by a dispatched engineer against the exact mapping below, then independently verified: every
+   line of `IngestDocument.tsx` re-read and diffed against the table (all 4 hand-rolled buttons
+   now `<Button variant="primary">`, both textareas + generic textarea on `textareaClasses`, zero
+   `slate-*`/`blue-*` classes left — confirmed via `grep -c` returning 0); `IngestDocument.test.tsx`
+   run standalone (38/38 passing) and again as part of the full suite (backend 465/465, frontend
+   321/321, `.\test`); `eslint` clean; live-verified in the browser preview at `/ingest` by reading
+   computed classes/styles off the real DOM for the parse button, both textareas, and the "use
+   saved resume" link — all match the locked tokens exactly.
 
    **Exact mapping, locked so an engineer doesn't have to guess** (every "old" value is quoted
    verbatim from the file as it stands today; every "new" value reuses an existing token/pattern
