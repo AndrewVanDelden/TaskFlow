@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { KanbanIcon, TrayIcon, PulseIcon, UserCircleIcon } from '@phosphor-icons/react'
+import { KanbanIcon, TrayIcon, PulseIcon, ArchiveIcon, UserCircleIcon } from '@phosphor-icons/react'
 import { useAuth } from '../hooks/AuthContext'
 import { Button } from './ui/Button'
 import { textNeutral500 } from '../lib/tokens'
@@ -30,6 +30,9 @@ export function SideBar() {
       </NavLink>
       <NavLink to="/activity" aria-label="Activity" className={navLinkClass}>
         <PulseIcon aria-hidden="true" />
+      </NavLink>
+      <NavLink to="/archive" aria-label="Archive" className={navLinkClass}>
+        <ArchiveIcon aria-hidden="true" />
       </NavLink>
 
       <div className="mt-auto relative">

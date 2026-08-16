@@ -9,11 +9,13 @@ export function TaskCard({
   output,
   onApprove,
   onReject,
+  onArchive,
 }: {
   task: TaskItem
   output?: string[]
   onApprove?: () => void
   onReject?: (reason: string) => void
+  onArchive?: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id })
@@ -27,7 +29,7 @@ export function TaskCard({
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="mb-2">
-      <TaskCardView task={task} output={output} onApprove={onApprove} onReject={onReject} />
+      <TaskCardView task={task} output={output} onApprove={onApprove} onReject={onReject} onArchive={onArchive} />
     </div>
   )
 }

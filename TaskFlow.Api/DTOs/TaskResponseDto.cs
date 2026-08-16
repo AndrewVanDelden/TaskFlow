@@ -32,6 +32,11 @@ public class TaskResponseDto
     // sibling task belongs to, sourced from the parent JobApplication the same way ApplicationState is.
     public string? Company { get; set; }
 
+    // Board Done-column soft-archive: null = active, set = archived. Lets the separate Archive view
+    // (a later frontend surface) display when a task was cleared, and lets the board tell an active
+    // task apart from an archived one in the same GET /api/Tasks?archived=... shape.
+    public DateTime? ArchivedAt { get; set; }
+
     // Static factory method — converts a TaskItem entity into this DTO
     public static TaskResponseDto FromEntity(TaskItem task) => new()
     {
@@ -49,6 +54,7 @@ public class TaskResponseDto
         ApplicationId = task.ApplicationId,
         TailoredContent = task.TailoredContent,
         ApplicationState = task.Application?.State.ToString(),
-        Company = task.Application?.Company
+        Company = task.Application?.Company,
+        ArchivedAt = task.ArchivedAt
     };
 }

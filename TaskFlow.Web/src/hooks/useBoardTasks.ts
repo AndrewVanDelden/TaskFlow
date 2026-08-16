@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { TaskItem, TaskStatus } from '../types'
-import { getTasks, updateTaskStatus, approveTask, rejectTask } from '../api/tasks'
+import { getTasks, updateTaskStatus, approveTask, rejectTask, archiveTask, archiveAllDone } from '../api/tasks'
 import { HubEvents } from '../lib/hubEvents'
 import { useAgentHub } from '../lib/agentHub'
 
@@ -78,5 +78,37 @@ export function useBoardTasks() {
   const reject = (id: number, reason: string) =>
     applyOptimistic(id, 'Todo', () => rejectTask(id, reason), 'Failed to reject task.')
 
-  return { tasks, error, moveTask, approve, reject }
+  // Archiving is a different dimension from moveTask/approve/reject: it doesn't change status, it
+  // removes the task from the visible list entirely, so applyOptimistic's status-patch shape doesn't
+  // fit. Same rollback-on-error shape, just removing from the array instead of patching a field.
+  const applyOptimisticRemoval = async (
+    predicate: (task: TaskItem) => boolean,
+    persist: () => Promise<unknown>,
+    fallback: string,
+  ) => {
+    if (!tasks.some(predicate)) return
+
+    const previous = tasks
+    setTasks(tasks.filter((t) => !predicate(t)))
+
+    try {
+      await persist()
+    } catch (err) {
+      setTasks(previous)
+      setError(err instanceof Error ? err.message : fallback)
+    }
+  }
+
+  // Board Done-column "archive" action: soft-archives one Done task, removing it from the visible
+  // board optimistically and rolling back on failure.
+  const archive = (id: number) =>
+    applyOptimisticRemoval((t) => t.id === id, () => archiveTask(id), 'Failed to archive task.')
+
+  // Board Done-column "clear all" bulk action: archives every visible Done task. Optimistic local
+  // removal (not a refetch) so it shares the same rollback-on-error shape as every other mutation in
+  // this hook, and avoids an extra round trip once the mutation has already succeeded.
+  const archiveDone = () =>
+    applyOptimisticRemoval((t) => t.status === 'Done', () => archiveAllDone(), 'Failed to clear done tasks.')
+
+  return { tasks, error, moveTask, approve, reject, archive, archiveDone }
 }

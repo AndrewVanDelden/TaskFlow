@@ -28,7 +28,7 @@ public class DraftCommitServiceTests
         result.Value.Should().Be(2);
 
         // The context is seeded with other tasks, so assert on the ones we just committed.
-        var committed = (await repo.GetAllAsync(null, null, callerId: 1))
+        var committed = (await repo.GetAllAsync(null, null, archived: false, callerId: 1))
             .Where(t => t.SourceName == "spec.md")
             .ToList();
 

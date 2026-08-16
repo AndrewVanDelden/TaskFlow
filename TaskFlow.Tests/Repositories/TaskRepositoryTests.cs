@@ -33,8 +33,8 @@ public class TaskRepositoryTests
             new TaskItem { Title = "Owner's tailored resume", Kind = TaskKind.ResumeTailoring, ApplicationId = application.Id });
         await db.Context.SaveChangesAsync();
 
-        var asOwner = await sut.GetAllAsync(null, null, callerId: 1);
-        var asOtherUser = await sut.GetAllAsync(null, null, callerId: 2);
+        var asOwner = await sut.GetAllAsync(null, null, archived: false, callerId: 1);
+        var asOtherUser = await sut.GetAllAsync(null, null, archived: false, callerId: 2);
 
         asOwner.Select(t => t.Title).Should().Contain(new[] { "Generic task", "Owner's tailored resume" });
         asOtherUser.Select(t => t.Title).Should().Contain("Generic task");
@@ -63,7 +63,7 @@ public class TaskRepositoryTests
         db.Context.Tasks.Add(new TaskItem { Title = "Tailored resume", Kind = TaskKind.ResumeTailoring, ApplicationId = application.Id, Status = WorkflowStatus.Done });
         await db.Context.SaveChangesAsync();
 
-        var tasks = await sut.GetAllAsync(null, null, callerId: 1);
+        var tasks = await sut.GetAllAsync(null, null, archived: false, callerId: 1);
 
         var task = tasks.Should().ContainSingle(t => t.Title == "Tailored resume").Subject;
         task.Application.Should().NotBeNull();

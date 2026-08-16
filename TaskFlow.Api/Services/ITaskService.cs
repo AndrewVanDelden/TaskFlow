@@ -32,9 +32,26 @@ public interface ITaskService
 
     /// <summary>Lists tasks visible to <paramref name="callerId"/> — generic tasks unconditionally,
     /// Epic 3 sibling tasks only when owned by the caller (see
-    /// <see cref="TaskFlow.Api.Repositories.ITaskRepository.GetAllAsync"/>).</summary>
-    Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, int callerId, CancellationToken ct = default);
+    /// <see cref="TaskFlow.Api.Repositories.ITaskRepository.GetAllAsync"/>). <paramref name="archived"/>
+    /// is threaded straight through to the repository's binary partition: false is the board's
+    /// default view, true is the separate Archive view.</summary>
+    Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, bool archived, int callerId, CancellationToken ct = default);
 
     /// <summary>Same ownership scoping as <see cref="UpdateAsync"/> (T5.0).</summary>
     Task<Result<bool>> DeleteAsync(int id, int callerId, CancellationToken ct = default);
+
+    /// <summary>Board Done-column "archive" action: soft-archives a single task so it drops off the
+    /// default board view but stays restorable via <see cref="UnarchiveAsync"/>. Only valid from
+    /// <see cref="TaskFlow.Api.Models.WorkflowStatus.Done"/> - archiving unfinished work makes no
+    /// sense. Same ownership scoping as <see cref="UpdateAsync"/> (T5.0).</summary>
+    Task<Result<TaskResponseDto>> ArchiveAsync(int id, int callerId, CancellationToken ct = default);
+
+    /// <summary>Restores a previously archived task back to the default board view. Only valid when
+    /// the task is currently archived. Same ownership scoping as <see cref="UpdateAsync"/> (T5.0).</summary>
+    Task<Result<TaskResponseDto>> UnarchiveAsync(int id, int callerId, CancellationToken ct = default);
+
+    /// <summary>Board Done-column "clear all" bulk action: archives every Done task
+    /// <paramref name="callerId"/> is allowed to see (same ownership scoping as
+    /// <see cref="GetAllAsync"/>). Returns the number of tasks archived.</summary>
+    Task<Result<int>> ArchiveAllDoneAsync(int callerId, CancellationToken ct = default);
 }

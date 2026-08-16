@@ -30,6 +30,10 @@ export interface TaskItem {
   // Optional for the same reason as applicationState above - existing fixtures across the test
   // suite that don't care about company don't need updating.
   company?: string | null
+  // Board Done-column soft-archive (mirrors TaskResponseDto.ArchivedAt): null/absent = active,
+  // set = archived. Optional for the same reason as applicationState/company above - existing
+  // fixtures across the test suite that don't care about archiving don't need updating.
+  archivedAt?: string | null
 }
 
 export interface AuthResponse {

@@ -31,6 +31,11 @@ public class TaskItem
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    // Soft-archive for the Done column's "clear" actions. Null = active (current/default behavior
+    // for every existing task, unchanged); set = archived, hidden from the default board view but
+    // restorable via the Archive view (a separate, later frontend surface) rather than deleted.
+    public DateTime? ArchivedAt { get; set; }
+
     // Foreign key — nullable so tasks can exist without an assigned user
     public int? AssignedToId { get; set; }
 

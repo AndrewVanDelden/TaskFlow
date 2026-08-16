@@ -15,7 +15,7 @@ import { TaskCardView } from '../components/TaskCardView'
 import { BOARD_COLUMNS, resolveDropColumn, taskOutput, reviewReadyPairs } from '../lib/board'
 
 export function KanbanBoard({ logs = [] }: { logs?: AgentLog[] }) {
-  const { tasks, error, moveTask, approve, reject } = useBoardTasks()
+  const { tasks, error, moveTask, approve, reject, archive, archiveDone } = useBoardTasks()
   const [activeId, setActiveId] = useState<number | null>(null)
   const outputFor = (id: number) => taskOutput(logs, id)
 
@@ -72,6 +72,9 @@ export function KanbanBoard({ logs = [] }: { logs?: AgentLog[] }) {
               // Approve/Reject and the executor output are Review-column affordances only.
               onApprove={col.status === 'Review' ? approve : undefined}
               onReject={col.status === 'Review' ? reject : undefined}
+              // Per-card and bulk archive are Done-column affordances only.
+              onArchive={col.status === 'Done' ? archive : undefined}
+              onArchiveDone={col.status === 'Done' ? archiveDone : undefined}
               outputFor={col.status === 'Review' ? outputFor : undefined}
               pairs={col.status === 'Review' ? pairs : undefined}
             />
