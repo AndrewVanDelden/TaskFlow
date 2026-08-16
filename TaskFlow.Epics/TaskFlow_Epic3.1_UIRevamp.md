@@ -174,11 +174,17 @@ re-litigate them mid-sprint.
 
 | Sprint | What | Status |
 |---|---|---|
-| **0** | Design System Foundations, Accessibility & Test Infrastructure | **Shipped** (2026-08-13) — U0.1-U0.6 all green on `feature/epic3.1-sprint-0-foundations`; PR not yet opened |
-| **1** | App Shell (Sidebar + Top Bar) | **Shipped** (2026-08-14) — U1.1-U1.5 all green on `feature/epic3.1-sprint-1-app-shell`; PR not yet opened |
-| **2** | Login | **Shipped** (2026-08-14) — U2.1-U2.3 all green on `feature/epic3.1-sprint-2-login`; PR not yet opened |
-| **3** | Board (application-centric cards, quiet executor line, Activity rail) | **Shipped** (2026-08-14) — U3.1-U3.7 all green on `feature/epic3.1-sprint-3-board`; PR not yet opened |
-| **4** | Ingest & Hand-off (restyled paste flow, tailoring square) | Ready — architecture below, no code yet |
+| **0** | Design System Foundations, Accessibility & Test Infrastructure | **Merged to develop** — [PR #52](https://github.com/AndrewVanDelden/TaskFlow/pull/52), review findings fixed |
+| **1** | App Shell (Sidebar + Top Bar) | **Merged to develop** — [PR #53](https://github.com/AndrewVanDelden/TaskFlow/pull/53), review findings fixed |
+| **2** | Login | **Merged to develop** — [PR #54](https://github.com/AndrewVanDelden/TaskFlow/pull/54), review findings fixed |
+| **3** | Board (application-centric cards, quiet executor line, Activity rail) | **Merged to develop** — [PR #55](https://github.com/AndrewVanDelden/TaskFlow/pull/55), review findings fixed |
+| **4** | Ingest & Hand-off (restyled paste flow, tailoring square) | **Merged to develop** — [PR #57](https://github.com/AndrewVanDelden/TaskFlow/pull/57), review findings fixed. Last sprint in this epic's own scope. |
+
+**Post-sprint Board fixes (outside the sprint numbering, found via live use after Sprint 3 shipped), also merged:**
+- [PR #58](https://github.com/AndrewVanDelden/TaskFlow/pull/58) — ExecutorControl running/paused clarity, AgentStatus card alignment, and the root-cause fix for Epic-3 sibling tasks getting permanently stuck below `Approved` when approved/rejected individually (export buttons silently unreachable).
+- [PR #59](https://github.com/AndrewVanDelden/TaskFlow/pull/59) — Board Done-column soft-archive (bulk "Clear Done" + per-card archive, fully restorable via a new `/archive` view). A real feature request (not a Nocturne restyle task), tracked here since it touches the same Board surface.
+
+Fresh `develop` checkout, full suite green: backend 465/465, frontend 309/309 (2026-08-16).
 
 ## Definition of Done (Epic 3.1)
 
@@ -186,7 +192,14 @@ re-litigate them mid-sprint.
 - Board, Login, and Ingest match the signed-off Nocturne reference (2a, 3a, 3b) — colors, type,
   spacing, and interaction per the design handoff's cheat sheet, corrected per the token fix above.
 - No red/amber/green status coloring remains anywhere in the touched surfaces; status is carried by
-  type and copy (one muted green check for "Approved," per the design, is the sole exception).
+  type and copy, with two locked exceptions: the muted green check for "Approved" (per the
+  design), and emerald for a running/connected signal — `AgentStatus`'s "Running" pill, the Board's
+  "Live" connection dot, and `ExecutorControl`'s status dot (added post-Sprint-3, PR #58, after the
+  original all-neutral scheme made running/paused indistinguishable at a glance; see the close-out
+  audit below for the full decision record). `ReviewActions`' hand-rolled green Approve / red
+  Reject is a third, separately-recorded exception (predates this epic and the shared `Button`
+  component entirely — see the close-out audit) — not a violation to fix, a scope boundary Sprint 3
+  itself already drew.
 - Every icon-only control has a real, tested accessible name.
 - `vitest-axe` runs against every component this epic touches, zero violations, as part of the
   normal test suite (not a separate manual pass).
@@ -1084,6 +1097,121 @@ sprint above has independently shipped and its own suite is green:
 4. Confirm no dead code remains from the migration — `NavBar.tsx`, the old `priorityStyles`/
    `actionStyles` maps (if fully retired), and any other file this epic's sprints explicitly marked
    for deletion.
+
+### Close-out audit (2026-08-16) — checklist items 1–3
+
+Ran against a fresh `develop` checkout (full suite green: backend 465/465, frontend 309/309) before
+anything else, per item 1's own instruction. Findings below are **documentation only** — nothing in
+this section has been fixed yet; each is either a real gap needing a decision, or a stale doc claim
+corrected to match a real, already-approved decision made elsewhere in this session.
+
+#### 1. Definition of Done, re-read against real code
+
+**Real functional gap — Sprint 0's "no screen hand-rolls its own button" is violated:**
+- `ReviewActions.tsx` hand-rolls two `<button>`s (`bg-emerald-600`/Approve, `bg-red-600`/Reject)
+  instead of the shared `Button` primitive.
+- `IngestDocument.tsx` hand-rolls five `<button>`s (`bg-blue-600`, e.g. "Parse posting", "Save base
+  resume") the same way.
+- **Not a mechanical swap-in**: the shared `Button` component (Sprint 0) only has two variants,
+  `primary` (accent outline) and `ghost` (neutral) — neither carries the positive/negative
+  semantic `ReviewActions` actually needs (Approve vs. Reject must read as visually distinct at a
+  glance, the same problem Sprint 4/PR #58's ExecutorControl work already ran into for
+  running/paused). Fixing this means either a real design decision (new `Button` variants, e.g.
+  `success`/`danger`) or accepting Approve/Reject lose their color distinction under
+  `primary`/`ghost` — an open question, not something to silently decide mid-audit.
+
+**Real functional gap — Sprint 4's Ingest restyle is incomplete:**
+- Only the pieces Sprint 4 explicitly built new (3-step indicator, parsed-result card,
+  `TailorButton`, click-to-expand preview) use Nocturne tokens (`bgSurface`, `borderDivider`,
+  `textNeutral400/500`, `textAccent200`).
+- Everything else in `IngestDocument.tsx` — both textareas, the "Parse posting"/"Save base resume"
+  buttons, their labels, both file inputs, and the entire generic-document `<details>` flow — is
+  still stock pre-Nocturne Tailwind (`bg-slate-900`, `bg-blue-600`, `text-slate-400`,
+  `border-slate-700/800`), confirmed by direct grep (18 old-style class occurrences vs. one file
+  importing Nocturne tokens at all).
+- **This also means the old blue focus ring is still present in 5 places**
+  (`focus-visible:ring-2 focus-visible:ring-blue-500` on the stage heading, the "Use previously
+  saved base resume" link, both `<details>` summaries, and the shared file-input class string) —
+  a direct violation of Sprint 0's own global rule ("kill the default blue ring everywhere"), the
+  same exact bug Sprint 2's review already caught and fixed once for `Login.tsx` but which was
+  never applied to `IngestDocument.tsx`.
+- Net effect: Sprint 4's own Definition of Done ("Ingest matches the signed-off reference (3a) for
+  everything except URL-based parsing") is **not accurate** — the page currently reads as a
+  patchwork of new-Nocturne and old-stock-Tailwind pieces, not a fully restyled screen.
+
+**Fidelity gap vs. Sprint 4's own locked decision:**
+- Sprint 4's "Implementation decisions" section (above) commits to "a lightweight thumbnail (a
+  small, static CSS-rendered card, not a real document-image render), collapsed by default" for
+  the base-resume preview. What actually shipped is a plain `<summary>Preview base resume</summary>`
+  text link — no card, no thumbnail. Smaller gap than the two above, but a real mismatch between a
+  locked decision and the shipped code, not just an unmet aspiration from the original design.
+
+**Stale doc text, not gaps — corrected here for accuracy, no code changed:**
+- Sprint 1's DoD says "the sidebar has three icon nav items" — it now has four (`Archive`, added by
+  PR #59 after Sprint 1 shipped, a legitimate later addition this doc's Sprint 1 section predates).
+- Sprint 3's DoD says "no red/amber/green... status carried by type/copy" — but three places on the
+  Board now deliberately use emerald: `AgentStatus`'s pre-existing "Running" pill (never in Sprint
+  3's own scope to begin with — see the handoff-diff finding below), the "Live" connection dot
+  (added fixing PR #55's own review finding), and `ExecutorControl`'s running/paused dot (added in
+  PR #58, explicitly matching the other two after screenshot feedback that the original
+  all-neutral scheme made running/paused indistinguishable at a glance). This is a real, deliberate,
+  already-approved evolution of the "no red/amber/green" rule — it needs a **locked exception**
+  recorded here (mirroring the epic-wide DoD's own existing "one muted green check for Approved"
+  exception), not a silent contradiction left standing.
+
+#### 2. `design_handoff_ui_revamp/` diff pass
+
+Re-read `EPIC.md` in full against the shipped code. Confirmed still accurate/already recorded:
+URL-based parsing and requirement chips are the two deliberate, already-documented scope cuts;
+Login, the Board's card/executor/rail restyle, and the app shell otherwise match the handoff
+faithfully.
+
+**One real gap found**: `EPIC.md`'s own "Screen ↔ file map" explicitly lists `AgentStatus.tsx` as
+a Board file requiring the Nocturne restyle (alongside `Dashboard.tsx`, `KanbanBoard.tsx`,
+`KanbanColumn.tsx`, `TaskCardView.tsx`, `ExecutorControl.tsx`, `AgentFeed.tsx`) — but Sprint 3's own
+"Files involved" list (this doc, above) never included it, and it was never touched. This is the
+direct root cause of the Sprint 3 DoD contradiction above: `AgentStatus`'s emerald "Running" pill
+was never brought into the "no red/amber/green" pass because the sprint that was supposed to do it
+was never scoped to include the file the original handoff named. Resolved below (decision 3) as a
+locked exception, not a fix. The folder itself (`design_handoff_ui_revamp/EPIC.md` + the standalone
+prototype HTML) has **not** been deleted yet — holding it until the `IngestDocument.tsx` restyle
+(decision 2 below) is actually implemented, since it's still the reference for exactly what
+"matches the signed-off reference" means for that work. Delete it once that lands, not before.
+
+#### 3. Dead-code sweep
+
+Clean — nothing further found. `NavBar.tsx`, `AgentFeed.tsx`, and `IntakeProgress.tsx` are all
+confirmed deleted (repo-wide search, zero remaining references); `priorityStyles`/`actionStyles`
+are confirmed retired from `lib/styles.ts` (only `neutralStyle` remains, still used by
+`AgentStatus.tsx`).
+
+#### Decisions (2026-08-16) — resolved, not yet implemented
+
+Ruling applied throughout: a deliberate, specifically-scoped choice gets recorded as a locked
+exception; anything that just drifted unscoped gets fixed. Checked against real evidence
+(`git log`, this doc's own task text), not assumed, for each:
+
+1. **`ReviewActions`'s hand-rolled Approve/Reject buttons → locked exception, not fixed.**
+   Checked `git log --follow` on `ReviewActions.tsx`: created in Epic 3 (`a2e1e25`), last touched
+   in Epic 3's own pre-merge review (`411f694`) — both **before** Sprint 0 created the `Button`
+   component (`7a94018`) at all. Never touched by any Epic 3.1 commit. Sprint 3's own U3.4 task
+   text (above) is explicit: *"a Review-column card renders the existing `ReviewActions`
+   unchanged, wrapped in the new visual shell."* This was a specific, named scope decision, not
+   drift — `ReviewActions.tsx` is a **permanent, recorded exception** to "always use the shared
+   `Button`." Its green Approve / red Reject stays exactly as it is.
+2. **`IngestDocument.tsx`'s incomplete restyle → will be fixed**, not shipped as a gap. Bring the
+   remaining elements (both textareas, "Parse posting"/"Save base resume" buttons, their labels,
+   both file inputs, the generic-document `<details>` flow) up to Nocturne tokens, and kill the 5
+   remaining `focus-visible:ring-blue-500` occurrences in favor of the locked `focusRingAccent`
+   token. Not yet started — this is a documentation-only pass; implementation is separate work.
+3. **Emerald running/connected exception → locked explicitly, `AgentStatus.tsx` included as-is.**
+   `AgentStatus`'s "Running" pill, the "Live" connection dot, and `ExecutorControl`'s dot all keep
+   emerald. This **updates the epic-wide Definition of Done** (below) to add a second named
+   exception to "no red/amber/green," alongside the existing muted-green-Approved one. This
+   resolves the design-handoff-diff finding above too (the handoff's file map named
+   `AgentStatus.tsx` as in-scope for Sprint 3, but only its *card/spacing* would need a Nocturne
+   pass if that's ever done separately — its pill color is now a locked exception either way, not
+   something a future pass needs to "fix").
 5. Open the `develop → main` PR; run an independent manual review before looking at any automated
    reviewer's comments, then compare, per this project's established two-pass review habit.
 
