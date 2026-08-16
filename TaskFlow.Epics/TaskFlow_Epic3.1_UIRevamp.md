@@ -1097,6 +1097,8 @@ sprint above has independently shipped and its own suite is green:
 4. Confirm no dead code remains from the migration — `NavBar.tsx`, the old `priorityStyles`/
    `actionStyles` maps (if fully retired), and any other file this epic's sprints explicitly marked
    for deletion.
+5. Open the `develop → main` PR; run an independent manual review before looking at any automated
+   reviewer's comments, then compare, per this project's established two-pass review habit.
 
 ### Close-out audit (2026-08-16) — checklist items 1–3
 
@@ -1204,6 +1206,42 @@ exception; anything that just drifted unscoped gets fixed. Checked against real 
    both file inputs, the generic-document `<details>` flow) up to Nocturne tokens, and kill the 5
    remaining `focus-visible:ring-blue-500` occurrences in favor of the locked `focusRingAccent`
    token. Not yet started — this is a documentation-only pass; implementation is separate work.
+
+   **Exact mapping, locked so an engineer doesn't have to guess** (every "old" value is quoted
+   verbatim from the file as it stands today; every "new" value reuses an existing token/pattern
+   already proven elsewhere in this codebase, not invented here):
+
+   | Element | Old | New |
+   |---|---|---|
+   | `fileInputClasses` (shared, both file inputs) | `text-slate-400 ... file:border-slate-700 file:bg-slate-800 ... focus-visible:ring-2 focus-visible:ring-blue-500` | `${textNeutral500} ... file:${borderDivider} file:${bgSurface} ... ${focusRingAccent}` |
+   | Stage `<h1>` focus ring | `outline-none focus-visible:ring-2 focus-visible:ring-blue-500` | `${focusRingAccent}` (already includes `outline-none`, drop the duplicate) |
+   | Job-posting & base-resume `<textarea>` (2×, identical pattern) | `bg-slate-900 border border-slate-700` — **no focus-ring class at all today** (plain browser default outline, not even the old blue one) | `${bgSurface} border border-white/10 text-white ${focusRingAccent}` — exact match to `Login.tsx`'s own `inputClass` (`bg-[#232532] border border-white/10 ... focusRingAccent`), the locked reference pattern for every text input in this app |
+   | Generic-document `<textarea>` | same as above | same as above |
+   | "Or upload a file" / "Or upload a document file" `<label>`s | `text-xs text-slate-400` | `text-xs ${textNeutral500}` |
+   | "Parse posting" `<button>` | `bg-blue-600 hover:bg-blue-500 ...` hand-rolled | `<Button variant="primary">` (shared component — this is also the Sprint 0 DoD fix for this file, not just a color change) |
+   | "Save base resume" `<button>` | same hand-rolled pattern | `<Button variant="primary">` |
+   | "Parse" (generic-document) `<button>` | same hand-rolled pattern | `<Button variant="primary">` |
+   | "Approve and add to board" `<button>` | same hand-rolled pattern (emerald) | `<Button variant="primary">` — emerald here was never a locked exception (unlike the three running/connected spots in decision 3), it's the same drift as the other hand-rolled buttons |
+   | "Use previously saved base resume" `<button>` (text-link style, not a real button — keep as a plain `<button>`, not `Button`, since `Button`'s two variants both carry padding/border treatments wrong for an inline link) | `text-blue-400 hover:text-blue-300 underline focus-visible:ring-2 focus-visible:ring-blue-500` | `${textAccent} hover:${textAccent200} underline ${focusRingAccent}` |
+   | `<details>` summaries — "Preview base resume" and "Other: paste a generic document" (2×) | `text-slate-400 ... focus-visible:ring-2 focus-visible:ring-blue-500` | `${textNeutral500} ... ${focusRingAccent}` |
+   | Section divider borders (`border-t border-slate-800`, 2×) | `border-slate-800` | `${borderDivider}` |
+   | Expanded base-resume preview wrapper | `bg-slate-900/60 border border-slate-800` | `${bgSurface} border ${borderDivider}` |
+   | Generic-document draft list items | `border border-slate-800 rounded-lg ... bg-slate-900/60`; section meta `text-[11px] text-slate-500`; description `text-xs text-slate-400` | `border ${borderDivider} rounded-lg ... ${bgSurface}`; meta `text-[11px] ${textNeutral500}`; description `text-xs ${textNeutral400}` (matches the parsed-result card's own established content-vs-meta split from U4.2: `textNeutral400` for primary content lines, `textNeutral500` for quieter/secondary text) |
+   | "Base resume provided." status text | `text-sm text-slate-400` | `text-sm ${textNeutral500}` |
+
+   **Deliberately left unchanged** (not in scope, not drift):
+   - Error banners (`role="alert"`, red-on-dark) — genuine error messaging, a different UI category
+     from workflow-status coloring; `Login.tsx` already establishes red stays for real errors
+     (`text-red-300 bg-red-500/10 border-red-500/30`). Match Login's exact shade while touching
+     these (currently `text-red-400 bg-red-950 border-red-900`, a mismatched red never reconciled
+     with Login's) — a small consistency fix, not a new category decision.
+   - Success confirmation text ("Base resume saved.", "Added N tasks...") — `text-emerald-400`,
+     left exactly as-is. Same reasoning as errors: one-line transient feedback text, not persistent
+     status coloring, and no locked green token exists to migrate it to — out of scope for this fix.
+   - Section `<label>`s ("Job posting", "Base resume", "Paste a document") — `text-sm font-semibold`,
+     no color class today (inherits white from the page wrapper), not a hand-rolled/stale-color
+     issue — leave as-is. These are bold section headers, not per-field micro-labels like Login's,
+     so they're not migrated to Login's separate muted `labelClass` pattern.
 3. **Emerald running/connected exception → locked explicitly, `AgentStatus.tsx` included as-is.**
    `AgentStatus`'s "Running" pill, the "Live" connection dot, and `ExecutorControl`'s dot all keep
    emerald. This **updates the epic-wide Definition of Done** (below) to add a second named
@@ -1212,8 +1250,6 @@ exception; anything that just drifted unscoped gets fixed. Checked against real 
    `AgentStatus.tsx` as in-scope for Sprint 3, but only its *card/spacing* would need a Nocturne
    pass if that's ever done separately — its pill color is now a locked exception either way, not
    something a future pass needs to "fix").
-5. Open the `develop → main` PR; run an independent manual review before looking at any automated
-   reviewer's comments, then compare, per this project's established two-pass review habit.
 
 ---
 
