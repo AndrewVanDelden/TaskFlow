@@ -217,6 +217,14 @@ public class TaskService : ITaskService
             return Result<TaskResponseDto>.Invalid(
                 $"Task {id} is {task.Status}; only a Done task can be archived.");
 
+        // PR #59 review finding (conventions): mirrors UnarchiveAsync's symmetric precondition
+        // check below. Without this, a second archive call on an already-archived task fell
+        // through to the repository's guarded no-op update and still returned 200 with the current
+        // state - not a data-corruption risk, but an inconsistent response code for the same class
+        // of "already in target state" call Unarchive correctly rejects with 400.
+        if (task.ArchivedAt is not null)
+            return Result<TaskResponseDto>.Invalid($"Task {id} is already archived.");
+
         await _tasks.ArchiveAsync(id, callerId, ct);
 
         // Re-fetch: ArchiveAsync is a repository ExecuteUpdateAsync bypass, so the tracked instance

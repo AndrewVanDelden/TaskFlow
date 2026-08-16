@@ -520,6 +520,27 @@ public class TaskServiceTests
         _tasks.Verify(t => t.ArchiveAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // PR #59 review finding (conventions, PLAUSIBLE): UnarchiveAsync explicitly guards its mirror
+    // precondition (task.ArchivedAt is null -> Invalid), but ArchiveAsync had no equivalent
+    // (task.ArchivedAt is not null) check - only task.Status != Done, which stays true for an
+    // already-archived task. A second archive call fell through to the repository (whose guarded
+    // update is a true no-op) but the service still returned 200 with the current state, instead of
+    // the symmetric 400 Unarchive gives for the mirrored case. Not a data-corruption risk, but an
+    // inconsistent response code for the same class of "already in target state" call.
+    [Fact]
+    public async Task Archive_rejects_a_task_that_is_already_archived()
+    {
+        var task = SampleTask();
+        task.Status = WorkflowStatus.Done;
+        task.ArchivedAt = DateTime.UtcNow;
+        SetupGetById(task);
+
+        var result = await CreateSut().ArchiveAsync(1, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.ArchiveAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── Unarchive (restore) ──────────────────────────────────────────────────
     [Fact]
     public async Task Unarchive_restores_an_archived_task_and_returns_the_updated_dto()
