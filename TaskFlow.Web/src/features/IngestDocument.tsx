@@ -13,6 +13,7 @@ import {
   bgSurface,
   borderDivider,
   focusRingAccent,
+  hoverTextAccent200,
   textAccent,
   textAccent200,
   textNeutral400,
@@ -180,7 +181,7 @@ export function IngestDocument() {
               <button
                 type="button"
                 onClick={() => intake.setBaseResumeText(reuse.content)}
-                className={`block mb-3 text-xs ${textAccent} hover:${textAccent200} underline ${focusRingAccent} rounded`}
+                className={`block mb-3 text-xs ${textAccent} ${hoverTextAccent200} underline ${focusRingAccent} rounded`}
               >
                 Use previously saved base resume
                 {reuse.updatedAt ? ` (updated ${formatDate(reuse.updatedAt)})` : ''}

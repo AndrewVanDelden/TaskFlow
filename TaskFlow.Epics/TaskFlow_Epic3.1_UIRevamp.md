@@ -1217,6 +1217,27 @@ exception; anything that just drifted unscoped gets fixed. Checked against real 
    computed classes/styles off the real DOM for the parse button, both textareas, and the "use
    saved resume" link — all match the locked tokens exactly.
 
+   **Code review findings (2026-08-17) — PR #60.** Manual review posted directly to the PR as an
+   inline comment — see
+   [review #4949367313](https://github.com/AndrewVanDelden/TaskFlow/pull/60#pullrequestreview-4949367313)
+   for the full text. No prior review on this PR to cross-check. **Status: Fixed (2026-08-17).**
+   - `IngestDocument.tsx:183` (CONFIRMED) — the "Use previously saved base resume" button's
+     `` hover:${textAccent200} `` interpolates a Tailwind variant prefix onto a token constant.
+     This is the exact anti-pattern `lib/tokens.ts`'s own comment warns against: the scanner needs
+     the full `hover:text-[#e7e5fe]` string as a literal substring, not a JS template expression,
+     so the hover rule is never generated — a silent, string-check-proof regression. **Note: this
+     exact value is what the mapping table below specifies** (row: "Use previously saved base
+     resume" `<button>`) — the bug originated in this doc's own locked mapping, not just the
+     implementation, so the fix updates both.
+     **Fix:** added a literal `hoverTextAccent200 = 'hover:text-[#e7e5fe]'` constant to
+     `lib/tokens.ts` (matching the file's own "must stay literal strings" rule) and swapped the
+     interpolation for it in `IngestDocument.tsx`; updated the mapping table row above to match.
+     Verified two ways: (1) full `.\test` — backend 465/465, frontend 321/321, both green; (2) live
+     browser check — read the compiled Vite stylesheet's `cssText` directly and confirmed
+     `.hover\:text-\[\#e7e5fe\]:hover { color: rgb(231, 229, 254); }` is now present as a real
+     generated rule (it was absent before the fix, which is exactly the failure mode the review
+     described — a class string that renders in the DOM but has no matching CSS).
+
    **Exact mapping, locked so an engineer doesn't have to guess** (every "old" value is quoted
    verbatim from the file as it stands today; every "new" value reuses an existing token/pattern
    already proven elsewhere in this codebase, not invented here):
@@ -1232,7 +1253,7 @@ exception; anything that just drifted unscoped gets fixed. Checked against real 
    | "Save base resume" `<button>` | same hand-rolled pattern | `<Button variant="primary">` |
    | "Parse" (generic-document) `<button>` | same hand-rolled pattern | `<Button variant="primary">` |
    | "Approve and add to board" `<button>` | same hand-rolled pattern (emerald) | `<Button variant="primary">` — emerald here was never a locked exception (unlike the three running/connected spots in decision 3), it's the same drift as the other hand-rolled buttons |
-   | "Use previously saved base resume" `<button>` (text-link style, not a real button — keep as a plain `<button>`, not `Button`, since `Button`'s two variants both carry padding/border treatments wrong for an inline link) | `text-blue-400 hover:text-blue-300 underline focus-visible:ring-2 focus-visible:ring-blue-500` | `${textAccent} hover:${textAccent200} underline ${focusRingAccent}` |
+   | "Use previously saved base resume" `<button>` (text-link style, not a real button — keep as a plain `<button>`, not `Button`, since `Button`'s two variants both carry padding/border treatments wrong for an inline link) | `text-blue-400 hover:text-blue-300 underline focus-visible:ring-2 focus-visible:ring-blue-500` | `${textAccent} ${hoverTextAccent200} underline ${focusRingAccent}` (literal `hoverTextAccent200` token, not `hover:${textAccent200}` interpolation — see PR #60 finding below) |
    | `<details>` summaries — "Preview base resume" and "Other: paste a generic document" (2×) | `text-slate-400 ... focus-visible:ring-2 focus-visible:ring-blue-500` | `${textNeutral500} ... ${focusRingAccent}` |
    | Section divider borders (`border-t border-slate-800`, 2×) | `border-slate-800` | `${borderDivider}` |
    | Expanded base-resume preview wrapper | `bg-slate-900/60 border border-slate-800` | `${bgSurface} border ${borderDivider}` |
