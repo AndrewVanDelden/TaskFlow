@@ -12,19 +12,24 @@ export function useApplicationReview(applicationId: number) {
   const [actionLoading, setActionLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let cancelled = false
+  // Resetting every piece of state when applicationId changes is responding to a prop change, not
+  // a side effect - done during render (React's own documented pattern for this) rather than at
+  // the top of the fetch effect below, so it can't trigger that effect's own render-then-effect-
+  // then-render cascade. Clearing the previous application's resume (PR #45 review finding) and
+  // any leftover action state (PR #45 review, round 2) both still apply - a caller that reuses this
+  // hook across different applicationIds must never briefly show the wrong application's content.
+  const [reviewedApplicationId, setReviewedApplicationId] = useState(applicationId)
+  if (applicationId !== reviewedApplicationId) {
+    setReviewedApplicationId(applicationId)
     setBaseResumeLoading(true)
     setBaseResumeError(null)
-    // Clear the previous application's resume too - otherwise a caller that reuses this hook
-    // across different applicationIds would briefly (or, on error, indefinitely) keep showing the
-    // wrong application's content (PR #45 review finding).
     setBaseResume(null)
-    // Also clear any leftover action state from the previous application (PR #45 review, round 2)
-    // - otherwise a prior approve/reject error, or an in-flight loading flag, would leak into the
-    // new application's UI.
     setActionLoading(false)
     setActionError(null)
+  }
+
+  useEffect(() => {
+    let cancelled = false
     getApplicationResumeContext(applicationId)
       .then((content) => {
         if (cancelled) return

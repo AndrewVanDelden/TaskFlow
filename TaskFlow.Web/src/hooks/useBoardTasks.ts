@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { TaskItem, TaskStatus } from '../types'
 import { getTasks, updateTaskStatus, approveTask, rejectTask, archiveTask, archiveAllDone } from '../api/tasks'
 import { HubEvents } from '../lib/hubEvents'
-import { useAgentHub } from '../lib/agentHub'
+import { useAgentHub } from '../lib/AgentHubContext'
 
 interface TaskMovedEvent {
   id: number
