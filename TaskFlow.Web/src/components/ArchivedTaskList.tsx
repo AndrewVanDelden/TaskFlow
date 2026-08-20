@@ -3,7 +3,8 @@ import { formatDate } from '../lib/formatting'
 import { taskKindLabel } from '../lib/taskKind'
 import { ExportDownloadControls } from './ExportDownloadControls'
 import { Button } from './ui/Button'
-import { textNeutral500 } from '../lib/tokens'
+import { canDownloadExport } from '../lib/board'
+import { borderDivider, textNeutral500 } from '../lib/tokens'
 
 // Presentational list for the Archive view: mirrors AgentFeedList's own shape (an empty state plus
 // one row per item). Each row carries a Restore button, and - for a Done+Approved Epic-3 sibling -
@@ -23,7 +24,7 @@ export function ArchivedTaskList({
   return (
     <ul>
       {tasks.map((task) => (
-        <li key={task.id} className="border-b border-white/10 py-3">
+        <li key={task.id} className={`border-b ${borderDivider} py-3`}>
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="flex items-center gap-2">
@@ -44,7 +45,7 @@ export function ArchivedTaskList({
             </Button>
           </div>
 
-          {task.status === 'Done' && task.applicationId !== null && task.applicationState === 'Approved' && (
+          {canDownloadExport(task) && (
             <ExportDownloadControls applicationId={task.applicationId} kind={task.kind} />
           )}
         </li>

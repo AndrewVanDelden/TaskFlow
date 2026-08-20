@@ -60,6 +60,12 @@ public class TaskService : ITaskService
         if (dto.AssignedToId.HasValue && !await _users.ExistsAsync(dto.AssignedToId.Value, ct))
             return Result<TaskResponseDto>.Invalid($"User {dto.AssignedToId} does not exist.");
 
+        // PR #61 review finding 1: mirrors UpdateStatusAsync's guard below - this plain PUT handler
+        // is just as capable of forcing an Epic-3 sibling task straight to Done as the status-only
+        // endpoint, and had no guard against it at all.
+        if (dto.Status == WorkflowStatus.Done && task.Status != WorkflowStatus.Done && RequiresPairApproval(task))
+            return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
+
         task.Title = dto.Title;
         task.Description = dto.Description;
         task.Status = dto.Status;
@@ -241,10 +247,12 @@ public class TaskService : ITaskService
 
         await _tasks.ArchiveAsync(id, callerId, ct);
 
-        // Re-fetch: ArchiveAsync is a repository ExecuteUpdateAsync bypass, so the tracked instance
-        // above never saw ArchivedAt get set (matches UpdateAsync's read-fresh-state-after pattern).
-        var archived = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
-        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(archived!));
+        // PR #61 review finding (efficiency/simplification): ArchiveAsync's guarded UPDATE bypasses
+        // the change tracker, but its outcome is fully known without re-reading it - the precondition
+        // checks above already guarantee it archives exactly this task, so the tracked instance can
+        // be updated in memory instead of costing a second GetByIdAsync round trip.
+        task.ArchivedAt = DateTime.UtcNow;
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
     public async Task<Result<TaskResponseDto>> UnarchiveAsync(int id, int callerId, CancellationToken ct = default)
@@ -261,8 +269,10 @@ public class TaskService : ITaskService
 
         await _tasks.UnarchiveAsync(id, callerId, ct);
 
-        var restored = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
-        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(restored!));
+        // Same reasoning as ArchiveAsync above: the guarded UPDATE's outcome is already known, so
+        // update the tracked instance in memory instead of re-fetching it.
+        task.ArchivedAt = null;
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
     public async Task<Result<int>> ArchiveAllDoneAsync(int callerId, CancellationToken ct = default)

@@ -35,6 +35,18 @@ describe('AgentFeedList', () => {
     expect(screen.getByRole('listitem').textContent).toMatch(/ago|just now/)
   })
 
+  it('renders the task reference for a log with a taskId', () => {
+    render(<AgentFeedList logs={[log]} />)
+
+    expect(screen.getByRole('listitem').textContent).toContain(`Task #${log.taskId}`)
+  })
+
+  it('omits the task reference for a log with no taskId', () => {
+    render(<AgentFeedList logs={[{ ...log, taskId: null }]} />)
+
+    expect(screen.getByRole('listitem').textContent).not.toContain('Task #')
+  })
+
   it('shows the empty state when there are no logs', () => {
     render(<AgentFeedList logs={[]} />)
 

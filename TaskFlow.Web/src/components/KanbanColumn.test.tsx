@@ -201,4 +201,29 @@ describe('KanbanColumn', () => {
 
     expect(onArchive).toHaveBeenCalledWith(5)
   })
+
+  // PR #61 review finding: the column shell still used stock pre-Nocturne slate classes
+  // (bg-slate-900/60, border-slate-800) instead of the shared bgSurface/borderDivider tokens.
+  it('uses the bgSurface/borderDivider tokens for the column shell background and border', () => {
+    const { container } = render(
+      <DndContext>
+        <KanbanColumn status="Todo" label="To Do" tasks={[task]} />
+      </DndContext>,
+    )
+
+    const column = container.firstElementChild as HTMLElement
+    expect(getComputedStyle(column).backgroundColor).toBe('rgb(35, 37, 50)')
+    expect(getComputedStyle(column).borderColor).toBe('rgba(233, 233, 237, 0.16)')
+    expect(column.className).not.toMatch(/bg-slate-900\/60|border-slate-800/)
+  })
+
+  it('uses the textNeutral600 token for the "No tasks" empty state text', () => {
+    render(
+      <DndContext>
+        <KanbanColumn status="Todo" label="To Do" tasks={[]} />
+      </DndContext>,
+    )
+
+    expect(getComputedStyle(screen.getByText('No tasks')).color).toBe('rgb(117, 121, 140)')
+  })
 })

@@ -1282,6 +1282,76 @@ exception; anything that just drifted unscoped gets fixed. Checked against real 
    pass if that's ever done separately — its pill color is now a locked exception either way, not
    something a future pass needs to "fix").
 
+### Code review findings (2026-08-19/20) — PR #61 (`develop` → `main` close-out PR)
+
+Manual review posted directly to PR #61 as inline comments (high effort, 8 finder angles across
+correctness/reuse/simplification/efficiency/altitude/conventions, 1-vote verify) — see
+[review #4979230329](https://github.com/AndrewVanDelden/TaskFlow/pull/61#pullrequestreview-4979230329)
+for the full text. No automated reviewer had run on this PR to cross-check against. Two more
+findings were independently posted afterward by a prior session that hit its usage limit mid-task
+(recovered and reconciled — see the `CLAUDE.md` finding on this dated the same day: it left Python/
+`gh api` scratch artifacts in the repo root, cleaned up, and never touched any source file).
+12 findings total, all researched against the real code/doc before acting — not taken at face
+value. **Status: all resolved (2026-08-20).**
+
+**Fixed (3 confirmed bugs):**
+1. `IngestDocument.tsx` — `file:${borderDivider}`/`file:${bgSurface}` interpolated onto token
+   constants inside `fileInputClasses`, the exact `hover:` anti-pattern from PR #60's own finding,
+   recurring. Only "worked" because `IngestDocument.test.tsx` happened to contain the literal
+   strings the Tailwind scanner picked up from the test file instead of the component. Fixed with
+   literal `fileBorderDivider`/`fileBgSurface` constants in `tokens.ts`, matching the
+   `hoverTextAccent200` precedent. Verified with a real `vite build` both ways (broke it back to
+   interpolated form to confirm the bug was genuine, then confirmed the fix generates real CSS).
+2. `TaskService.UpdateAsync` (the plain `PUT /api/Tasks/{id}`) had no `RequiresPairApproval` guard,
+   while `UpdateStatusAsync`/`ApproveAsync`/`RejectAsync` all got one in this same epic to close the
+   "Epic-3 sibling forced to Done individually strands its `JobApplication`" bug — this endpoint
+   silently reopened it. Fixed: same guard added, mirroring `UpdateStatusAsync`'s exact condition.
+3. `ReviewActions.tsx`'s rejection-reason `<textarea>` was still stock pre-Nocturne Tailwind with no
+   focus ring — the epic's own locked exception for this component covers only its Approve/Reject
+   buttons, never the textarea; it was simply missed. Fixed to match the locked text-input pattern.
+
+**Fixed (6 plausible findings, real but lower-severity):**
+4. `AgentFeedList.tsx` dropped the `Task #{taskId}` reference the deleted `AgentFeed.tsx` rendered —
+   restored, muted via `textNeutral500`.
+5. Export-download eligibility (`status === 'Done' && applicationId !== null && applicationState ===
+   'Approved'`) was duplicated business logic between `TaskCardView.tsx` and `ArchivedTaskList.tsx` —
+   extracted to `canDownloadExport(task)` in `lib/board.ts`.
+6. `JobApplicationRepository`'s `BothRequiredSiblingsAreReview`/`...AreDone` were near-identical
+   expression trees — collapsed into one `BothRequiredSiblingsAre(WorkflowStatus)` factory.
+7. `TaskCardView.tsx`/`KanbanColumn.tsx` still had raw `slate-*` classes never migrated to Nocturne
+   tokens (description/meta/executor-output text and backgrounds, column shell, empty state) —
+   migrated to `textNeutral300/400/500/600`/`bgSurface`/`borderDivider`.
+8. Dashboard's offline-dot shade (`slate-600`) had drifted from `ExecutorControl`/`AgentStatus`'s
+   `slate-500` for the same state — realigned.
+9. `usePrefersReducedMotion` registered one independent `matchMedia` subscription per calling
+   component (up to ~30 for a full board) — rewritten around `useSyncExternalStore` with a shared
+   module-level singleton; public API unchanged, all existing callers unaffected.
+
+**Fixed (1 finding not originally delegated — caught during final reconciliation):**
+10. `TaskService.ArchiveAsync`/`UnarchiveAsync` re-fetched the task a second time after their
+    guarded repository update purely to read back a value already known locally — removed the
+    re-fetch, updating the tracked entity in memory instead (3 DB round trips → 2).
+
+**Pushed back on (2 findings, researched and rejected as real issues):**
+- `ArchiveAsync`/`UnarchiveAsync` discarding the repository's guarded-update bool: the code's own
+  existing comment already reasons through this exact race and calls it "not a data-corruption
+  risk" (end state is identical either way) — a deliberate, already-recorded tradeoff, not a miss.
+- `border-white/10` vs `borderDivider` "drift," 2 of the 5 originally-flagged spots
+  (`Login.tsx`'s `inputClass`, `IngestDocument.tsx`'s `textareaClasses`): checked against this
+  doc's own locked mapping table (Sprint 4 close-out, decision 2 above) — `border-white/10` is the
+  *locked reference pattern itself* for text inputs, not a drift. Fixed the other 3 spots
+  (`TaskCardView.tsx`'s card wrapper, `AgentFeedList.tsx`/`ArchivedTaskList.tsx`'s row dividers)
+  where it was genuinely misapplied to a divider/panel context.
+- (Partial push-back, folded into finding 7 above): "broad `slate-*` remains across Board files"
+  named `AgentStatus.tsx` alongside `TaskCardView.tsx`/`KanbanColumn.tsx` — `AgentStatus.tsx`'s
+  card/spacing was already explicitly ruled out of this epic's scope by decision 3 above; left
+  untouched. Not collapsing `ArchiveAsync`/`UnarchiveAsync` into one generic helper for the
+  duplicate-shape part of finding 10's origin either — 2 call sites doesn't earn a
+  parameterized-precondition abstraction (this doc's own "three similar lines beats a premature
+  abstraction" standard).
+
+Full suite green throughout and at the end: backend 470/470, frontend 340/340.
+
 ---
 
 ## Open decisions log

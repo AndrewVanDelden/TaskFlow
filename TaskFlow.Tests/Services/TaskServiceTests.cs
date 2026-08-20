@@ -144,6 +144,49 @@ public class TaskServiceTests
         _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // PR #61 review finding 1 (CONFIRMED): UpdateAsync (the plain PUT handler) set task.Status
+    // directly with no RequiresPairApproval guard at all, unlike UpdateStatusAsync/ApproveAsync/
+    // RejectAsync in this same file - so an Epic-3 sibling task could be forced straight to Done
+    // through this endpoint alone, permanently stranding its JobApplication below Approved exactly
+    // like the bug UpdateStatus_rejects_moving_an_Epic3_sibling_task_directly_to_Done closed for the
+    // status-only endpoint. Same three-test shape as that guard, adapted to UpdateTaskDto.
+    [Theory]
+    [InlineData(TaskKind.ResumeTailoring)]
+    [InlineData(TaskKind.CoverLetterTailoring)]
+    public async Task UpdateAsync_rejects_moving_an_Epic3_sibling_task_directly_to_Done(TaskKind kind)
+    {
+        SetupGetById(Epic3SiblingTask(kind, status: WorkflowStatus.Review));
+
+        var result = await CreateSut().UpdateAsync(1, new UpdateTaskDto { Title = "Sample", Status = WorkflowStatus.Done }, callerId: 1);
+
+        result.Status.Should().Be(ResultStatus.Validation);
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_still_allows_a_non_Done_status_change_for_an_Epic3_sibling_task()
+    {
+        SetupGetById(Epic3SiblingTask(TaskKind.ResumeTailoring, status: WorkflowStatus.Todo));
+
+        var result = await CreateSut().UpdateAsync(1, new UpdateTaskDto { Title = "Sample", Status = WorkflowStatus.InProgress }, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(TaskKind.ResumeTailoring)]
+    [InlineData(TaskKind.CoverLetterTailoring)]
+    public async Task UpdateAsync_allows_a_no_op_rePATCH_of_an_already_Done_Epic3_sibling_task(TaskKind kind)
+    {
+        SetupGetById(Epic3SiblingTask(kind, status: WorkflowStatus.Done));
+
+        var result = await CreateSut().UpdateAsync(1, new UpdateTaskDto { Title = "Sample", Status = WorkflowStatus.Done }, callerId: 1);
+
+        result.IsSuccess.Should().BeTrue();
+        _tasks.Verify(t => t.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── UpdateStatus ──────────────────────────────────────────────────────────
     [Fact]
     public async Task UpdateStatus_returns_NotFound_when_task_missing()
@@ -574,20 +617,17 @@ public class TaskServiceTests
     {
         var doneTask = SampleTask();
         doneTask.Status = WorkflowStatus.Done;
-        var archivedTask = SampleTask();
-        archivedTask.Status = WorkflowStatus.Done;
-        archivedTask.ArchivedAt = DateTime.UtcNow;
-        // Matches UpdateAsync's re-fetch pattern: ArchiveAsync is a repository ExecuteUpdateAsync
-        // bypass, so the service must not trust the pre-mutation in-memory instance it already holds.
-        _tasks.SetupSequence(t => t.GetByIdAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(doneTask)
-              .ReturnsAsync(archivedTask);
+        // PR #61 review finding (efficiency): the service no longer re-fetches after the guarded
+        // update - it sets ArchivedAt on the already-tracked instance instead - so a single
+        // GetByIdAsync call is the whole story here now.
+        SetupGetById(doneTask);
         _tasks.Setup(t => t.ArchiveAsync(1, 1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var result = await CreateSut().ArchiveAsync(1, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.ArchivedAt.Should().NotBeNull();
+        _tasks.Verify(t => t.GetByIdAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
         _tasks.Verify(t => t.ArchiveAsync(1, 1, It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -657,17 +697,16 @@ public class TaskServiceTests
         var archivedTask = SampleTask();
         archivedTask.Status = WorkflowStatus.Done;
         archivedTask.ArchivedAt = DateTime.UtcNow;
-        var restoredTask = SampleTask();
-        restoredTask.Status = WorkflowStatus.Done;
-        _tasks.SetupSequence(t => t.GetByIdAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-              .ReturnsAsync(archivedTask)
-              .ReturnsAsync(restoredTask);
+        // PR #61 review finding (efficiency): the service no longer re-fetches after the guarded
+        // update - it clears ArchivedAt on the already-tracked instance instead.
+        SetupGetById(archivedTask);
         _tasks.Setup(t => t.UnarchiveAsync(1, 1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var result = await CreateSut().UnarchiveAsync(1, callerId: 1);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.ArchivedAt.Should().BeNull();
+        _tasks.Verify(t => t.GetByIdAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
         _tasks.Verify(t => t.UnarchiveAsync(1, 1, It.IsAny<CancellationToken>()), Times.Once);
     }
 

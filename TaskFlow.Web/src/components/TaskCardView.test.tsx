@@ -5,6 +5,7 @@ import { TaskCardView } from './TaskCardView'
 import type { TaskItem } from '../types'
 import { mockPrefersReducedMotion } from '../test/reducedMotion'
 import { axe } from '../test/axe'
+import { formatDate } from '../lib/formatting'
 
 const task: TaskItem = {
   id: 1,
@@ -215,5 +216,44 @@ describe('TaskCardView', () => {
     const { container } = render(<TaskCardView task={doneTask} onArchive={onArchive} />)
 
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // PR #61 review finding: several spots still used pre-Nocturne slate classes instead of tokens
+  // from lib/tokens. The card wrapper's border in particular used the input-field pattern
+  // (border-white/10) even though it's a card/panel border, not a text input - per the epic's own
+  // convention that's the wrong class; it should use the borderDivider token instead.
+  it('uses the borderDivider token for the card wrapper border, not the input-field border-white/10 pattern', () => {
+    const { container } = render(<TaskCardView task={task} />)
+
+    const card = container.firstElementChild as HTMLElement
+    expect(getComputedStyle(card).borderColor).toBe('rgba(233, 233, 237, 0.16)')
+    expect(card.className).not.toContain('border-white/10')
+  })
+
+  it('uses the textNeutral400 token for the description text', () => {
+    render(<TaskCardView task={task} />)
+
+    expect(getComputedStyle(screen.getByText('now')).color).toBe('rgb(178, 182, 202)')
+  })
+
+  it('uses the textNeutral500 token for the meta-row wrapper, inherited by the due-date text', () => {
+    const taskWithDueDate: TaskItem = { ...task, dueDate: '2026-09-01T00:00:00Z' }
+    render(<TaskCardView task={taskWithDueDate} />)
+
+    const dueDateText = screen.getByText(formatDate(taskWithDueDate.dueDate as string))
+    expect(getComputedStyle(dueDateText.parentElement as HTMLElement).color).toBe('rgb(147, 151, 171)')
+  })
+
+  it('uses bgSurface/borderDivider tokens for the executor-output box, and token colors for its label and text', () => {
+    render(<TaskCardView task={task} output={['Planned the work.']} />)
+
+    const label = screen.getByText('Executor output')
+    const outputBox = label.parentElement as HTMLElement
+    expect(getComputedStyle(outputBox).backgroundColor).toBe('rgb(35, 37, 50)')
+    expect(getComputedStyle(outputBox).borderColor).toBe('rgba(233, 233, 237, 0.16)')
+    expect(outputBox.className).not.toMatch(/bg-slate-900\/70|border-slate-700/)
+
+    expect(getComputedStyle(label).color).toBe('rgb(147, 151, 171)')
+    expect(getComputedStyle(screen.getByText('Planned the work.')).color).toBe('rgb(207, 211, 229)')
   })
 })

@@ -67,6 +67,18 @@ export function taskStage(logs: AgentLog[], taskId: number): TaskStage {
   return 'in-progress'
 }
 
+// Shared by TaskCardView's card-level export controls and ArchivedTaskList's archived-row export
+// controls (PR #61 review finding: the condition was duplicated verbatim in both files). An
+// application's generated documents are only downloadable once its task has reached Done AND the
+// application itself has been Approved - a lone sibling can reach Done via the individual per-task
+// approve path while its own JobApplication is still ReviewReady/Building, and the export endpoint
+// 400s in that case.
+export function canDownloadExport(
+  task: TaskItem,
+): task is TaskItem & { applicationId: number } {
+  return task.status === 'Done' && task.applicationId !== null && task.applicationState === 'Approved'
+}
+
 export interface ApplicationPair {
   applicationId: number
   resumeTask: TaskItem

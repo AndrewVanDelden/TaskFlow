@@ -11,19 +11,23 @@ public class JobApplicationRepository : IJobApplicationRepository
     private readonly AppDbContext _db;
     public JobApplicationRepository(AppDbContext db) => _db = db;
 
-    // Shared by TryPromoteToReviewReadyAsync and PromotePendingReviewReadyApplicationsAsync so the
-    // "what counts as done" definition lives in exactly one place. Two correlated Any(kind, Review)
-    // subqueries, not a bare Count(Review) == 2 — a count alone would be satisfied by two Review
-    // tasks of the same kind, which isn't reachable today (JobApplicationAssemblyService always
-    // creates exactly one of each kind) but the guard shouldn't rely on that being the only way an
-    // application is ever built (PR #43 review: Copilot's automated review). Confirmed against
-    // SQLite that EF Core 10 translates the original Count(...) == 2 form to a single UPDATE with a
-    // correlated subquery, not client evaluation — see Sprint 3R notes; Any(predicate) is the same
-    // class of translation and equally standard, but this specific two-Any query has not been
-    // independently re-verified with query logging the same way.
-    private static readonly Expression<Func<JobApplication, bool>> BothRequiredSiblingsAreReview = a =>
-        a.Tasks.Any(t => t.Kind == TaskKind.ResumeTailoring && t.Status == WorkflowStatus.Review)
-        && a.Tasks.Any(t => t.Kind == TaskKind.CoverLetterTailoring && t.Status == WorkflowStatus.Review);
+    // Shared by TryPromoteToReviewReadyAsync/PromotePendingReviewReadyApplicationsAsync (status
+    // Review) and PromotePendingApprovedApplicationsAsync (status Done) so the "both required
+    // sibling kinds share one status" shape lives in exactly one place (PR #61 review finding 2:
+    // the two call sites below had duplicated this expression tree verbatim, differing only in the
+    // WorkflowStatus compared against). Two correlated Any(kind, status) subqueries, not a bare
+    // Count(status) == 2 — a count alone would be satisfied by two tasks of the same kind at that
+    // status, which isn't reachable today (JobApplicationAssemblyService always creates exactly one
+    // of each kind) but the guard shouldn't rely on that being the only way an application is ever
+    // built (PR #43 review: Copilot's automated review). Confirmed against SQLite that EF Core 10
+    // translates the original Count(...) == 2 form to a single UPDATE with a correlated subquery,
+    // not client evaluation — see Sprint 3R notes; Any(predicate) is the same class of translation
+    // and equally standard. A closed-over WorkflowStatus parameter in an expression tree is
+    // standard EF Core usage and translates to a SQL parameter, not client evaluation - confirmed
+    // by re-running the repository's SQLite-backed tests below after this refactor.
+    private static Expression<Func<JobApplication, bool>> BothRequiredSiblingsAre(WorkflowStatus status) => a =>
+        a.Tasks.Any(t => t.Kind == TaskKind.ResumeTailoring && t.Status == status)
+        && a.Tasks.Any(t => t.Kind == TaskKind.CoverLetterTailoring && t.Status == status);
 
     // AsNoTracking: this repository never mutates a fetched JobApplication and calls
     // SaveChangesAsync on it - every write goes through a guarded ExecuteUpdateAsync, which
@@ -43,7 +47,7 @@ public class JobApplicationRepository : IJobApplicationRepository
         // row: no separate SELECT to race against.
         var promoted = await _db.JobApplications
             .Where(a => a.Id == applicationId && a.State == ApplicationState.Building)
-            .Where(BothRequiredSiblingsAreReview)
+            .Where(BothRequiredSiblingsAre(WorkflowStatus.Review))
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, ApplicationState.ReviewReady), ct);
 
         return promoted == 1;
@@ -52,7 +56,7 @@ public class JobApplicationRepository : IJobApplicationRepository
     public async Task<int> PromotePendingReviewReadyApplicationsAsync(CancellationToken ct = default) =>
         await _db.JobApplications
             .Where(a => a.State == ApplicationState.Building)
-            .Where(BothRequiredSiblingsAreReview)
+            .Where(BothRequiredSiblingsAre(WorkflowStatus.Review))
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, ApplicationState.ReviewReady), ct);
 
     // ReviewReady can only ever be set by TryPromoteToReviewReadyAsync/
@@ -127,18 +131,14 @@ public class JobApplicationRepository : IJobApplicationRepository
         return true;
     }
 
-    // Shared by PromotePendingApprovedApplicationsAsync only (no per-application TryPromote... form
-    // exists here, unlike BothRequiredSiblingsAreReview above - the per-application promotion at
-    // this stage is TryApprovePairAsync, which requires ReviewReady and moves the tasks itself; this
-    // predicate is purely for the bulk repair sweep, matched against tasks already Done).
-    private static readonly Expression<Func<JobApplication, bool>> BothRequiredSiblingsAreDone = a =>
-        a.Tasks.Any(t => t.Kind == TaskKind.ResumeTailoring && t.Status == WorkflowStatus.Done)
-        && a.Tasks.Any(t => t.Kind == TaskKind.CoverLetterTailoring && t.Status == WorkflowStatus.Done);
-
+    // PromotePendingApprovedApplicationsAsync only (no per-application TryPromote... form exists
+    // here, unlike the Review-status call sites above - the per-application promotion at this stage
+    // is TryApprovePairAsync, which requires ReviewReady and moves the tasks itself; this call is
+    // purely for the bulk repair sweep, matched against tasks already Done).
     public async Task<int> PromotePendingApprovedApplicationsAsync(CancellationToken ct = default) =>
         await _db.JobApplications
             .Where(a => a.State != ApplicationState.Approved)
-            .Where(BothRequiredSiblingsAreDone)
+            .Where(BothRequiredSiblingsAre(WorkflowStatus.Done))
             .ExecuteUpdateAsync(s => s.SetProperty(a => a.State, ApplicationState.Approved), ct);
 
     public async Task AddAsync(JobApplication application, CancellationToken ct = default) =>

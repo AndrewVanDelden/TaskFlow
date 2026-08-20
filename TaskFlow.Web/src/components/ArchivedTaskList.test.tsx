@@ -84,4 +84,14 @@ describe('ArchivedTaskList', () => {
 
     expect(await axe(container)).toHaveNoViolations()
   })
+
+  // PR #61 review finding: the list-row divider used the input-field border-white/10 pattern
+  // instead of the borderDivider token (same category as AgentFeedList's own row divider).
+  it('uses the borderDivider token for the row divider, not the input-field border-white/10 pattern', () => {
+    render(<ArchivedTaskList tasks={[task()]} onRestore={vi.fn()} />)
+
+    const row = screen.getByText('Ship it').closest('li') as HTMLElement
+    expect(getComputedStyle(row).borderColor).toBe('rgba(233, 233, 237, 0.16)')
+    expect(row.className).not.toContain('border-white/10')
+  })
 })

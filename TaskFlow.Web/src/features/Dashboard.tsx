@@ -24,7 +24,7 @@ export function Dashboard() {
             <h2 className="text-sm font-semibold text-slate-300">Activity</h2>
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
               <span
-                className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-slate-600'}`}
+                className={`w-2 h-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-slate-500'}`}
               />
               {connected ? 'Live' : 'Offline'}
             </span>

@@ -12,6 +12,8 @@ import { stepForStage } from '../lib/intakeSteps'
 import {
   bgSurface,
   borderDivider,
+  fileBgSurface,
+  fileBorderDivider,
   focusRingAccent,
   hoverTextAccent200,
   textAccent,
@@ -29,8 +31,8 @@ const STEPS: Array<{ step: 1 | 2 | 3; label: string }> = [
 // Sprint-4-closeout restyle (Epic 3.1 decision 2): Nocturne tokens replace the old
 // slate-700/slate-800 borders and the hand-rolled blue focus ring.
 const fileInputClasses =
-  `text-xs ${textNeutral500} file:mr-3 file:py-1 file:px-3 file:rounded file:border file:${borderDivider} ` +
-  `file:${bgSurface} file:text-white file:text-xs rounded ${focusRingAccent}`
+  `text-xs ${textNeutral500} file:mr-3 file:py-1 file:px-3 file:rounded file:border ${fileBorderDivider} ` +
+  `${fileBgSurface} file:text-white file:text-xs rounded ${focusRingAccent}`
 
 // Sprint-4-closeout restyle: matches Login.tsx's own `inputClass` pattern for every text input.
 const textareaClasses = `w-full h-48 p-3 rounded ${bgSurface} border border-white/10 text-white text-sm ${focusRingAccent}`

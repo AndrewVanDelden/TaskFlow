@@ -5,7 +5,16 @@ import { ReviewActions } from './ReviewActions'
 import { ExportDownloadControls } from './ExportDownloadControls'
 import { Button } from './ui/Button'
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
-import { bgSurface, textAccent200, textAccent300, textNeutral500 } from '../lib/tokens'
+import { canDownloadExport } from '../lib/board'
+import {
+  bgSurface,
+  borderDivider,
+  textAccent200,
+  textAccent300,
+  textNeutral300,
+  textNeutral400,
+  textNeutral500,
+} from '../lib/tokens'
 
 // Presentational card with no drag behavior, so it can render both inside the sortable TaskCard
 // and inside the DragOverlay (which has no SortableContext). On Review cards it shows the executor's
@@ -29,7 +38,7 @@ export function TaskCardView({
 
   return (
     <div
-      className={`relative ${bgSurface} border border-white/10 rounded-xl p-4 cursor-grab active:cursor-grabbing hover:border-slate-600`}
+      className={`relative ${bgSurface} border ${borderDivider} rounded-xl p-4 cursor-grab active:cursor-grabbing hover:border-slate-600`}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
         <h3 className="text-sm font-medium text-white leading-snug">{task.title}</h3>
@@ -44,10 +53,10 @@ export function TaskCardView({
       </div>
 
       {task.description && (
-        <p className="text-xs text-slate-400 mb-2 line-clamp-2">{task.description}</p>
+        <p className={`text-xs ${textNeutral400} mb-2 line-clamp-2`}>{task.description}</p>
       )}
 
-      <div className="flex items-center justify-between text-[11px] text-slate-500">
+      <div className={`flex items-center justify-between text-[11px] ${textNeutral500}`}>
         <span className={`text-xs ${textNeutral500}`}>{task.company ?? '—'}</span>
         {task.dueDate && <span>{formatDate(task.dueDate)}</span>}
       </div>
@@ -57,10 +66,10 @@ export function TaskCardView({
       )}
 
       {output && output.length > 0 && (
-        <div className="mt-2 rounded bg-slate-900/70 border border-slate-700 p-2 space-y-1">
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">Executor output</div>
+        <div className={`mt-2 rounded ${bgSurface} border ${borderDivider} p-2 space-y-1`}>
+          <div className={`text-[10px] uppercase tracking-wide ${textNeutral500}`}>Executor output</div>
           {output.map((line, i) => (
-            <p key={i} className="text-xs text-slate-300 whitespace-pre-wrap">
+            <p key={i} className={`text-xs ${textNeutral300} whitespace-pre-wrap`}>
               {line}
             </p>
           ))}
@@ -84,7 +93,7 @@ export function TaskCardView({
         )
       )}
 
-      {task.status === 'Done' && task.applicationId !== null && task.applicationState === 'Approved' && (
+      {canDownloadExport(task) && (
         <ExportDownloadControls applicationId={task.applicationId} kind={task.kind} />
       )}
 

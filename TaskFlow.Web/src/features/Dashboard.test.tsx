@@ -54,4 +54,19 @@ describe('Dashboard', () => {
 
     expect(await axe(container)).toHaveNoViolations()
   })
+
+  // PR #61 review finding: the Offline dot used bg-slate-600, mismatched with the identical
+  // "inactive" dot shade (bg-slate-500) ExecutorControl.tsx and AgentStatus.tsx already use.
+  it('shows the connection dot in the same inactive slate-500 shade as ExecutorControl/AgentStatus when offline', () => {
+    vi.mocked(useAgentFeed).mockReturnValue({ logs, cycles: {}, connected: false })
+
+    render(<Dashboard />)
+
+    // Tailwind v4's default palette colors (slate-500/600) resolve through a CSS custom property
+    // that jsdom doesn't fully resolve in getComputedStyle, so this asserts via className, the
+    // same convention ExecutorControl.test.tsx already uses for its own slate/emerald status dot.
+    const dot = screen.getByText('Offline').firstElementChild as HTMLElement
+    expect(dot.className).toContain('bg-slate-500')
+    expect(dot.className).not.toContain('bg-slate-600')
+  })
 })

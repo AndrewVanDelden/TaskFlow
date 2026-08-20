@@ -8,7 +8,9 @@
 
 export const bgPage = 'bg-[#161826]'
 export const bgSurface = 'bg-[#232532]'
+export const fileBgSurface = 'file:bg-[#232532]'
 export const borderDivider = 'border-[rgba(233,233,237,0.16)]'
+export const fileBorderDivider = 'file:border-[rgba(233,233,237,0.16)]'
 export const borderAccent = 'border-[#9184d9]'
 export const textPrimary = 'text-[#e9e9ed]'
 export const textAccent = 'text-[#9184d9]'

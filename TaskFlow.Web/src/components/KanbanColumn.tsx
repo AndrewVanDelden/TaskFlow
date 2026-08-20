@@ -6,6 +6,7 @@ import { TaskCard } from './TaskCard'
 import { ApplicationReviewCard } from './ApplicationReviewCard'
 import { ColumnHeader } from './ui/ColumnHeader'
 import { Button } from './ui/Button'
+import { bgSurface, borderDivider, textNeutral600 } from '../lib/tokens'
 
 interface Props {
   status: TaskStatus
@@ -50,8 +51,8 @@ export function KanbanColumn({ status, label, tasks, onApprove, onReject, onArch
   return (
     <div
       ref={setNodeRef}
-      className={`flex-1 min-w-[240px] bg-slate-900/60 rounded-xl p-3 border transition-colors ${
-        isOver ? 'border-blue-500' : 'border-slate-800'
+      className={`flex-1 min-w-[240px] ${bgSurface} rounded-xl p-3 border transition-colors ${
+        isOver ? 'border-blue-500' : borderDivider
       }`}
     >
       <div className="flex items-center justify-between gap-2">
@@ -100,7 +101,7 @@ export function KanbanColumn({ status, label, tasks, onApprove, onReject, onArch
       </SortableContext>
 
       {tasks.length === 0 && (!pairs || pairs.length === 0) && (
-        <p className="text-xs text-slate-600 text-center py-6">No tasks</p>
+        <p className={`text-xs ${textNeutral600} text-center py-6`}>No tasks</p>
       )}
     </div>
   )

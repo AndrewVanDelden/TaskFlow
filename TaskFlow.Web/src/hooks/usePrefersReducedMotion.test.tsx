@@ -1,5 +1,5 @@
 import { renderHook, render, screen, act } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { usePrefersReducedMotion } from './usePrefersReducedMotion'
 import { mockPrefersReducedMotion } from '../test/reducedMotion'
 
@@ -48,5 +48,35 @@ describe('usePrefersReducedMotion', () => {
     })
 
     expect(result.current).toBe(true)
+  })
+
+  // PR #61 review finding: every caller (ExecutorControl, TailorButton, TaskCardView - the latter
+  // once per rendered card) registered its own independent matchMedia query and change listener.
+  // With 20-30 cards on a board that's 20-30 duplicate identical subscriptions. Refactored to a
+  // single shared module-level subscription via useSyncExternalStore - this proves the sharing
+  // actually works by spying on window.matchMedia itself (not the mock wrapper) and asserting the
+  // real browser API is invoked only once no matter how many components call the hook.
+  it('shares a single underlying matchMedia subscription across multiple simultaneously-mounted callers', () => {
+    mockPrefersReducedMotion(false)
+    const matchMediaSpy = vi.spyOn(window, 'matchMedia')
+
+    function TwoConsumers() {
+      const first = usePrefersReducedMotion()
+      const second = usePrefersReducedMotion()
+      return (
+        <div>
+          <span data-testid="first">{String(first)}</span>
+          <span data-testid="second">{String(second)}</span>
+        </div>
+      )
+    }
+
+    render(<TwoConsumers />)
+    renderHook(() => usePrefersReducedMotion())
+
+    const reducedMotionCalls = matchMediaSpy.mock.calls.filter(
+      ([query]) => query === '(prefers-reduced-motion: reduce)',
+    )
+    expect(reducedMotionCalls).toHaveLength(1)
   })
 })
