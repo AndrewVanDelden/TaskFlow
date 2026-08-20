@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { AgentLog } from '../types'
 import { getAgentLogs } from '../api/agentLogs'
 import { HubEvents } from '../lib/hubEvents'
-import { useAgentHub } from '../lib/agentHub'
+import { useAgentHub } from '../lib/AgentHubContext'
 
 export interface CycleEvent {
   agentName: string
