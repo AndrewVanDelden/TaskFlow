@@ -10,13 +10,16 @@ decisions log below, not silently dropped."* This is that epic. Triggered direct
 response did not include a JSON object" — expected given the current scope, but the user wants URL
 import built now, not deferred further.
 
-**Cross-epic touch point:** Epic 3.1 Sprint 4 (Ingest & Hand-off, not yet started as of this epic's
-creation) explicitly locks "The design's URL-input affordance... is **not built** in this sprint" and
-restyles only the existing paste-text flow. Whichever of these two epics lands second needs to
-reconcile its UI with the other's — Epic 3.2 builds the URL input against the *current*, un-restyled
-`IngestDocument.tsx`; Epic 3.1 Sprint 4 (whenever it runs) needs to carry the URL input row forward
-into its restyled layout rather than dropping it. Recorded here so neither epic silently regresses
-the other's work — check this note before starting either Epic 3.1 Sprint 4 or closing out this epic.
+**Cross-epic touch point — resolved (2026-08-20 architect review):** at the time this epic was
+written, Epic 3.1 Sprint 4 (Ingest & Hand-off) had not yet run, and this doc originally assumed
+Epic 3.2 would build against the *un-restyled* `IngestDocument.tsx`. That assumption is now stale:
+**Epic 3.1 Sprint 4 has shipped and merged to `main`** (Nocturne restyle, close-out items complete).
+`IngestDocument.tsx` today already uses the token constants from `TaskFlow.Web/src/lib/tokens.ts`
+(`bgSurface`, `borderDivider`, `focusRingAccent`, `textNeutral400/500`), the shared `Button`
+component, and a local `errorBannerClasses` constant for every `role="alert"` error banner. **Sprint
+2 of this epic (below) has been rewritten to build against that current, restyled component** — it
+does not touch, revert, or bypass any of Epic 3.1's styling work. This resolves the reconciliation
+risk the original note flagged; no further action needed on it.
 
 ---
 
@@ -32,6 +35,12 @@ URL-fetch path gets a negative/attack-vector test proving the specific SSRF miti
 provide actually rejects the attack it exists to stop — not just a happy-path test that a well-formed
 public URL works. A mitigation without a test proving it rejects the thing it's supposed to reject is
 not done.
+
+**Also inherited: the user's standing AI-Native coding standard** (full pillars in the user's core
+memory, not restated in full here — see "AI-Native Pillars Applied to This Epic" below for the
+epic-specific mapping). Short form: SOLID + DRY architecture, Small Context Units, Extreme Explicit
+Typing, High Semantic Clarity naming, and current-generation language syntax only. This governs
+every file this epic touches, C# and TypeScript alike.
 
 ## The problem, and why it's a real security decision, not just a missing feature
 
@@ -52,15 +61,39 @@ None of this is hypothetical or exotic; it's the standard threat model for any "
 me" server feature, and it's exactly why Epic 3.1 explicitly declined to build it without a real
 design. This doc **is** that design.
 
-## Confirmed against the repo (2026-08-14, before any Epic 3.2 code exists)
+## Confirmed against the repo
 
 | Claim | Status |
 |---|---|
-| No HTML-parsing library exists anywhere in `TaskFlow.Api.csproj`'s dependencies. | **Confirmed**, file read directly. |
-| No outbound-HTTP-fetch capability (`HttpClient`/`IHttpClientFactory` for fetching arbitrary external URLs) exists anywhere in `TaskFlow.Api` — the only external HTTP caller is `Anthropic.SDK`, a fixed, trusted destination. | **Confirmed**, repo-wide search. |
+| No HTML-parsing library exists anywhere in `TaskFlow.Api.csproj`'s dependencies. | **Confirmed 2026-08-14**, file read directly. **Re-confirmed 2026-08-20** — still true; `csproj` lists `Anthropic.SDK`, `BCrypt.Net-Next`, `Markdig`, JWT/EF/SQLite/Swashbuckle only. |
+| No outbound-HTTP-fetch capability (`HttpClient`/`IHttpClientFactory` for fetching arbitrary external URLs) exists anywhere in `TaskFlow.Api` — the only external HTTP caller is `Anthropic.SDK`, a fixed, trusted destination. | **Confirmed 2026-08-14**, repo-wide search. **Re-confirmed 2026-08-20** — `Program.cs` still has zero `AddHttpClient`/`HttpClient` references. |
 | `IJobPostingIngestionParser.ParseAsync(string documentText, ...)` is the exact same signature the existing `/api/JobApplications/parse` endpoint already calls, and internally just delegates to `TieredIngestionParser` (free rule-based tier, escalating to Claude). | **Confirmed**, `JobPostingIngestionParser.cs` read directly. This is the reuse point: once a URL is turned into plain text, it is handed to this exact same method, unchanged — the entire Sprint 3 (Epic 3.1) `Company` plumbing, the free/paid tiering, everything downstream, is inherited for free. |
-| `JobApplicationsController.Parse` (`POST /api/JobApplications/parse`) takes `IngestDocumentDto { Content }` and calls `_parser.ParseAsync(dto.Content)`. | **Confirmed**, file read directly. A new, separate endpoint is added rather than overloading this one (see "Decisions owned here"). |
+| `JobApplicationsController.Parse` (`POST /api/JobApplications/parse`) takes `IngestDocumentDto { Content }` and calls `_parser.ParseAsync(dto.Content)`. | **Confirmed**, file read directly (`JobApplicationsController.cs:39-40`). A new, separate endpoint is added rather than overloading this one (see "Backend Architecture"). |
 | `Program.cs` has no `AddHttpClient(...)` registration of any kind today. | **Confirmed.** A new named/typed `HttpClient` registration is added for exactly this feature, configured with the SSRF mitigations below — not the default client, and not reused for anything else. |
+| `IngestDocument.tsx` is now the Nocturne-restyled version (Epic 3.1 Sprint 4, shipped). | **Confirmed 2026-08-20**, file read directly. Real tokens in play: `bgSurface`, `borderDivider`, `focusRingAccent`, `textNeutral400`, `textNeutral500` from `lib/tokens.ts`; the shared `Button` component (`variant="primary"`); a local `errorBannerClasses` constant for every `role="alert"` banner. Sprint 2 below targets this file as it actually exists, not the pre-restyle version the original draft of this epic assumed. |
+
+---
+
+## AI-Native Pillars Applied to This Epic
+
+The user's standing coding standard (SOLID/DRY + AI-native optimization, held in core memory, not
+TaskFlow-specific) maps onto this epic's own design choices as follows. This section exists so
+"follow the pillars" isn't an abstract instruction floating outside the plan — every pillar below
+points at a concrete decision already locked in this doc, and every sprint's Definition of Done is
+checked against it before being called done.
+
+| Pillar | How this epic satisfies it |
+|---|---|
+| **SRP** | `UrlValidation` (pure scheme/port/hostname/IP validation) is a separate static class from `JobPostingUrlFetcher` (owns the HTTP call, redirects, size/timeout enforcement) is a separate class from the HTML-to-text extraction step — three reasons to change, three units. |
+| **ISP** | `IJobPostingUrlFetcher` exposes exactly one method, `FetchAsync(Uri) -> Result<string>`. No bloated multi-purpose "ingestion service" interface. |
+| **DIP** | `JobApplicationsController` depends on `IJobPostingUrlFetcher`, injected via DI — never `new`s the concrete fetcher or `HttpClient` directly. |
+| **OCP** | Redirect-hop validation reuses the exact same `UrlValidation` entry point as the first hop — no special-cased "redirect mode" branch bolted onto the validator. |
+| **DRY** | `IJobPostingIngestionParser.ParseAsync` is reused completely unchanged for both `/parse` and `/parse-url` — no duplicated parsing/tiering logic between the two entry points. |
+| **Small Context Units** | `UrlValidation.cs` and `JobPostingUrlFetcher.cs` are each expected to stay well under ~250 lines given their single responsibility; if either grows past that during implementation, that is itself a signal to split further, not a target to write toward. |
+| **Extreme Explicit Typing** | `Result<string>`, `Uri`, `IPAddress` throughout the backend — no `object`/`dynamic`. Frontend: `Promise<TaskDraft[]>` return types, no `any`, matching every existing function in `api/jobApplications.ts`. |
+| **High Semantic Clarity** | Names read as self-contained explanations: `IJobPostingUrlFetcher`, `UrlValidation`, `ParseUrlDto`, `parseJobPostingUrl` — no `Helper`/`Manager`/`Util` catch-alls. |
+| **Cutting-Edge Language Sync** | The DNS-rebinding mitigation uses `SocketsHttpHandler.ConnectCallback` — the current .NET-native mechanism for this exact problem, not a hand-rolled pre-check-then-connect workaround or a third-party SSRF-guard package. |
+| **Production-ready output** | No `TODO`/placeholder code accepted at GREEN for any task below — a task isn't done until its RED test is green for real. |
 
 ---
 
@@ -116,7 +149,7 @@ Defense in depth — every layer below is required, none is a substitute for ano
 None of this is configurable per-request by the client — every rule is enforced server-side,
 unconditionally, regardless of what the frontend sends.
 
-### Architecture
+### Backend Architecture
 
 - **New endpoint, not an overload of the existing one:** `POST /api/JobApplications/parse-url`,
   accepting `{ url: string }`, returning the exact same `TaskDraft[]` shape `/parse` already returns.
@@ -138,13 +171,30 @@ unconditionally, regardless of what the frontend sends.
   same call `Parse` already makes. Zero changes to `TieredIngestionParser`, `JobPostingParser`,
   `ClaudeJobPostingParser`, or anything downstream (Company extraction, DTO plumbing — all of Epic
   3.1 Sprint 3's work is inherited for free, not reimplemented).
-- **Frontend: a URL input row added to the *current* `IngestDocument.tsx`** (the un-restyled version —
-  Epic 3.1 Sprint 4 hasn't run yet; see the cross-epic note at the top of this doc), alongside the
-  existing paste-text textarea, per the original design handoff's own reference copy ("Paste a job
-  posting URL — or type/paste the description"). A "Parse posting" action on the URL field calls the
-  new `/parse-url` endpoint; success populates `intake.drafts` exactly as the text-paste flow already
-  does (same downstream stage-machine, same review UI) — no new frontend state machine, this plugs
-  into `useIntakeFlow`'s existing `parse`-equivalent flow as a sibling entry point, not a parallel one.
+
+### Frontend Architecture
+
+*Rewritten 2026-08-20 to target `IngestDocument.tsx` as it actually exists today (post Epic 3.1
+Sprint 4 restyle), not the pre-restyle version the original draft assumed — see "Confirmed against
+the repo" above.*
+
+- **A URL input row is added inside the existing `jobPostingEditable` branch of `IngestDocument.tsx`**
+  (`IngestDocument.tsx:124-156`), as a sibling of the current textarea + file-upload row — not a new
+  section, not a separate stage. This is the same branch that already renders when
+  `intake.stage === 'provide' || 'parsing'`, so the URL row appears and disappears in lockstep with
+  the rest of the job-posting input, with no new conditional to maintain.
+- **Reuses the file's existing conventions exactly, per the design tokens already in place:** the URL
+  `<input>` styled consistently with the existing `textareaClasses` pattern (`bgSurface`,
+  `border-white/10`, `focusRingAccent`); the "Parse posting" trigger is the shared `Button` component
+  (`variant="primary"`), matching the existing "Parse posting" button for the textarea; a fetch/parse
+  failure renders through the same local `errorBannerClasses` constant and `role="alert"` pattern
+  every other error in this file already uses. No new visual language is introduced — this task is
+  additive wiring against Epic 3.1's restyle, not a second restyle pass.
+- **A "Parse posting" action on the URL field calls the new `/parse-url` endpoint**; success populates
+  `intake.drafts` exactly as the text-paste flow already does (same downstream stage-machine, same
+  review UI) — no new frontend state machine. This plugs into `useIntakeFlow`'s existing
+  `parse`-equivalent flow as a sibling entry point, not a parallel one, per the original design
+  handoff's own reference copy ("Paste a job posting URL — or type/paste the description").
 
 ---
 
@@ -152,8 +202,8 @@ unconditionally, regardless of what the frontend sends.
 
 | Sprint | What | Status |
 |---|---|---|
-| **1** | Secure URL fetch + HTML extraction (backend) | Ready — architecture above, no code yet |
-| **2** | Frontend URL input | Ready — architecture above, no code yet |
+| **1** | Secure URL fetch + HTML extraction (backend) | **Complete (2026-08-20)** — S1.1-S1.6 all RED-confirmed then GREEN-confirmed via real `.\test` runs; 506/506 backend, 340/340 frontend. Sitting uncommitted on `develop`, not yet branched/PR'd — see note below. |
+| **2** | Frontend URL input | Ready — architecture above, no code yet. Blocked on Sprint 1's branch/PR landing first, per this doc's own TDD/git workflow (one branch, one PR per sprint). |
 
 ## Definition of Done (Epic 3.2)
 
@@ -241,6 +291,9 @@ silent empty result. GREEN: the controller action, calling `_urlFetcher.FetchAsy
 - `POST /api/JobApplications/parse-url` returns the same `TaskDraft[]` shape as `/parse`, reusing the
   existing tiered parser completely unchanged.
 - The existing `/parse` endpoint and its tests are untouched.
+- Satisfies "AI-Native Pillars Applied to This Epic" above: `UrlValidation`/`JobPostingUrlFetcher`
+  stay within Small Context Unit size, explicit types throughout (`Uri`, `IPAddress`, `Result<string>`
+  — no `object`/`dynamic`), no placeholder code at GREEN.
 
 ### Prerequisites and what this unblocks
 
@@ -280,27 +333,45 @@ before that.
   manages; everything after "parsed" (review, start tailoring, Company, hand-off) is completely
   unchanged and shared.
 - Loading/error states for the URL path mirror the existing text-parse path's conventions exactly
-  (same `stage` transitions, same `role="alert"` error rendering) — no new UI pattern invented.
+  (same `stage` transitions, same `role="alert"` error rendering via the existing local
+  `errorBannerClasses` constant) — no new UI pattern invented.
+- **The URL row lands inside the existing `jobPostingEditable` branch** (`IngestDocument.tsx:124-156`,
+  see "Frontend Architecture" above), styled with the file's current tokens (`bgSurface`,
+  `focusRingAccent`) and the shared `Button` component — not a new section, and not styled against
+  the pre-restyle version this epic originally assumed.
+- URL input value is component-local state (e.g. `const [jobPostingUrl, setJobPostingUrl] =
+  useState('')`), matching how `genericText`/`genericSourceName` are already handled locally in this
+  same file for the generic-document flow below it — `useIntakeFlow` does not need to own the raw URL
+  string, only the result of parsing it.
 
 ### Tasks
 
 **S2.1 — `parseJobPostingUrl` API function + `useIntakeFlow` URL entry point.** RED: calling the new
 hook entry point posts to `/api/JobApplications/parse-url` with the given URL and, on success,
 transitions to the `review` stage with the returned drafts, exactly like the existing `parse()`
-does for pasted text. GREEN: the API function and hook wiring.
+does for pasted text. GREEN: the API function (`parseJobPostingUrl(url: string): Promise<TaskDraft[]>`
+in `api/jobApplications.ts`, matching the explicit-return-type convention every other function in
+that file already follows) and hook wiring.
 
-**S2.2 — URL input row in `IngestDocument.tsx`.** RED: a URL input field and its own "Parse" trigger
-exist alongside the existing textarea; entering a URL and triggering parse shows the same
-review-stage UI the paste-text flow already produces. GREEN: the new input row.
+**S2.2 — URL input row in `IngestDocument.tsx`.** RED: a URL input field and its own "Parse posting"
+trigger exist inside the `jobPostingEditable` branch, alongside the existing textarea and file input;
+entering a URL and triggering parse shows the same review-stage UI the paste-text flow already
+produces. GREEN: the new input row, styled with the file's existing token constants and the shared
+`Button` component — no new classes invented ad hoc.
 
 **S2.3 — Accessibility and error-state pass.** RED: a failed URL fetch (e.g. a rejected/invalid URL)
-surfaces via the same `role="alert"` pattern the existing paste-text failure path uses. GREEN: any
-gap the test surfaces.
+surfaces via the existing `errorBannerClasses` + `role="alert"` pattern the paste-text failure path
+already uses. GREEN: any gap the test surfaces.
 
 ### Definition of Done (expected completion)
 
 - A user can paste a URL, click Parse, and land in the same review UI the text-paste flow produces.
 - Existing paste-text flow, its tests, and its behavior are completely unaffected.
+- The new input row is visually and structurally consistent with Epic 3.1's restyled
+  `IngestDocument.tsx` — same tokens, same `Button` component, same error-banner convention. No
+  parallel/inconsistent styling introduced.
+- Satisfies "AI-Native Pillars Applied to This Epic" above: explicit `Promise<TaskDraft[]>` return
+  type on the new API function, no `any`, no placeholder code at GREEN.
 
 ### Prerequisites and what this unblocks
 

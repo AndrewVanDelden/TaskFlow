@@ -10,6 +10,11 @@
   <ItemGroup>
     <PackageReference Include="Anthropic.SDK" Version="5.10.0" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+    <!-- Epic 3.2 S1.5: HTML-to-text extraction for the job-posting URL fetcher. Latest stable per
+         nuget.org as of this addition (2026-08-20); the alternative (a hand-rolled regex tag
+         stripper) is well-documented to be fragile and wrong at edge cases, so a mature parser is
+         used instead. -->
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="Markdig" Version="0.37.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.8">

@@ -15,6 +15,7 @@ namespace TaskFlow.Api.Controllers;
 public class JobApplicationsController : ControllerBase
 {
     private readonly IJobPostingIngestionParser _parser;
+    private readonly IJobPostingUrlFetcher _urlFetcher;
     private readonly IResumeContextService _resumeContext;
     private readonly IJobApplicationAssemblyService _assembly;
     private readonly IJobApplicationService _jobApplicationService;
@@ -22,12 +23,14 @@ public class JobApplicationsController : ControllerBase
 
     public JobApplicationsController(
         IJobPostingIngestionParser parser,
+        IJobPostingUrlFetcher urlFetcher,
         IResumeContextService resumeContext,
         IJobApplicationAssemblyService assembly,
         IJobApplicationService jobApplicationService,
         IExportService exportService)
     {
         _parser = parser;
+        _urlFetcher = urlFetcher;
         _resumeContext = resumeContext;
         _assembly = assembly;
         _jobApplicationService = jobApplicationService;
@@ -38,6 +41,21 @@ public class JobApplicationsController : ControllerBase
     [HttpPost("parse")]
     public async Task<IActionResult> Parse([FromBody] IngestDocumentDto dto) =>
         (await _parser.ParseAsync(dto.Content)).ToActionResult();
+
+    // Fetch a job posting from a URL (SSRF-safe, see Epic 3.2), then parse it exactly like a pasted
+    // posting -- the tiered parser is reused completely unchanged.
+    [HttpPost("parse-url")]
+    public async Task<IActionResult> ParseUrl([FromBody] ParseUrlDto dto)
+    {
+        if (!Uri.TryCreate(dto.Url, UriKind.Absolute, out Uri? uri))
+            return Result<string>.Invalid("The provided URL is not a valid absolute URI.").ToActionResult();
+
+        Result<string> fetchResult = await _urlFetcher.FetchAsync(uri);
+        if (!fetchResult.IsSuccess)
+            return fetchResult.ToActionResult();
+
+        return (await _parser.ParseAsync(fetchResult.Value!)).ToActionResult();
+    }
 
     // Save the caller's base resume server-side, scoped to one ingestion session.
     [HttpPost("resume-context")]
