@@ -124,6 +124,20 @@ public sealed class StubClaude : IClaudeClient
             Content = new List<ContentBase> { new TextContent { Text = text } }
         });
 
+    /// <summary>
+    /// Scripts a response cut off mid-generation before it could call a tool - StopReason
+    /// "max_tokens" rather than "end_turn". Reproduces the live incident (PR #56): Claude narrates
+    /// a plan, runs out of output budget, and never reaches the save tool call. Distinct from
+    /// <see cref="ThatReturnsText"/> so tests can prove the two are handled differently (a genuine
+    /// truncation should be logged as a warning, not treated like a normal short completion).
+    /// </summary>
+    public static StubClaude ThatTruncatesAtMaxTokens(string partialText) => new(
+        new MessageResponse
+        {
+            StopReason = "max_tokens",
+            Content = new List<ContentBase> { new TextContent { Text = partialText } }
+        });
+
     /// <summary>Scripts a record_progress call, then a request_review call, then an end_turn.</summary>
     public static StubClaude ThatRecordsProgressThenRequestsReview(string note, string summary) => new(
         ToolUse("tool_1", "record_progress", new { note }),

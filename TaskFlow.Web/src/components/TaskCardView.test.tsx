@@ -1,8 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { TaskCardView } from './TaskCardView'
 import type { TaskItem } from '../types'
+import { mockPrefersReducedMotion } from '../test/reducedMotion'
+import { axe } from '../test/axe'
+import { formatDate } from '../lib/formatting'
 
 const task: TaskItem = {
   id: 1,
@@ -18,15 +21,58 @@ const task: TaskItem = {
   kind: 'Generic',
   applicationId: null,
   tailoredContent: null,
+  company: null,
 }
 
 describe('TaskCardView', () => {
+  // TaskCardView now calls usePrefersReducedMotion() unconditionally (Rules of Hooks - it can't be
+  // called only for InProgress cards), and jsdom has no real window.matchMedia. Every test that
+  // renders the component needs it mocked, not just the ones asserting on the progress bar.
+  beforeEach(() => {
+    mockPrefersReducedMotion(false)
+  })
+
   // The DragOverlay renders this outside any SortableContext, so it must work with no drag context.
-  it('renders standalone with the title, priority, and assignee fallback', () => {
+  it('renders standalone with the title, priority, and company fallback', () => {
     render(<TaskCardView task={task} />)
     expect(screen.getByText('Ship it')).toBeInTheDocument()
     expect(screen.getByText('High')).toBeInTheDocument()
-    expect(screen.getByText('Unassigned')).toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('shows the company when provided', () => {
+    const taskWithCompany: TaskItem = { ...task, company: 'Acme Corp' }
+    render(<TaskCardView task={taskWithCompany} />)
+    expect(screen.getByText('Acme Corp')).toBeInTheDocument()
+  })
+
+  it('shows the in-progress tailoring status line', () => {
+    const inProgressTask: TaskItem = { ...task, status: 'InProgress', kind: 'ResumeTailoring' }
+    render(<TaskCardView task={inProgressTask} />)
+    expect(screen.getByText('Tailoring Resume…')).toBeInTheDocument()
+  })
+
+  it('animates the in-progress bar when motion is not reduced', () => {
+    mockPrefersReducedMotion(false)
+    const inProgressTask: TaskItem = { ...task, status: 'InProgress', kind: 'ResumeTailoring' }
+    render(<TaskCardView task={inProgressTask} />)
+    expect(screen.getByTestId('progress-fill').className).toBe(
+      'absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-[#796cbf] to-[#d2cefd] animate-pulse',
+    )
+  })
+
+  it('shows a static progress bar when motion is reduced', () => {
+    mockPrefersReducedMotion(true)
+    const inProgressTask: TaskItem = { ...task, status: 'InProgress', kind: 'ResumeTailoring' }
+    render(<TaskCardView task={inProgressTask} />)
+    expect(screen.getByTestId('progress-fill').className).toBe(
+      'absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-[#796cbf] to-[#d2cefd]',
+    )
+  })
+
+  it('has no accessibility violations', async () => {
+    const { container } = render(<TaskCardView task={task} />)
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('shows no review controls by default', () => {
@@ -56,6 +102,29 @@ describe('TaskCardView', () => {
     expect(reject).toBeEnabled()
     await userEvent.click(reject)
     expect(onReject).toHaveBeenCalledWith('Needs work')
+  })
+
+  // Board bug (found 2026-08-14): KanbanBoard only groups an Epic-3 sibling pair into
+  // ApplicationReviewCard once BOTH tasks are Review, so a lone sibling in Review (the realistic
+  // case - the resume usually finishes tailoring well before the cover letter) still reaches this
+  // plain TaskCardView with onApprove/onReject supplied. Approving/rejecting it individually here
+  // used to permanently strand its JobApplication below Approved (fixed at the API layer via
+  // TaskService's new pair guard) - this replaces the dead-end Approve/Reject controls with an
+  // explanation instead of a button that would now just error.
+  it('shows a waiting message instead of Approve/Reject for a lone Epic-3 sibling in Review', () => {
+    const loneResumeInReview: TaskItem = { ...task, status: 'Review', kind: 'ResumeTailoring', applicationId: 10 }
+    render(<TaskCardView task={loneResumeInReview} onApprove={vi.fn()} onReject={vi.fn()} />)
+
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull()
+    expect(screen.getByText(/waiting for the cover letter/i)).toBeInTheDocument()
+  })
+
+  it('shows a waiting message naming the resume for a lone cover-letter sibling in Review', () => {
+    const loneCoverLetterInReview: TaskItem = { ...task, status: 'Review', kind: 'CoverLetterTailoring', applicationId: 10 }
+    render(<TaskCardView task={loneCoverLetterInReview} onApprove={vi.fn()} onReject={vi.fn()} />)
+
+    expect(screen.getByText(/waiting for the resume/i)).toBeInTheDocument()
   })
 
   it('shows export download controls for a Done task whose application is Approved', () => {
@@ -114,5 +183,77 @@ describe('TaskCardView', () => {
 
     expect(screen.queryByText('Resume')).toBeNull()
     expect(screen.queryByText('Cover letter')).toBeNull()
+  })
+
+  it('shows no Archive button for a non-Done task even when onArchive is supplied', () => {
+    const onArchive = vi.fn()
+    render(<TaskCardView task={task} onArchive={onArchive} />)
+
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull()
+  })
+
+  it('shows no Archive button for a Done task when onArchive is omitted', () => {
+    const doneTask: TaskItem = { ...task, status: 'Done' }
+    render(<TaskCardView task={doneTask} />)
+
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull()
+  })
+
+  it('shows an Archive button for a Done task when onArchive is supplied, and calls it on click', async () => {
+    const onArchive = vi.fn()
+    const doneTask: TaskItem = { ...task, status: 'Done' }
+    render(<TaskCardView task={doneTask} onArchive={onArchive} />)
+
+    const archiveButton = screen.getByRole('button', { name: 'Archive' })
+    await userEvent.click(archiveButton)
+
+    expect(onArchive).toHaveBeenCalledOnce()
+  })
+
+  it('has no accessibility violations with the Archive button present', async () => {
+    const onArchive = vi.fn()
+    const doneTask: TaskItem = { ...task, status: 'Done' }
+    const { container } = render(<TaskCardView task={doneTask} onArchive={onArchive} />)
+
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // PR #61 review finding: several spots still used pre-Nocturne slate classes instead of tokens
+  // from lib/tokens. The card wrapper's border in particular used the input-field pattern
+  // (border-white/10) even though it's a card/panel border, not a text input - per the epic's own
+  // convention that's the wrong class; it should use the borderDivider token instead.
+  it('uses the borderDivider token for the card wrapper border, not the input-field border-white/10 pattern', () => {
+    const { container } = render(<TaskCardView task={task} />)
+
+    const card = container.firstElementChild as HTMLElement
+    expect(getComputedStyle(card).borderColor).toBe('rgba(233, 233, 237, 0.16)')
+    expect(card.className).not.toContain('border-white/10')
+  })
+
+  it('uses the textNeutral400 token for the description text', () => {
+    render(<TaskCardView task={task} />)
+
+    expect(getComputedStyle(screen.getByText('now')).color).toBe('rgb(178, 182, 202)')
+  })
+
+  it('uses the textNeutral500 token for the meta-row wrapper, inherited by the due-date text', () => {
+    const taskWithDueDate: TaskItem = { ...task, dueDate: '2026-09-01T00:00:00Z' }
+    render(<TaskCardView task={taskWithDueDate} />)
+
+    const dueDateText = screen.getByText(formatDate(taskWithDueDate.dueDate as string))
+    expect(getComputedStyle(dueDateText.parentElement as HTMLElement).color).toBe('rgb(147, 151, 171)')
+  })
+
+  it('uses bgSurface/borderDivider tokens for the executor-output box, and token colors for its label and text', () => {
+    render(<TaskCardView task={task} output={['Planned the work.']} />)
+
+    const label = screen.getByText('Executor output')
+    const outputBox = label.parentElement as HTMLElement
+    expect(getComputedStyle(outputBox).backgroundColor).toBe('rgb(35, 37, 50)')
+    expect(getComputedStyle(outputBox).borderColor).toBe('rgba(233, 233, 237, 0.16)')
+    expect(outputBox.className).not.toMatch(/bg-slate-900\/70|border-slate-700/)
+
+    expect(getComputedStyle(label).color).toBe('rgb(147, 151, 171)')
+    expect(getComputedStyle(screen.getByText('Planned the work.')).color).toBe('rgb(207, 211, 229)')
   })
 })

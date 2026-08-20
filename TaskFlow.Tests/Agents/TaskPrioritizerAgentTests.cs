@@ -60,6 +60,36 @@ public class TaskPrioritizerAgentTests
         recent.Should().Contain(l => l.Action == "PriorityUpdated" && l.TaskId == task.Id);
     }
 
+    // Regression guard for the tailoring-agent token-ceiling fix (2026-08-14): TaskPrioritizerAgent's
+    // output is tiny (a task id, a priority enum, one sentence) and must keep using the cheap shared
+    // default, not the larger ceiling given to ResumeTailoringAgent/CoverLetterAgent - a global raise
+    // would have inflated cost for every agent, not just the two that generate full documents.
+    [Fact]
+    public async Task Still_requests_the_shared_default_token_ceiling_not_the_tailoring_one()
+    {
+        using var db = new SqliteInMemoryContext();
+        var task = new TaskItem
+        {
+            Title = "Low priority task",
+            Status = WorkflowStatus.Todo,
+            Priority = TaskPriority.Low,
+            UpdatedAt = DateTime.UtcNow
+        };
+        db.Context.Tasks.Add(task);
+        await db.Context.SaveChangesAsync();
+
+        var tasks = new TaskRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatUpdatesPriority(task.Id, priority: "High", reasoning: "overdue and blocking");
+
+        var sut = new TaskPrioritizerAgent(
+            claude, tasks, logs, Mock.Of<IAgentNotifier>(), Config(), NullLogger<TaskPrioritizerAgent>.Instance);
+
+        await sut.RunAsync(CancellationToken.None);
+
+        claude.LastRequest!.MaxTokens.Should().Be(TaskFlow.Api.Configuration.AnthropicDefaults.MaxTokens);
+    }
+
     [Fact]
     public async Task No_open_tasks_skips_without_calling_Claude()
     {

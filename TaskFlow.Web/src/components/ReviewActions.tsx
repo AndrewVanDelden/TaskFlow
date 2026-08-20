@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { bgSurface, focusRingAccent, placeholderNeutral500 } from '../lib/tokens'
 
 // The review controls for a card: a reason box, Approve (green), and Reject (red). Reject stays
 // disabled until a reason is typed. Owns the reason state so TaskCardView stays presentational.
@@ -19,7 +20,7 @@ export function ReviewActions({
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         placeholder="Reason for rejection (required to reject)"
-        className="w-full h-16 p-2 rounded bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-500"
+        className={`w-full h-16 p-2 rounded ${bgSurface} border border-white/10 text-xs text-white ${placeholderNeutral500} ${focusRingAccent}`}
       />
       <div className="flex gap-2 mt-2">
         <button

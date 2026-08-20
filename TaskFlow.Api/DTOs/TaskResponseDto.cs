@@ -28,6 +28,15 @@ public class TaskResponseDto
     // real state - Status == "Done" alone does not imply the application is Approved.
     public string? ApplicationState { get; set; }
 
+    // Epic 3.1, U3.1: lets the frontend's Board cards show which company a resume/cover-letter
+    // sibling task belongs to, sourced from the parent JobApplication the same way ApplicationState is.
+    public string? Company { get; set; }
+
+    // Board Done-column soft-archive: null = active, set = archived. Lets the separate Archive view
+    // (a later frontend surface) display when a task was cleared, and lets the board tell an active
+    // task apart from an archived one in the same GET /api/Tasks?archived=... shape.
+    public DateTime? ArchivedAt { get; set; }
+
     // Static factory method — converts a TaskItem entity into this DTO
     public static TaskResponseDto FromEntity(TaskItem task) => new()
     {
@@ -44,6 +53,8 @@ public class TaskResponseDto
         Kind = task.Kind.ToString(),
         ApplicationId = task.ApplicationId,
         TailoredContent = task.TailoredContent,
-        ApplicationState = task.Application?.State.ToString()
+        ApplicationState = task.Application?.State.ToString(),
+        Company = task.Application?.Company,
+        ArchivedAt = task.ArchivedAt
     };
 }

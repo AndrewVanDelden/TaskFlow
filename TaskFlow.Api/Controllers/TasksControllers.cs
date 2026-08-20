@@ -18,12 +18,12 @@ public class TasksController : ControllerBase
     // only to their owner; generic tasks stay visible to everyone (PR #45 review finding - see
     // ITaskRepository.GetAllAsync).
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] string? status, [FromQuery] string? priority)
+    public async Task<IActionResult> GetAll([FromQuery] string? status, [FromQuery] string? priority, [FromQuery] bool archived = false)
     {
         if (!this.TryGetCurrentUserId(out var callerId))
             return this.UnauthenticatedIdentity();
 
-        return (await _tasks.GetAllAsync(status, priority, callerId)).ToActionResult();
+        return (await _tasks.GetAllAsync(status, priority, archived, callerId)).ToActionResult();
     }
 
     // Scoped by caller (T5.0): mirrors GetAll - an Epic 3 sibling task is visible only to its
@@ -77,6 +77,41 @@ public class TasksController : ControllerBase
             return this.UnauthenticatedIdentity();
 
         return (await _tasks.RejectAsync(id, dto.Reason, callerId)).ToActionResult();
+    }
+
+    // Board Done-column "archive" action: soft-archives a single Done task so it drops off the
+    // default board view but stays restorable via /unarchive.
+    [HttpPost("{id:int}/archive")]
+    public async Task<IActionResult> Archive(int id)
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        return (await _tasks.ArchiveAsync(id, callerId)).ToActionResult();
+    }
+
+    // Restores a previously archived task back to the default board view.
+    [HttpPost("{id:int}/unarchive")]
+    public async Task<IActionResult> Unarchive(int id)
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        return (await _tasks.UnarchiveAsync(id, callerId)).ToActionResult();
+    }
+
+    // Board Done-column "clear all" bulk action: archives every Done task the caller can see.
+    [HttpPost("archive-done")]
+    public async Task<IActionResult> ArchiveDone()
+    {
+        if (!this.TryGetCurrentUserId(out var callerId))
+            return this.UnauthenticatedIdentity();
+
+        var result = await _tasks.ArchiveAllDoneAsync(callerId);
+        if (!result.IsSuccess)
+            return result.ToActionResult();
+
+        return Ok(new { archivedCount = result.Value });
     }
 
     [HttpDelete("{id:int}")]

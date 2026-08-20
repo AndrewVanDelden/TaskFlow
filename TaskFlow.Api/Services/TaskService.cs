@@ -60,6 +60,12 @@ public class TaskService : ITaskService
         if (dto.AssignedToId.HasValue && !await _users.ExistsAsync(dto.AssignedToId.Value, ct))
             return Result<TaskResponseDto>.Invalid($"User {dto.AssignedToId} does not exist.");
 
+        // PR #61 review finding 1: mirrors UpdateStatusAsync's guard below - this plain PUT handler
+        // is just as capable of forcing an Epic-3 sibling task straight to Done as the status-only
+        // endpoint, and had no guard against it at all.
+        if (dto.Status == WorkflowStatus.Done && task.Status != WorkflowStatus.Done && RequiresPairApproval(task))
+            return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
+
         task.Title = dto.Title;
         task.Description = dto.Description;
         task.Status = dto.Status;
@@ -82,6 +88,14 @@ public class TaskService : ITaskService
 
         if (IsOwnedByAnotherUser(task, callerId))
             return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        // PR #58 review finding (correctness): only block a real transition INTO Done from
+        // elsewhere - task.Status != Done is required here, or a no-op re-PATCH of a task that
+        // already legitimately reached Done via TryApprovePairAsync (a retried/duplicate request,
+        // a direct API call, or any future UI feature that re-sends the current status) would be
+        // wrongly rejected even though nothing would actually change.
+        if (dto.Status == WorkflowStatus.Done && task.Status != WorkflowStatus.Done && RequiresPairApproval(task))
+            return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
 
         task.Status = dto.Status;
         task.UpdatedAt = DateTime.UtcNow;
@@ -108,6 +122,9 @@ public class TaskService : ITaskService
             return Result<TaskResponseDto>.Invalid(
                 $"Task {id} is {task.Status}; only a task in Review can be approved.");
 
+        if (RequiresPairApproval(task))
+            return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
+
         task.Status = WorkflowStatus.Done;
         task.UpdatedAt = DateTime.UtcNow;
 
@@ -129,6 +146,9 @@ public class TaskService : ITaskService
         if (task.Status != WorkflowStatus.Review)
             return Result<TaskResponseDto>.Invalid(
                 $"Task {id} is {task.Status}; only a task in Review can be rejected.");
+
+        if (RequiresPairApproval(task))
+            return Result<TaskResponseDto>.Invalid(PairApprovalRequiredMessage(id));
 
         // Send it back to the pool for rework and drop the executor's claim so it can be re-picked.
         task.Status = WorkflowStatus.Todo;
@@ -165,7 +185,7 @@ public class TaskService : ITaskService
         return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
     }
 
-    public async Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, int callerId, CancellationToken ct = default)
+    public async Task<Result<IReadOnlyList<TaskResponseDto>>> GetAllAsync(string? status, string? priority, bool archived, int callerId, CancellationToken ct = default)
     {
         WorkflowStatus? parsedStatus = null;
         if (!string.IsNullOrWhiteSpace(status))
@@ -185,7 +205,7 @@ public class TaskService : ITaskService
             parsedPriority = p;
         }
 
-        var tasks = await _tasks.GetAllAsync(parsedStatus, parsedPriority, callerId, ct);
+        var tasks = await _tasks.GetAllAsync(parsedStatus, parsedPriority, archived, callerId, ct);
         IReadOnlyList<TaskResponseDto> dtos = tasks.Select(TaskResponseDto.FromEntity).ToList();
         return Result<IReadOnlyList<TaskResponseDto>>.Ok(dtos);
     }
@@ -204,6 +224,63 @@ public class TaskService : ITaskService
         return Result<bool>.Ok(true);
     }
 
+    public async Task<Result<TaskResponseDto>> ArchiveAsync(int id, int callerId, CancellationToken ct = default)
+    {
+        var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
+        if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (task.Status != WorkflowStatus.Done)
+            return Result<TaskResponseDto>.Invalid(
+                $"Task {id} is {task.Status}; only a Done task can be archived.");
+
+        // PR #59 review finding (conventions): mirrors UnarchiveAsync's symmetric precondition
+        // check below. Without this, a second archive call on an already-archived task fell
+        // through to the repository's guarded no-op update and still returned 200 with the current
+        // state - not a data-corruption risk, but an inconsistent response code for the same class
+        // of "already in target state" call Unarchive correctly rejects with 400.
+        if (task.ArchivedAt is not null)
+            return Result<TaskResponseDto>.Invalid($"Task {id} is already archived.");
+
+        await _tasks.ArchiveAsync(id, callerId, ct);
+
+        // PR #61 review finding (efficiency/simplification): ArchiveAsync's guarded UPDATE bypasses
+        // the change tracker, but its outcome is fully known without re-reading it - the precondition
+        // checks above already guarantee it archives exactly this task, so the tracked instance can
+        // be updated in memory instead of costing a second GetByIdAsync round trip.
+        task.ArchivedAt = DateTime.UtcNow;
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
+    }
+
+    public async Task<Result<TaskResponseDto>> UnarchiveAsync(int id, int callerId, CancellationToken ct = default)
+    {
+        var task = await _tasks.GetByIdAsync(id, includeAssignee: true, ct);
+        if (task is null)
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (IsOwnedByAnotherUser(task, callerId))
+            return Result<TaskResponseDto>.NotFound($"Task {id} not found.");
+
+        if (task.ArchivedAt is null)
+            return Result<TaskResponseDto>.Invalid($"Task {id} is not archived.");
+
+        await _tasks.UnarchiveAsync(id, callerId, ct);
+
+        // Same reasoning as ArchiveAsync above: the guarded UPDATE's outcome is already known, so
+        // update the tracked instance in memory instead of re-fetching it.
+        task.ArchivedAt = null;
+        return Result<TaskResponseDto>.Ok(TaskResponseDto.FromEntity(task));
+    }
+
+    public async Task<Result<int>> ArchiveAllDoneAsync(int callerId, CancellationToken ct = default)
+    {
+        var count = await _tasks.ArchiveAllDoneAsync(callerId, ct);
+        return Result<int>.Ok(count);
+    }
+
     // T5.0: an Epic 3 sibling task is visible/mutable only to its JobApplication's owner. A generic
     // task (ApplicationId == null) is the shared board and is never forbidden. Every single-item
     // action returns the same NotFound a missing id would for a forbidden sibling task - never a
@@ -211,4 +288,31 @@ public class TaskService : ITaskService
     // closed for the list). Extracted once here (was duplicated verbatim across all six methods).
     private static bool IsOwnedByAnotherUser(TaskItem task, int callerId) =>
         task.OwnerId != null && task.OwnerId != callerId;
+
+    // Board bug (found 2026-08-14, reproduced against real data): Epic-3 sibling tasks
+    // (ResumeTailoring/CoverLetterTailoring) must only ever reach Done through the paired
+    // JobApplication approve flow (JobApplicationService.ApproveAsync ->
+    // IJobApplicationRepository.TryApprovePairAsync), which requires both siblings and atomically
+    // promotes the JobApplication to Approved in the same transaction. The single-task
+    // Approve/Reject/UpdateStatus endpoints have no awareness of that pair invariant - approving,
+    // rejecting, or drag-moving one sibling to Done individually here (the realistic trigger: the
+    // resume finishes tailoring and reaches Review well before the cover letter does, so only one
+    // sibling is in Review at a time and the Board doesn't yet group them into one paired review
+    // card) leaves the JobApplication permanently stuck below Approved - no retry path ever fixes
+    // it. That silently broke the Board's export-download gating (real generated content the user
+    // could never retrieve), which PR #48 found and partially addressed once already: it made the
+    // export gate correctly hide instead of lying about a broken "Approved" state, but left this
+    // underlying corruption itself reachable. This closes it at the source instead.
+    //
+    // PR #58 review (nit): unconditional on Kind by design, not a pairing-state check - every
+    // Epic-3 sibling task requires pair approval, full stop, regardless of whether its sibling
+    // happens to be paired/ready right now. Renamed from IsUnpairedEpic3Kind, whose name implied
+    // (incorrectly) that it inspected pairing state.
+    private static bool RequiresPairApproval(TaskItem task) =>
+        task.Kind is TaskKind.ResumeTailoring or TaskKind.CoverLetterTailoring;
+
+    private static string PairApprovalRequiredMessage(int id) =>
+        $"Task {id} is part of a job application pair; approve or reject it via the JobApplication " +
+        "pair endpoint (POST/DELETE /api/JobApplications/{applicationId}/approve|reject) once both " +
+        "the resume and cover letter are ready for review.";
 }

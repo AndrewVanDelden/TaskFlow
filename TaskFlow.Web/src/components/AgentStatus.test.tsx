@@ -24,4 +24,18 @@ describe('AgentStatus', () => {
     expect(screen.getByText('Running')).toBeInTheDocument()
     expect(screen.getByText('Idle')).toBeInTheDocument()
   })
+
+  // Board screenshot feedback (2026-08-14): "Task Prioritizer" fits on one line but "Stale Task
+  // Detector" is long enough to wrap to two in the card's fixed-width column - since the two cards
+  // size independently (grid-cols-2 with no shared row height), that one extra heading line pushes
+  // everything below it (the blurb, the "Actions logged"/"Last activity" stats) down by a line
+  // relative to the shorter card, so the two cards' stat rows don't line up with each other.
+  // Truncating to one line (with min-w-0 on the flex parent, required for truncate to engage inside
+  // a flex item) keeps both cards' headers - and everything beneath them - the same height.
+  it('keeps every agent heading to a single line so the cards align regardless of label length', () => {
+    render(<AgentStatus logs={[]} cycles={{}} />)
+
+    expect(screen.getByText('Task Prioritizer').className).toMatch(/truncate/)
+    expect(screen.getByText('Stale Task Detector').className).toMatch(/truncate/)
+  })
 })

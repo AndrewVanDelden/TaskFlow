@@ -57,6 +57,10 @@ namespace TaskFlow.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("Company")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -125,6 +129,9 @@ namespace TaskFlow.Api.Migrations
 
                     b.Property<int?>("ApplicationId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("ArchivedAt")
+                        .HasColumnType("TEXT");
 
                     b.Property<int?>("AssignedToId")
                         .HasColumnType("INTEGER");

@@ -22,7 +22,7 @@ public class TaskRepository : ITaskRepository
         return await query.FirstOrDefaultAsync(t => t.Id == id, ct);
     }
 
-    public async Task<List<TaskItem>> GetAllAsync(WorkflowStatus? status, TaskPriority? priority, int callerId, CancellationToken ct = default)
+    public async Task<List<TaskItem>> GetAllAsync(WorkflowStatus? status, TaskPriority? priority, bool archived, int callerId, CancellationToken ct = default)
     {
         // Generic tasks (no ApplicationId) are the shared board, visible to everyone. Epic 3
         // sibling tasks carry personal document content (TailoredContent) and are visible only to
@@ -32,6 +32,10 @@ public class TaskRepository : ITaskRepository
         // is populated for the frontend's export-download gating (PR #48 review finding).
         var query = _db.Tasks.Include(t => t.AssignedTo).Include(t => t.Application)
             .Where(t => t.ApplicationId == null || t.Application!.OwnerId == callerId);
+        // Binary partition (not an additive filter like status/priority below): the default board
+        // view (archived: false) must keep excluding archived tasks exactly as it always has, and
+        // the separate Archive view (archived: true) must see only archived tasks - never both.
+        query = archived ? query.Where(t => t.ArchivedAt != null) : query.Where(t => t.ArchivedAt == null);
         if (status.HasValue)   query = query.Where(t => t.Status == status.Value);
         if (priority.HasValue) query = query.Where(t => t.Priority == priority.Value);
         return await query.OrderBy(t => t.DueDate).ThenBy(t => t.Priority).ToListAsync(ct);
@@ -150,6 +154,42 @@ public class TaskRepository : ITaskRepository
                 .SetProperty(t => t.UpdatedAt, DateTime.UtcNow), ct);
 
         return moved == 1;
+    }
+
+    public async Task<bool> ArchiveAsync(int id, int callerId, CancellationToken ct = default)
+    {
+        // Guarded UPDATE (Done, not-yet-archived -> archived now). ArchivedAt == null in the WHERE
+        // makes this idempotent: a second call on an already-archived task matches zero rows instead
+        // of re-stamping the timestamp. No ownership check here by design - the service layer already
+        // validated callerId against the task's OwnerId before calling this (mirrors MarkForReviewAsync,
+        // not TryApprovePairAsync's owner-in-the-WHERE-clause pattern).
+        var moved = await _db.Tasks
+            .Where(t => t.Id == id && t.Status == WorkflowStatus.Done && t.ArchivedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.ArchivedAt, DateTime.UtcNow), ct);
+
+        return moved == 1;
+    }
+
+    public async Task<bool> UnarchiveAsync(int id, int callerId, CancellationToken ct = default)
+    {
+        // Guarded UPDATE (archived -> restored). Symmetric to ArchiveAsync; same no-ownership-check
+        // division of responsibility.
+        var moved = await _db.Tasks
+            .Where(t => t.Id == id && t.ArchivedAt != null)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.ArchivedAt, (DateTime?)null), ct);
+
+        return moved == 1;
+    }
+
+    public async Task<int> ArchiveAllDoneAsync(int callerId, CancellationToken ct = default)
+    {
+        // Bulk guarded UPDATE - same ownership scoping as GetAllAsync (generic tasks unconditionally,
+        // Epic 3 sibling tasks only when owned by the caller), so "clear all Done" can never archive
+        // another user's personal tailored resume/cover-letter task.
+        return await _db.Tasks
+            .Where(t => t.Status == WorkflowStatus.Done && t.ArchivedAt == null
+                && (t.ApplicationId == null || t.Application!.OwnerId == callerId))
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.ArchivedAt, DateTime.UtcNow), ct);
     }
 
     public async Task AddAsync(TaskItem task, CancellationToken ct = default) =>

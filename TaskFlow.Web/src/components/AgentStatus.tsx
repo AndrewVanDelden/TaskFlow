@@ -28,8 +28,8 @@ export function AgentStatus({
             key={agent.name}
             className="bg-slate-900/60 border border-slate-800 rounded-xl p-4"
           >
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold text-white">{agent.label}</h3>
+            <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
+              <h3 className="text-sm font-semibold text-white truncate">{agent.label}</h3>
               <span
                 className={`flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full border ${
                   running

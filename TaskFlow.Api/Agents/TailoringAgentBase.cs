@@ -3,6 +3,7 @@ using Anthropic.SDK.Messaging;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TaskFlow.Api.Configuration;
 using TaskFlow.Api.Models;
 using TaskFlow.Api.Repositories;
 using TaskFlow.Api.Security;
@@ -129,11 +130,13 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
                 return;
             }
 
+            var maxTokens = Config.GetValue("Anthropic:TailoringMaxTokens", AnthropicDefaults.TailoringMaxTokens);
             var actions = await RunToolConversationAsync(
-                prompt: BuildPrompt(task),
+                prompt: BuildPrompt(task, application),
                 tools: BuildTools(),
                 dispatch: (toolUse, ct) => ExecuteToolAsync(task, application, resumeContext, toolUse, ct),
-                cancellationToken);
+                cancellationToken,
+                maxTokensOverride: maxTokens);
 
             Logger.LogInformation(
                 "[{Agent}] Cycle complete for Task {Id}. {Count} tool action(s).", Name, task.Id, actions);
@@ -209,24 +212,31 @@ public abstract class TailoringAgentBase : ClaudeAgentBase
     // The job-posting text is small and already on the claimed task, so it goes directly into the
     // initial prompt (wrapped) — no tool round-trip needed for it. The base resume, by contrast, is
     // fetched lazily via read_base_context so a cycle that never needs it never fetches it.
-    private string BuildPrompt(TaskItem task)
+    private string BuildPrompt(TaskItem task, JobApplication application)
     {
-        var wrappedJobPosting = PromptSafety.WrapUntrusted(FormatJobPosting(task), "job_posting");
+        var wrappedJobPosting = PromptSafety.WrapUntrusted(FormatJobPosting(task, application), "job_posting");
 
         return
             "You are working one task in a job-application pipeline. Below is the job posting you " +
             "are tailoring output for. First call read_base_context to fetch the candidate's base " +
-            "resume, then produce your output and save it using the save tool described below.\n\n" +
+            "resume, then produce your output and save it using the save tool described below. " +
+            "Do not describe your plan in a text response - go directly from reading the base " +
+            "resume to calling the save tool with your final output. Do not end your turn until " +
+            "you have called the save tool.\n\n" +
             wrappedJobPosting + "\n\n" +
             BuildInstructions();
     }
 
-    private static string FormatJobPosting(TaskItem task)
+    // PR #55 review (finding 1): Company lives on JobApplication, not TaskItem.SourceSection - the
+    // real job-posting parsers (ClaudeJobPostingParser, JobPostingParser) always leave Section
+    // empty now, so reading task.SourceSection here silently dropped the company from every
+    // tailoring prompt. Read it from the already-loaded application instead.
+    private static string FormatJobPosting(TaskItem task, JobApplication application)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"Title: {task.Title}");
-        if (!string.IsNullOrWhiteSpace(task.SourceSection))
-            sb.AppendLine($"Company: {task.SourceSection}");
+        if (!string.IsNullOrWhiteSpace(application.Company))
+            sb.AppendLine($"Company: {application.Company}");
         if (!string.IsNullOrWhiteSpace(task.Description))
             sb.AppendLine($"Description: {task.Description}");
         return sb.ToString();

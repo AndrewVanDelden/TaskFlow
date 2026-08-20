@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { KanbanBoard } from './KanbanBoard'
@@ -115,5 +115,50 @@ describe('KanbanBoard integration', () => {
     expect(screen.getByText('Done task')).toBeInTheDocument()
     // None of these columns show Approve/Reject controls.
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+  })
+
+  it('shows Archive only on Done cards and archiving removes the card from the board', async () => {
+    server.use(
+      http.get('*/api/Tasks', () =>
+        HttpResponse.json([card(1, 'Ship the feature', 'Done'), card(2, 'Backlog item', 'Todo')]),
+      ),
+      http.post('*/api/Tasks/1/archive', () => HttpResponse.json({ ...card(1, 'Ship the feature', 'Done'), archivedAt: '2026-08-14T00:00:00Z' })),
+    )
+
+    render(<KanbanBoard />)
+
+    const archiveButtons = await screen.findAllByRole('button', { name: 'Archive' })
+    expect(archiveButtons).toHaveLength(1)
+
+    await userEvent.click(archiveButtons[0])
+
+    await waitFor(() => expect(screen.queryByText('Ship the feature')).toBeNull())
+  })
+
+  it('clears every Done card via the Done column\'s Clear Done button after confirming', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    server.use(
+      http.get('*/api/Tasks', () =>
+        HttpResponse.json([
+          card(1, 'Done task A', 'Done'),
+          card(2, 'Done task B', 'Done'),
+          card(3, 'Todo task', 'Todo'),
+        ]),
+      ),
+      http.post('*/api/Tasks/archive-done', () => HttpResponse.json({ archivedCount: 2 })),
+    )
+
+    render(<KanbanBoard />)
+    await screen.findByText('Done task A')
+
+    // Only the Done column ever renders this button, so no need to scope the query to it.
+    await user.click(screen.getByRole('button', { name: 'Clear Done' }))
+
+    await waitFor(() => expect(screen.queryByText('Done task A')).toBeNull())
+    expect(screen.queryByText('Done task B')).toBeNull()
+    expect(screen.getByText('Todo task')).toBeInTheDocument()
+
+    vi.restoreAllMocks()
   })
 })

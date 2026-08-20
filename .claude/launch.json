@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "taskflow-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "TaskFlow.Web", "run", "dev:all"],
+      "port": 5173
+    }
+  ]
+}

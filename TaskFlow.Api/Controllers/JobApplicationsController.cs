@@ -60,7 +60,7 @@ public class JobApplicationsController : ControllerBase
         if (!this.TryGetCurrentUserId(out var ownerId))
             return this.UnauthenticatedIdentity();
 
-        var posting = new TaskDraft(dto.Posting.Title, dto.Posting.Description, TaskKind.ResumeTailoring, dto.Posting.Section);
+        var posting = new TaskDraft(dto.Posting.Title, dto.Posting.Description, TaskKind.ResumeTailoring, dto.Posting.Section, dto.Posting.Company);
         return (await _assembly.AssembleAsync(dto.IngestionSessionId, ownerId, posting)).ToActionResult();
     }
 

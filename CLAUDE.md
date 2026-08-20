@@ -144,3 +144,11 @@
   converged on the same idempotency bug and the same unguarded-`int.Parse` issue; Copilot also
   caught a test-quality gap — a `.not.toContain(...)` assertion that doesn't actually prove
   `localStorage.setItem` was never called — that the manual review missed.)
+
+
+
+**Findings from the PR #61 code-review session (2026-08-19):**
+
+- **Format PR reviews as inline comments, not general issue comments.** When adding findings to a PR, use the GitHub API (`gh api repos/<owner>/<repo>/pulls/<n>/reviews`) to post them directly on the relevant diff lines as inline comments, rather than dumping a large prose block into the main PR thread.
+- **Match the existing review style.** Keep comments concise and mimic the exact format of existing reviews on the PR (e.g., `**Category — STATUS: Short title.**\n\nDescription text.`). Do not over-explain or add verbose markdown headers that deviate from the established pattern.
+- **A session interrupted by hitting the usage limit leaves no memory of itself behind — only whatever it wrote to disk.** The next session starts cold; a plain "continue where you left off" from the user is not enough to reconstruct what happened, and targeted `git diff`/`git log` calls on files you already expect to be touched can miss files you don't expect. Discovered 2026-08-19: an interrupted prior session had independently posted 2 inline PR #61 review comments via Python scripts + `gh api` (never using `git`, so nothing showed up in the commands this session ran first) and left those scripts, their JSON/txt intermediates, and an uncommitted `CLAUDE.md` edit sitting in the **repo root** (should have used the scratchpad directory) — all invisible until a broad `git status --short` was run well into the new session, by which point the new session had already independently rediscovered and re-verified the same 2 findings from scratch. **Run `git status --short` (not just targeted diffs) immediately when resuming a session that references prior work, before doing any new analysis** — it's the only way to see whether an interrupted session left something behind, committed or not.

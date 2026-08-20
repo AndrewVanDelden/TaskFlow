@@ -1,8 +1,10 @@
 import { render, screen, within } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { DndContext } from '@dnd-kit/core'
 import { KanbanColumn } from './KanbanColumn'
 import type { TaskItem, TaskKind } from '../types'
+import { axe } from '../test/axe'
 
 const task: TaskItem = {
   id: 1, title: 'Ship it', description: null, status: 'Todo',
@@ -109,5 +111,119 @@ describe('KanbanColumn', () => {
     const coverLetterCard = screen.getByText('Tailor cover letter').closest('[role="button"]')
     expect(resumeCard).toHaveAttribute('tabindex', '0')
     expect(coverLetterCard).toHaveAttribute('tabindex', '0')
+  })
+
+  it('has no accessibility violations', async () => {
+    const { container } = render(
+      <DndContext>
+        <KanbanColumn status="Todo" label="To Do" tasks={[task]} />
+      </DndContext>,
+    )
+
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  describe('Clear Done', () => {
+    const doneTask: TaskItem = { ...task, id: 5, status: 'Done' }
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('shows a Clear Done button only in the Done column', () => {
+      render(
+        <DndContext>
+          <KanbanColumn status="Todo" label="To Do" tasks={[task]} onArchiveDone={vi.fn()} />
+        </DndContext>,
+      )
+      expect(screen.queryByRole('button', { name: 'Clear Done' })).toBeNull()
+    })
+
+    it('shows a Clear Done button in the Done column when onArchiveDone is supplied', () => {
+      render(
+        <DndContext>
+          <KanbanColumn status="Done" label="Done" tasks={[doneTask]} onArchiveDone={vi.fn()} />
+        </DndContext>,
+      )
+      expect(screen.getByRole('button', { name: 'Clear Done' })).toBeInTheDocument()
+    })
+
+    it('disables Clear Done when the Done column has zero tasks', () => {
+      render(
+        <DndContext>
+          <KanbanColumn status="Done" label="Done" tasks={[]} onArchiveDone={vi.fn()} />
+        </DndContext>,
+      )
+      expect(screen.getByRole('button', { name: 'Clear Done' })).toBeDisabled()
+    })
+
+    it('calls onArchiveDone after the user confirms', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      const onArchiveDone = vi.fn()
+      render(
+        <DndContext>
+          <KanbanColumn status="Done" label="Done" tasks={[doneTask]} onArchiveDone={onArchiveDone} />
+        </DndContext>,
+      )
+
+      await userEvent.click(screen.getByRole('button', { name: 'Clear Done' }))
+
+      expect(window.confirm).toHaveBeenCalled()
+      expect(onArchiveDone).toHaveBeenCalledOnce()
+    })
+
+    it('does not call onArchiveDone when the user cancels the confirmation', async () => {
+      vi.spyOn(window, 'confirm').mockReturnValue(false)
+      const onArchiveDone = vi.fn()
+      render(
+        <DndContext>
+          <KanbanColumn status="Done" label="Done" tasks={[doneTask]} onArchiveDone={onArchiveDone} />
+        </DndContext>,
+      )
+
+      await userEvent.click(screen.getByRole('button', { name: 'Clear Done' }))
+
+      expect(onArchiveDone).not.toHaveBeenCalled()
+    })
+  })
+
+  it('threads onArchive through to a Done card so clicking Archive calls it with the task id', async () => {
+    const doneTask: TaskItem = { ...task, id: 5, status: 'Done' }
+    const onArchive = vi.fn()
+
+    render(
+      <DndContext>
+        <KanbanColumn status="Done" label="Done" tasks={[doneTask]} onArchive={onArchive} />
+      </DndContext>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
+
+    expect(onArchive).toHaveBeenCalledWith(5)
+  })
+
+  // PR #61 review finding: the column shell still used stock pre-Nocturne slate classes
+  // (bg-slate-900/60, border-slate-800) instead of the shared bgSurface/borderDivider tokens.
+  it('uses the bgSurface/borderDivider tokens for the column shell background and border', () => {
+    const { container } = render(
+      <DndContext>
+        <KanbanColumn status="Todo" label="To Do" tasks={[task]} />
+      </DndContext>,
+    )
+
+    const column = container.firstElementChild as HTMLElement
+    expect(getComputedStyle(column).backgroundColor).toBe('rgb(35, 37, 50)')
+    expect(getComputedStyle(column).borderColor).toBe('rgba(233, 233, 237, 0.16)')
+    expect(column.className).not.toMatch(/bg-slate-900\/60|border-slate-800/)
+  })
+
+  it('uses the textNeutral600 token for the "No tasks" empty state text', () => {
+    render(
+      <DndContext>
+        <KanbanColumn status="Todo" label="To Do" tasks={[]} />
+      </DndContext>,
+    )
+
+    expect(getComputedStyle(screen.getByText('No tasks')).color).toBe('rgb(117, 121, 140)')
   })
 })

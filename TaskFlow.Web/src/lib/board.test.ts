@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import type { AgentLog, TaskItem, TaskKind, TaskStatus } from '../types'
-import { resolveDropColumn, taskOutput, taskStage, reviewReadyPairs, groupSiblingCards } from './board'
+import {
+  resolveDropColumn,
+  taskOutput,
+  taskStage,
+  reviewReadyPairs,
+  groupSiblingCards,
+  canDownloadExport,
+} from './board'
 
 const task = (id: number, status: TaskStatus): TaskItem => ({
   id,
@@ -261,5 +268,38 @@ describe('groupSiblingCards', () => {
     const third = epicTask(3, 10, 'ResumeTailoring', 'Todo')
 
     expect(groupSiblingCards([first, second, third])).toEqual([[first, second], [third]])
+  })
+})
+
+// PR #61 review finding: `task.status === 'Done' && task.applicationId !== null &&
+// task.applicationState === 'Approved'` (the export-download gate) was duplicated verbatim in
+// TaskCardView.tsx and ArchivedTaskList.tsx. Extracted here as the single source of truth for both.
+describe('canDownloadExport', () => {
+  it('is true for a Done task with a non-null applicationId whose application is Approved', () => {
+    const doneApproved = epicTask(1, 10, 'ResumeTailoring', 'Done')
+    doneApproved.applicationState = 'Approved'
+
+    expect(canDownloadExport(doneApproved)).toBe(true)
+  })
+
+  it('is false when the task is not Done', () => {
+    const reviewApproved = epicTask(1, 10, 'ResumeTailoring', 'Review')
+    reviewApproved.applicationState = 'Approved'
+
+    expect(canDownloadExport(reviewApproved)).toBe(false)
+  })
+
+  it('is false when applicationId is null', () => {
+    const doneNoApplication = epicTask(1, null, 'Generic', 'Done')
+    doneNoApplication.applicationState = 'Approved'
+
+    expect(canDownloadExport(doneNoApplication)).toBe(false)
+  })
+
+  it('is false when the application state is not Approved', () => {
+    const doneNotApproved = epicTask(1, 10, 'ResumeTailoring', 'Done')
+    doneNotApproved.applicationState = 'ReviewReady'
+
+    expect(canDownloadExport(doneNotApproved)).toBe(false)
   })
 })

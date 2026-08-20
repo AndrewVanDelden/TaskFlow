@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, it, expect, vi } from 'vitest'
 import { DndContext } from '@dnd-kit/core'
 import { TaskCard } from './TaskCard'
 import type { TaskItem } from '../types'
@@ -19,8 +20,18 @@ describe('TaskCard', () => {
     expect(screen.getByText('High')).toBeInTheDocument()
   })
 
-  it('shows Unassigned when there is no assignee', () => {
+  it('shows the em-dash placeholder when there is no company', () => {
     render(<DndContext><TaskCard task={task} /></DndContext>)
-    expect(screen.getByText('Unassigned')).toBeInTheDocument()
+    expect(screen.getByText('—')).toBeInTheDocument()
+  })
+
+  it('threads onArchive through to the Archive button for a Done task', async () => {
+    const onArchive = vi.fn()
+    const doneTask: TaskItem = { ...task, status: 'Done' }
+    render(<DndContext><TaskCard task={doneTask} onArchive={onArchive} /></DndContext>)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
+
+    expect(onArchive).toHaveBeenCalledOnce()
   })
 })

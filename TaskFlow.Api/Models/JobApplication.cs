@@ -19,6 +19,14 @@ public class JobApplication
 
     public int OwnerId { get; set; }
 
+    public const int CompanyMaxLength = 200;
+
+    // Extracted by both job-posting parsers (Epic 3.1, U3.1). Optional: the free rule-based
+    // parser may legitimately fail to find a company heading, and a hand-created application has
+    // none at all.
+    [MaxLength(CompanyMaxLength)]
+    public string? Company { get; set; }
+
     // Navigation property — one JobApplication has many Tasks (the resume + cover-letter siblings)
     public ICollection<TaskItem> Tasks { get; set; } = new List<TaskItem>();
 }

@@ -30,4 +30,8 @@ public class JobPostingSummaryDto
     [Required(AllowEmptyStrings = true)]
     [MaxLength(TaskItem.SourceSectionMaxLength)]
     public string Section { get; set; } = string.Empty;
+
+    // Optional - the free rule-based parser may legitimately fail to find a company heading.
+    [MaxLength(JobApplication.CompanyMaxLength)]
+    public string? Company { get; set; }
 }

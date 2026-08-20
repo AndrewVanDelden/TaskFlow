@@ -30,7 +30,8 @@ public class ClaudeJobPostingParserTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.Should().ContainSingle(d =>
             d.Title == "Senior Backend Engineer" &&
-            d.Section == "Acme Corp" &&
+            d.Company == "Acme Corp" &&
+            d.Section == string.Empty &&
             d.Kind == TaskKind.ResumeTailoring &&
             d.Description == "C#, SQL, Azure, REST APIs, CI/CD");
     }

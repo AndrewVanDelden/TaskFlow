@@ -59,7 +59,13 @@ public class CoverLetterAgentTests
         {
             State = ApplicationState.Building,
             IngestionSessionId = SessionId,
-            OwnerId = OwnerId
+            OwnerId = OwnerId,
+            // Mirrors the real assembly pipeline (JobApplicationAssemblyService): Company lives on
+            // the JobApplication, not on TaskItem.SourceSection, which the real job-posting parsers
+            // always leave empty. A prior version of this seed hand-set SourceSection instead - that
+            // masked PR #55's regression, where FormatJobPosting still read SourceSection and so
+            // silently stopped telling Claude which company a posting was for.
+            Company = "Globex Inc"
         };
         db.Context.JobApplications.Add(application);
         await db.Context.SaveChangesAsync();
@@ -68,7 +74,6 @@ public class CoverLetterAgentTests
         {
             Title = "Product Manager",
             Description = "8+ years of product experience required.",
-            SourceSection = "Globex Inc",
             Status = WorkflowStatus.Todo,
             Kind = TaskKind.ResumeTailoring,
             ApplicationId = application.Id
@@ -77,7 +82,6 @@ public class CoverLetterAgentTests
         {
             Title = "Product Manager",
             Description = "8+ years of product experience required.",
-            SourceSection = "Globex Inc",
             Status = WorkflowStatus.Todo,
             Kind = TaskKind.CoverLetterTailoring,
             ApplicationId = application.Id
@@ -108,6 +112,49 @@ public class CoverLetterAgentTests
         db.Context.ChangeTracker.Clear();
         var updated = await tasks.GetByIdAsync(coverLetterTask.Id);
         updated!.ClaimedBy.Should().Be(AgentNames.CoverLetter);
+    }
+
+    // Confirms the shared TailoringAgentBase fix (found via live dogfooding, 2026-08-14 - see
+    // ResumeTailoringAgentTests for the full rationale) reaches this subclass too, not just
+    // ResumeTailoringAgent - both agents inherit the same prompt/token-ceiling logic from one place.
+    // Split into two single-purpose tests (PR #56 review nit) to match ResumeTailoringAgentTests'
+    // granularity for the identical shared behavior - a failure here should say which of the two
+    // regressed, not require reading the assertion order to tell.
+    [Fact]
+    public async Task Requests_the_tailoring_specific_higher_token_ceiling_not_the_shared_default()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Cover letter");
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
+        claude.LastRequest!.MaxTokens.Should().Be(TaskFlow.Api.Configuration.AnthropicDefaults.TailoringMaxTokens);
+    }
+
+    [Fact]
+    public async Task Instructs_Claude_not_to_narrate_a_plan_instead_of_calling_the_save_tool()
+    {
+        using var db = new SqliteInMemoryContext();
+        await SeedApplicationAsync(db);
+
+        var tasks = new TaskRepository(db.Context);
+        var resumeContexts = new ResumeContextRepository(db.Context);
+        var jobApplications = new JobApplicationRepository(db.Context);
+        var logs = new AgentLogRepository(db.Context);
+        var claude = StubClaude.ThatReadsContextThenSaves(SaveTool, "# Cover letter");
+
+        var sut = CreateSut(claude, tasks, resumeContexts, jobApplications, logs, Mock.Of<IAgentNotifier>());
+        await sut.RunAsync(CancellationToken.None);
+
+        var initialPrompt = claude.LastRequest!.Messages[0].Content.OfType<TextContent>().FirstOrDefault()?.Text;
+        initialPrompt.Should().Contain("Do not end your turn until you have called");
     }
 
     [Fact]
@@ -172,6 +219,12 @@ public class CoverLetterAgentTests
         jobOpen.Should().BeGreaterThanOrEqualTo(0);
         jobClose.Should().BeGreaterThan(jobOpen);
         initialPrompt.IndexOf(coverLetterTask.Title, StringComparison.Ordinal).Should().BeInRange(jobOpen, jobClose);
+
+        // PR #55 review (finding 1, CONFIRMED): the company must reach the prompt via the
+        // JobApplication (application.Company), since TaskItem.SourceSection is always empty for
+        // job-posting-sourced tasks in the real pipeline.
+        var companyLine = initialPrompt.IndexOf("Company: Globex Inc", StringComparison.Ordinal);
+        companyLine.Should().BeInRange(jobOpen, jobClose);
 
         var allText = claude.LastRequest!.Messages
             .SelectMany(m => m.Content)
