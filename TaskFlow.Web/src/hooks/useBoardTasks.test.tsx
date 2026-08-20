@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw'
 import type { ReactNode } from 'react'
 import type { HubConnection } from '@microsoft/signalr'
 import { server } from '../test/server'
-import { AgentHubContext } from '../lib/agentHub'
+import { AgentHubContext } from '../lib/AgentHubContext'
 import { HubEvents } from '../lib/hubEvents'
 import { useBoardTasks } from './useBoardTasks'
 

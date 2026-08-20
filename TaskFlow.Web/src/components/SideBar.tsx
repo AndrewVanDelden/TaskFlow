@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { KanbanIcon, TrayIcon, PulseIcon, ArchiveIcon, UserCircleIcon } from '@phosphor-icons/react'
 import { useAuth } from '../hooks/AuthContext'
@@ -16,9 +16,14 @@ export function SideBar() {
   const [menuOpen, setMenuOpen] = useState(false)
   const location = useLocation()
 
-  useEffect(() => {
+  // Closing the menu on navigation is resetting state in response to a prop change, not a side
+  // effect - done during render (React's own documented pattern) instead of useEffect, so it
+  // can't trigger the extra render-then-effect-then-render cascade that pattern causes.
+  const [menuClosedForPathname, setMenuClosedForPathname] = useState(location.pathname)
+  if (location.pathname !== menuClosedForPathname) {
+    setMenuClosedForPathname(location.pathname)
     setMenuOpen(false)
-  }, [location.pathname])
+  }
 
   return (
     <nav className="w-[60px] h-screen flex flex-col items-center py-4 gap-2">
