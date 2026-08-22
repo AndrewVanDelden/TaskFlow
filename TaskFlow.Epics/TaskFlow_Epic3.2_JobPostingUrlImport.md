@@ -470,7 +470,44 @@ already uses. GREEN: any gap the test surfaces.
 
 ### Code review findings (fill in after this sprint's PR is reviewed)
 
-*(Not yet started — nothing to record.)*
+**Antigravity (Claude Opus 4.6) review pass (2026-08-22) — PR #64.** Posted directly to the PR as
+inline comments — see
+[review #5001097525](https://github.com/AndrewVanDelden/TaskFlow/pull/64#pullrequestreview-5001097525).
+This is a clean, well-structured PR. The `parseFrom` extraction in `useIntakeFlow.ts` is textbook
+DRY/OCP. Explicit types throughout, no `any`, SCU maintained. One minor finding:
+
+1. **`TaskFlow.Web/src/features/IngestDocument.tsx:142`** (PLAUSIBLE)
+   - **Why:** The existing textarea (line 162) has `aria-busy={intake.stage === 'parsing'}` to
+     signal assistive technology during async operations. The new URL `<input>` does not, even
+     though it participates in the same `parsing` stage. The input is already `disabled` during
+     parsing, so this is low severity — but it's an accessibility consistency gap within the
+     file's own established pattern.
+   - **Fix:** Add `aria-busy={intake.stage === 'parsing'}` to the URL input element.
+   - **RED test:** An axe/a11y audit or a targeted `getByRole` assertion checking `aria-busy`
+     transitions during the URL parse path.
+   - **Status:** Fixed (2026-08-22). RED-first test `the URL input has aria-busy while parsing,
+     matching the textarea` (delayed MSW response, mirrors the existing 'starting stage' pattern for
+     making a transient stage observable), confirmed RED then GREEN.
+
+**Independent manual review (2026-08-22) — PR #64.** Posted directly to the PR as an inline
+comment — see
+[review #5001099066](https://github.com/AndrewVanDelden/TaskFlow/pull/64#pullrequestreview-5001099066)
+for the full text. Cross-checked against finding 1 above: accurate and reasonable, not duplicated.
+One further finding:
+
+2. **`TaskFlow.Web/src/features/IngestDocument.tsx:142`** (reuse, low severity)
+   - **Why:** The new URL `<input>`'s className hand-rolls the exact same token combination as the
+     established `textareaClasses` constant (`bgSurface`, `border-white/10`, `text-white`,
+     `text-sm`, `focusRingAccent`) instead of reusing or extracting a shared base — identical
+     token-for-token except sizing utilities. If the Nocturne input styling ever changes, this spot
+     won't pick it up automatically the way the three textareas sharing `textareaClasses` will.
+   - **Fix:** Factor the non-sizing portion into a shared constant alongside `textareaClasses`
+     (e.g. an `inputBaseClasses` both compose from).
+   - **RED test:** Not applicable — pure styling consistency, not a behavior change.
+   - **Status:** Fixed (2026-08-22) exactly as suggested. New `inputSurfaceClasses` constant holds
+     the shared tokens; `textareaClasses` and the URL input's className both compose from it, only
+     sizing utilities differ per use-site. Rendered class strings unchanged, so no test needed beyond
+     the existing suite staying green (510/510 backend, 349/349 frontend).
 
 ### Post-sprint retrospective (fill in once this sprint ships)
 

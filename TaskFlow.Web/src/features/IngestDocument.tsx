@@ -35,7 +35,11 @@ const fileInputClasses =
   `${fileBgSurface} file:text-white file:text-xs rounded ${focusRingAccent}`
 
 // Sprint-4-closeout restyle: matches Login.tsx's own `inputClass` pattern for every text input.
-const textareaClasses = `w-full h-48 p-3 rounded ${bgSurface} border border-white/10 text-white text-sm ${focusRingAccent}`
+// PR #64 review finding: factored out from textareaClasses so the single-line URL input (below)
+// shares the same surface/border/text/focus-ring tokens instead of duplicating the literal - both
+// stay in sync if the Nocturne input styling ever changes.
+const inputSurfaceClasses = `rounded ${bgSurface} border border-white/10 text-white text-sm ${focusRingAccent}`
+const textareaClasses = `w-full h-48 p-3 ${inputSurfaceClasses}`
 
 // Sprint-4-closeout restyle: Login.tsx's exact error-banner shade, replacing the old mismatched
 // text-red-400/bg-red-950/border-red-900 (locked in the epic doc as a small consistency fix, not a
@@ -138,8 +142,9 @@ export function IngestDocument() {
                 value={jobPostingUrl}
                 onChange={(e) => setJobPostingUrl(e.target.value)}
                 disabled={intake.stage === 'parsing'}
+                aria-busy={intake.stage === 'parsing'}
                 placeholder="https://example.com/careers/job-posting"
-                className={`flex-1 p-2 rounded ${bgSurface} border border-white/10 text-white text-sm ${focusRingAccent}`}
+                className={`flex-1 p-2 ${inputSurfaceClasses}`}
               />
               <Button
                 variant="primary"
