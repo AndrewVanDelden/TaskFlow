@@ -202,17 +202,22 @@ the repo" above.*
 
 | Sprint | What | Status |
 |---|---|---|
-| **1** | Secure URL fetch + HTML extraction (backend) | **Complete (2026-08-20)** — S1.1-S1.6 all RED-confirmed then GREEN-confirmed via real `.\test` runs; 506/506 backend, 340/340 frontend. Sitting uncommitted on `develop`, not yet branched/PR'd — see note below. |
-| **2** | Frontend URL input | Ready — architecture above, no code yet. Blocked on Sprint 1's branch/PR landing first, per this doc's own TDD/git workflow (one branch, one PR per sprint). |
+| **1** | Secure URL fetch + HTML extraction (backend) | **Shipped (2026-08-22)** — [PR #63](https://github.com/AndrewVanDelden/TaskFlow/pull/63) merged to `develop` (`967a76b`). S1.1-S1.6 all RED-confirmed then GREEN-confirmed; 6 post-review findings (most severe: an IPv4-mapped IPv6 literal bypassing the SSRF denylist in both defense layers) fixed and re-verified before merge. 510/510 backend, 340/340 frontend. |
+| **2** | Frontend URL input | **Complete (2026-08-22)** — S2.1-S2.3 all RED-confirmed then GREEN-confirmed on `feature/epic3.2-sprint-2-frontend-url-input`. 510/510 backend (unaffected), 348/348 frontend. Not yet reviewed/merged. |
 
 ## Definition of Done (Epic 3.2)
 
 - A user can paste a job-posting URL into Ingest and get the same parsed-result experience as pasting
-  text today (same `TaskDraft`s, same Company extraction, same downstream flow).
+  text today (same `TaskDraft`s, same Company extraction, same downstream flow). **Met** — a "Job
+  posting URL" input + "Parse URL" button sit alongside the existing textarea, both converging on
+  the same `useIntakeFlow` stage machine and parsed-result summary card.
 - Every SSRF mitigation in "Decisions owned here" is implemented and has a passing negative test
-  proving it actually rejects the specific attack it exists to stop.
-- The existing paste-text `/parse` flow and its full test coverage are completely unaffected.
-- Full suite green via `.\test` (backend + frontend, with coverage) before `develop → main`.
+  proving it actually rejects the specific attack it exists to stop. **Met** — see Sprint 1's DoD.
+- The existing paste-text `/parse` flow and its full test coverage are completely unaffected. **Met**
+  — verified at every step across both sprints; zero pre-existing tests changed behavior.
+- Full suite green via `.\test` (backend + frontend, with coverage) before `develop → main`. **Met**
+  for both sprints individually (Sprint 1: 510/510 + 340/340 before merge; Sprint 2: 510/510 + 348/348
+  on its own branch). Epic-level close-out (both sprints merged to `develop`) still pending.
 
 ---
 

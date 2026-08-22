@@ -80,6 +80,11 @@ export function IngestDocument() {
   const jobPostingEditable = intake.stage === 'provide' || intake.stage === 'parsing'
   const baseResumeEditable = intake.stage !== 'starting' && intake.stage !== 'building'
 
+  // Epic 3.2 S2.2/S2.3: the URL is a sibling entry point into the same jobPostingEditable branch
+  // as the paste-text textarea below - component-local state, matching how genericText/
+  // genericSourceName are already handled locally in this same file for the generic-document flow.
+  const [jobPostingUrl, setJobPostingUrl] = useState('')
+
   // Generic document flow (Epic 2, kept verbatim behaviorally).
   const [genericText, setGenericText] = useState('')
   const [genericSourceName, setGenericSourceName] = useState('')
@@ -123,6 +128,29 @@ export function IngestDocument() {
       <section className="mt-4">
         {jobPostingEditable ? (
           <>
+            <label htmlFor="job-posting-url" className="block text-sm font-semibold mb-2">
+              Job posting URL
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                id="job-posting-url"
+                type="url"
+                value={jobPostingUrl}
+                onChange={(e) => setJobPostingUrl(e.target.value)}
+                disabled={intake.stage === 'parsing'}
+                placeholder="https://example.com/careers/job-posting"
+                className={`flex-1 p-2 rounded ${bgSurface} border border-white/10 text-white text-sm ${focusRingAccent}`}
+              />
+              <Button
+                variant="primary"
+                onClick={() => intake.parseUrl(jobPostingUrl)}
+                disabled={!jobPostingUrl || intake.stage !== 'provide'}
+              >
+                {intake.stage === 'parsing' ? 'Parsing…' : 'Parse URL'}
+              </Button>
+            </div>
+            <p className={`my-3 text-xs ${textNeutral500}`}>Or paste the text directly</p>
+
             <label htmlFor="job-posting" className="block text-sm font-semibold mb-2">
               Job posting
             </label>

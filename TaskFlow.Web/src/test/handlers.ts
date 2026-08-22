@@ -20,6 +20,10 @@ export const handlers = [
     HttpResponse.json([
       { title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' },
     ])),
+  http.post('*/api/JobApplications/parse-url', () =>
+    HttpResponse.json([
+      { title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' },
+    ])),
   http.post('*/api/JobApplications', () =>
     HttpResponse.json({
       id: 1, state: 'Building', ingestionSessionId: '', ownerId: 1, createdAt: '',
