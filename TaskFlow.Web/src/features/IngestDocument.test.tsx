@@ -258,6 +258,65 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
   })
 })
 
+describe('IngestDocument - URL input (Epic 3.2 S2.2/S2.3)', () => {
+  it('renders a labeled job-posting URL input alongside the existing textarea at the provide stage', () => {
+    renderIngestDocument()
+
+    expect(screen.getByLabelText(/job posting url/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^job posting$/i)).toBeInTheDocument()
+  })
+
+  it('parsing a URL shows the drafts and collapses the job-posting input to a summary', async () => {
+    renderIngestDocument()
+
+    await userEvent.type(screen.getByLabelText(/job posting url/i), 'https://example.com/job-posting')
+    await userEvent.click(screen.getByRole('button', { name: /^parse url$/i }))
+
+    expect(await screen.findByText(/job posting:\s*Backend Engineer/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/job posting url/i)).not.toBeInTheDocument()
+  })
+
+  it('shows an error banner when URL parsing fails', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse-url', () => new HttpResponse(null, { status: 500 })),
+    )
+
+    renderIngestDocument()
+
+    await userEvent.type(screen.getByLabelText(/job posting url/i), 'https://example.com/job-posting')
+    await userEvent.click(screen.getByRole('button', { name: /^parse url$/i }))
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    // Provide-stage controls are interactive again after the failure.
+    expect(screen.getByRole('button', { name: /^parse url$/i })).toBeEnabled()
+    expect(screen.getByLabelText(/job posting url/i)).toBeEnabled()
+  })
+
+  // PR #64 review finding: the textarea signals its async state to assistive technology via
+  // aria-busy (line 162); the URL input didn't. The response is delayed so the transient
+  // 'parsing' stage stays observable long enough to assert on, matching the pattern the existing
+  // 'starting stage' axe test already uses for the same reason.
+  it('the URL input has aria-busy while parsing, matching the textarea', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse-url', async () => {
+        await delay(50)
+        return HttpResponse.json([
+          { title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' },
+        ])
+      }),
+    )
+
+    renderIngestDocument()
+
+    await userEvent.type(screen.getByLabelText(/job posting url/i), 'https://example.com/job-posting')
+    await userEvent.click(screen.getByRole('button', { name: /^parse url$/i }))
+
+    expect(screen.getByLabelText(/job posting url/i)).toHaveAttribute('aria-busy', 'true')
+
+    await screen.findByText(/job posting:\s*Backend Engineer/i)
+  })
+})
+
 // U4.1 - 3-step indicator. 'provide'/'parsing' -> step 1, 'review'/'starting' -> step 2, 'building'
 // -> step 3. The 'building' mapping is exercised only via lib/intakeSteps.test.ts's pure-function
 // unit test, not end-to-end here: see the comment on the navigation test above for why 'building'

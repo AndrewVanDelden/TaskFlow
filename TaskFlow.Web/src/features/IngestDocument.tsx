@@ -35,7 +35,11 @@ const fileInputClasses =
   `${fileBgSurface} file:text-white file:text-xs rounded ${focusRingAccent}`
 
 // Sprint-4-closeout restyle: matches Login.tsx's own `inputClass` pattern for every text input.
-const textareaClasses = `w-full h-48 p-3 rounded ${bgSurface} border border-white/10 text-white text-sm ${focusRingAccent}`
+// PR #64 review finding: factored out from textareaClasses so the single-line URL input (below)
+// shares the same surface/border/text/focus-ring tokens instead of duplicating the literal - both
+// stay in sync if the Nocturne input styling ever changes.
+const inputSurfaceClasses = `rounded ${bgSurface} border border-white/10 text-white text-sm ${focusRingAccent}`
+const textareaClasses = `w-full h-48 p-3 ${inputSurfaceClasses}`
 
 // Sprint-4-closeout restyle: Login.tsx's exact error-banner shade, replacing the old mismatched
 // text-red-400/bg-red-950/border-red-900 (locked in the epic doc as a small consistency fix, not a
@@ -80,6 +84,11 @@ export function IngestDocument() {
   const jobPostingEditable = intake.stage === 'provide' || intake.stage === 'parsing'
   const baseResumeEditable = intake.stage !== 'starting' && intake.stage !== 'building'
 
+  // Epic 3.2 S2.2/S2.3: the URL is a sibling entry point into the same jobPostingEditable branch
+  // as the paste-text textarea below - component-local state, matching how genericText/
+  // genericSourceName are already handled locally in this same file for the generic-document flow.
+  const [jobPostingUrl, setJobPostingUrl] = useState('')
+
   // Generic document flow (Epic 2, kept verbatim behaviorally).
   const [genericText, setGenericText] = useState('')
   const [genericSourceName, setGenericSourceName] = useState('')
@@ -123,6 +132,30 @@ export function IngestDocument() {
       <section className="mt-4">
         {jobPostingEditable ? (
           <>
+            <label htmlFor="job-posting-url" className="block text-sm font-semibold mb-2">
+              Job posting URL
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                id="job-posting-url"
+                type="url"
+                value={jobPostingUrl}
+                onChange={(e) => setJobPostingUrl(e.target.value)}
+                disabled={intake.stage === 'parsing'}
+                aria-busy={intake.stage === 'parsing'}
+                placeholder="https://example.com/careers/job-posting"
+                className={`flex-1 p-2 ${inputSurfaceClasses}`}
+              />
+              <Button
+                variant="primary"
+                onClick={() => intake.parseUrl(jobPostingUrl)}
+                disabled={!jobPostingUrl || intake.stage !== 'provide'}
+              >
+                {intake.stage === 'parsing' ? 'Parsing…' : 'Parse URL'}
+              </Button>
+            </div>
+            <p className={`my-3 text-xs ${textNeutral500}`}>Or paste the text directly</p>
+
             <label htmlFor="job-posting" className="block text-sm font-semibold mb-2">
               Job posting
             </label>
