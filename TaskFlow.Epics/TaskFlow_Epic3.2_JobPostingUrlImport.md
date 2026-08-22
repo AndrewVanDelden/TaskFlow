@@ -303,7 +303,92 @@ silent empty result. GREEN: the controller action, calling `_urlFetcher.FetchAsy
 
 ### Code review findings (fill in after this sprint's PR is reviewed)
 
-*(Not yet started — nothing to record.)*
+1. **`TaskFlow.Api/Ingestion/HtmlTextExtractor.cs:13`**
+   - **Why:** `RegexOptions.Compiled` is an outdated pattern (violating Pillar 2 / Syntax Recency).
+   - **Fix:** Use .NET 7+ source-generated regex `[GeneratedRegex(@"\s+")]` for better performance.
+   - **RED test:** Existing `HtmlTextExtractorTests` should remain green. (No new test needed, just syntax modernization).
+   - **Status:** Fixed (2026-08-20). `HtmlTextExtractor` is now `static partial class` with a
+     `[GeneratedRegex(@"\s+")]` partial method. All 7 existing tests green, unchanged behavior.
+
+2. **`TaskFlow.Api/Ingestion/JobPostingUrlFetcher.cs:48`**
+   - **Why:** `GetAsync` without `HttpCompletionOption.ResponseHeadersRead` buffers the entire response body in memory before returning, which completely defeats mitigation 8 (bounded stream read). A malicious server could return a massive response and OOM the server before `ReadBoundedAsync` ever checks `_maxResponseBytes`. (Correctness).
+   - **Fix:** Pass `HttpCompletionOption.ResponseHeadersRead` to `GetAsync` to stream it safely.
+   - **RED test:** Add a unit test that verifies `GetAsync` doesn't hang or buffer indefinitely, or rely on existing tests but ensure the flag is passed.
+   - **Status:** Fixed (2026-08-20). `GetAsync` now passes `HttpCompletionOption.ResponseHeadersRead`.
+     Honest caveat, recorded rather than glossed over: this specific real-network-buffering behavior
+     isn't observable through `FakeHttpMessageHandler` (a fake in-memory transport has no
+     distinction between the two completion options), so there is no dedicated automated regression
+     test for it — the fix is verified by code inspection and the existing suite staying green
+     (510/510), not by a test that would fail without it.
+
+**Independent manual review (2026-08-20) — PR #63.** Posted directly to the PR as inline comments
+— see
+[review #4985511963](https://github.com/AndrewVanDelden/TaskFlow/pull/63#pullrequestreview-4985511963)
+for the full text. Cross-checked against findings 1–2 above: independently traced and confirm
+finding 2 (`GetAsync` buffering) is accurate; finding 1 (`RegexOptions.Compiled`) is reasonable but
+overstated as "outdated" — not deprecated, just less optimal than a source-generated regex, low
+priority either way. Two further findings, one more severe than either above:
+
+3. **`TaskFlow.Api/Ingestion/UrlValidation.cs:61`** (CONFIRMED)
+   - **Why:** `IsDenylistedIpAddress` branches on `AddressFamily` before checking IPv4 ranges, so an
+     IPv4-mapped IPv6 literal (`http://[::ffff:169.254.169.254]/`) is never checked against
+     `DenylistedIpv4Ranges` at all — it parses as `AddressFamily.InterNetworkV6`, takes the IPv6
+     branch (`fe80::/10`, `fc00::/7`), and neither range contains it. This function backs **both**
+     defense layers — `UrlValidation.Validate` and `SsrfSafeConnectCallback.ConnectAsync` both call
+     it — so the bypass defeats the string-based check and the connect-time DNS-rebinding check
+     simultaneously. No remaining backstop for this vector.
+   - **Fix:** Unwrap via `if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();` at the top
+     of `IsDenylistedIpAddress`, before the family-based range check.
+   - **RED test:** A `UrlValidationTests` case asserting `http://[::ffff:169.254.169.254]` is
+     rejected (currently accepted), plus an equivalent case in `SsrfSafeConnectCallbackTests` for
+     the connect-time path.
+   - **Status:** Fixed (2026-08-20), exactly as suggested. Added `Ipv4_mapped_ipv6_cloud_metadata_address_is_rejected`
+     and `Ipv4_mapped_ipv6_private_rfc1918_address_is_rejected` to `UrlValidationTests.cs`, and
+     `Connect_is_rejected_when_resolved_address_is_an_ipv4_mapped_ipv6_cloud_metadata_address` to
+     `SsrfSafeConnectCallbackTests.cs` — all 3 confirmed RED (currently-accepted bypass) before the
+     `IsIPv4MappedToIPv6`/`MapToIPv4()` unwrap, GREEN after.
+4. **`TaskFlow.Api/Ingestion/SsrfSafeConnectCallback.cs:23`** (PLAUSIBLE)
+   - **Why:** DNS resolution failure (NXDOMAIN, transient error) throws from inside
+     `ConnectAsync`, and `JobPostingUrlFetcher.FetchAsync`'s `try/catch` only catches
+     `OperationCanceledException` — so this (and the `HttpRequestException` thrown a few lines
+     below when every resolved address is denylisted) propagates unhandled instead of becoming the
+     clean `Result<string>.Invalid(...)` every other rejection path in this fetcher returns.
+     Robustness/UX gap, not a security hole.
+   - **Fix:** Add a `catch (HttpRequestException)` alongside the existing timeout catch in
+     `JobPostingUrlFetcher.FetchAsync`.
+   - **RED test:** A `JobPostingUrlFetcherTests` case where the fake resolver throws, asserting the
+     fetcher returns `Result<string>.Invalid(...)` rather than letting the exception propagate.
+    - **Status:** Fixed (2026-08-20). Fixed in `JobPostingUrlFetcher.FetchAsync` (this file's own
+      throw was correct — the gap was the caller not catching it), via
+      `catch (HttpRequestException ex)` alongside the existing timeout catch. RED-first test:
+      `Underlying_transport_failure_is_returned_as_an_invalid_result_not_an_unhandled_exception`.
+
+**Antigravity (Claude Opus 4.6) review pass (2026-08-22) — PR #63.** Posted directly to the PR as
+inline comments — see
+[review #5001003140](https://github.com/AndrewVanDelden/TaskFlow/pull/63#pullrequestreview-5001003140).
+Cross-checked against findings 1–4 above: independently corroborates findings 1 and 2; findings 3
+and 4 (from the earlier unsigned session) are also verified as accurate. Two additional findings:
+
+5. **`TaskFlow.Api/DTOs/ParseUrlDto.cs:5`** (CONFIRMED)
+   - **Why:** Every other new concrete class in this PR (`DnsResolver`, `SsrfSafeConnectCallback`,
+     `JobPostingUrlFetcher`, `FakeHttpMessageHandler`, `FakeJobPostingUrlFetcher`) is `sealed`. This
+     DTO is the sole exception, breaking the PR's own convention and leaving the class open for
+     unintended inheritance.
+   - **Fix:** `public sealed class ParseUrlDto`.
+   - **RED test:** Existing tests should remain green — purely a modifier addition.
+   - **Status:** Fixed (2026-08-20).
+6. **`TaskFlow.Api/Ingestion/HtmlTextExtractor.cs:24`** (PLAUSIBLE)
+   - **Why:** `node.Remove()` is called while iterating the `HtmlNodeCollection` returned by
+     `SelectNodes`. This collection is backed by the live document tree; mutating it mid-iteration
+     risks skipping nodes or an `InvalidOperationException` depending on HtmlAgilityPack version.
+   - **Fix:** Copy to a list first: `foreach (HtmlNode node in boilerplateNodes.ToList())`.
+   - **RED test:** A test with nested boilerplate (e.g., `<nav>` inside `<header>`) that would expose
+     a skipped-node bug if the iteration is order-sensitive.
+   - **Status:** Fixed (2026-08-20) as a precaution — applied the suggested `.ToList()` directly. Not
+     confirmed as a reproducible bug: `HtmlAgilityPack.SelectNodes`'s result appears to be a snapshot
+     list, not a live view tied to the document tree, from reasoning through its behavior, so no RED
+     test could be made to actually fail first. Recorded as an inference, not a fact, per this
+     project's own standing rule — the fix costs nothing and removes the doubt either way.
 
 ### Post-sprint retrospective (fill in once this sprint ships)
 

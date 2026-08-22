@@ -54,6 +54,13 @@ public static class UrlValidation
     /// </summary>
     public static bool IsDenylistedIpAddress(IPAddress address)
     {
+        // PR #63 review finding: an IPv4-mapped IPv6 literal (RFC 4291, e.g. ::ffff:169.254.169.254)
+        // has AddressFamily.InterNetworkV6, so without this unwrap it took the IPv6-range branch
+        // below and was never checked against the IPv4 ranges (cloud metadata, RFC1918, etc.) at
+        // all - a complete denylist bypass under a different notation for the same address.
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+
         if (IPAddress.IsLoopback(address)) return true;
         if (address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any)) return true;
         if (address.IsIPv6Multicast) return true;

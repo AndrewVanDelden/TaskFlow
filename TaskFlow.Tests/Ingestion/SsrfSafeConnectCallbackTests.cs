@@ -55,4 +55,22 @@ public class SsrfSafeConnectCallbackTests
         await act.Should().ThrowAsync<HttpRequestException>();
         resolver.Verify(r => r.ResolveAsync(innocentLookingHostname, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // PR #63 review finding: both defense layers share UrlValidation.IsDenylistedIpAddress, so the
+    // IPv4-mapped IPv6 bypass affects this connect-time check exactly as it affects the pre-check -
+    // a resolver returning an IPv4-mapped cloud-metadata address must still be rejected here.
+    [Fact]
+    public async Task Connect_is_rejected_when_resolved_address_is_an_ipv4_mapped_ipv6_cloud_metadata_address()
+    {
+        const string innocentLookingHostname = "internal-payroll-app.example.com";
+        var resolver = new Mock<IDnsResolver>();
+        resolver.Setup(r => r.ResolveAsync(innocentLookingHostname, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([IPAddress.Parse("::ffff:169.254.169.254")]);
+        var callback = new SsrfSafeConnectCallback(resolver.Object);
+        DnsEndPoint endpoint = new(innocentLookingHostname, 443);
+
+        Func<Task> act = () => callback.ConnectAsync(endpoint, CancellationToken.None).AsTask();
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
 }

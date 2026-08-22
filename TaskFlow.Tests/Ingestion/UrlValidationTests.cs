@@ -208,4 +208,29 @@ public class UrlValidationTests
 
         result.IsSuccess.Should().BeFalse();
     }
+
+    // PR #63 review finding: an IPv4-mapped IPv6 literal (RFC 4291, e.g. ::ffff:169.254.169.254)
+    // parses as UriHostNameType.IPv6, so IsDenylistedIpAddress took the IPv6-range branch and
+    // never checked it against the IPv4 ranges (169.254.0.0/16, 10.0.0.0/8, etc.) at all -
+    // completely bypassing the cloud-metadata/private-range denylist under a different address
+    // notation for the exact same IP.
+    [Fact]
+    public void Ipv4_mapped_ipv6_cloud_metadata_address_is_rejected()
+    {
+        Uri uri = new("http://[::ffff:169.254.169.254]");
+
+        Result<Uri> result = UrlValidation.Validate(uri);
+
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Ipv4_mapped_ipv6_private_rfc1918_address_is_rejected()
+    {
+        Uri uri = new("http://[::ffff:10.0.0.5]");
+
+        Result<Uri> result = UrlValidation.Validate(uri);
+
+        result.IsSuccess.Should().BeFalse();
+    }
 }

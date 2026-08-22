@@ -45,7 +45,14 @@ public sealed class JobPostingUrlFetcher : IJobPostingUrlFetcher
 
             while (true)
             {
-                using HttpResponseMessage response = await _httpClient.GetAsync(currentUri, timeoutCts.Token);
+                // PR #63 review finding: the default HttpCompletionOption.ResponseContentRead
+                // buffers the entire response body in memory before GetAsync even returns, which
+                // defeats the size cap below - a malicious server could OOM the process before
+                // ReadBoundedAsync ever gets a chance to enforce _maxResponseBytes.
+                // ResponseHeadersRead returns as soon as headers arrive, so the body is streamed
+                // lazily and the bounded read actually gates what gets buffered.
+                using HttpResponseMessage response =
+                    await _httpClient.GetAsync(currentUri, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
 
                 if (!IsRedirectStatusCode(response.StatusCode))
                 {
@@ -77,6 +84,14 @@ public sealed class JobPostingUrlFetcher : IJobPostingUrlFetcher
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return Result<string>.Invalid($"Request timed out after {_timeout.TotalSeconds} seconds.");
+        }
+        // PR #63 review finding: DNS resolution failure, connection refused, or (in production)
+        // SsrfSafeConnectCallback rejecting a DNS-rebinding attempt at connect time all surface as
+        // HttpRequestException from GetAsync. Without this catch it propagated unhandled instead of
+        // becoming a Result<string>.Invalid like every other rejection path in this fetcher.
+        catch (HttpRequestException ex)
+        {
+            return Result<string>.Invalid($"Failed to fetch the URL: {ex.Message}");
         }
     }
 

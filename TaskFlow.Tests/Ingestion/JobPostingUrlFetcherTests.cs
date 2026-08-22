@@ -105,4 +105,21 @@ public class JobPostingUrlFetcherTests
 
         result.IsSuccess.Should().BeFalse();
     }
+
+    // PR #63 review finding: the underlying transport can fail for reasons other than our own
+    // timeout - DNS resolution failure, connection refused, or (in production) our own
+    // SsrfSafeConnectCallback rejecting a DNS-rebinding attempt at connect time. All of these
+    // surface as HttpRequestException from HttpClient.GetAsync. The only catch clause here was
+    // for OperationCanceledException, so this exception previously propagated unhandled out of
+    // FetchAsync instead of becoming a Result<string>.Invalid like every other rejection path.
+    [Fact]
+    public async Task Underlying_transport_failure_is_returned_as_an_invalid_result_not_an_unhandled_exception()
+    {
+        var handler = new FakeHttpMessageHandler(request => throw new HttpRequestException("simulated connection failure"));
+        var fetcher = new JobPostingUrlFetcher(new HttpClient(handler));
+
+        Result<string> result = await fetcher.FetchAsync(new Uri("https://example.com/job"));
+
+        result.IsSuccess.Should().BeFalse();
+    }
 }
