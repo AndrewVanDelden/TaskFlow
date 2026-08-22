@@ -165,10 +165,15 @@ public class ExportServiceTests
     }
 
     // ── State guard ──────────────────────────────────────────────────────────────
+    // ReviewReady is no longer refused (see the two ReviewReady-succeeds tests below): a user
+    // reviewing a pair needs to inspect the real PDF/Markdown output before deciding to approve or
+    // reject it, and the underlying render/compile pipeline has no dependency on approval state at
+    // all - it only ever reads TailoredContent, which already exists once a task reaches Review.
+    // Building is still refused: neither sibling has necessarily finished yet, so there may be
+    // nothing (or only one artifact) to export.
     [Theory]
-    [InlineData(ApplicationState.ReviewReady)]
     [InlineData(ApplicationState.Building)]
-    public async Task ExportResumeAsync_refuses_a_non_Approved_application_with_Validation(ApplicationState state)
+    public async Task ExportResumeAsync_refuses_a_non_ReviewReady_non_Approved_application_with_Validation(ApplicationState state)
     {
         _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Application(state));
@@ -180,9 +185,8 @@ public class ExportServiceTests
     }
 
     [Theory]
-    [InlineData(ApplicationState.ReviewReady)]
     [InlineData(ApplicationState.Building)]
-    public async Task ExportCoverLetterAsync_refuses_a_non_Approved_application_with_Validation(ApplicationState state)
+    public async Task ExportCoverLetterAsync_refuses_a_non_ReviewReady_non_Approved_application_with_Validation(ApplicationState state)
     {
         _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Application(state));
@@ -191,6 +195,34 @@ public class ExportServiceTests
 
         result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.GetByApplicationIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExportResumeAsync_succeeds_for_a_ReviewReady_application()
+    {
+        _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Application(ApplicationState.ReviewReady));
+        _tasks.Setup(t => t.GetByApplicationIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Siblings(resumeContent: "UniqueResumeMarkerXYZ123"));
+
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+
+        result.IsSuccess.Should().BeTrue();
+        Encoding.UTF8.GetString(result.Value!.Content).Should().Be("UniqueResumeMarkerXYZ123");
+    }
+
+    [Fact]
+    public async Task ExportCoverLetterAsync_succeeds_for_a_ReviewReady_application()
+    {
+        _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Application(ApplicationState.ReviewReady));
+        _tasks.Setup(t => t.GetByApplicationIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Siblings(coverLetterContent: "UniqueCoverLetterMarkerXYZ123"));
+
+        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+
+        result.IsSuccess.Should().BeTrue();
+        Encoding.UTF8.GetString(result.Value!.Content).Should().Be("UniqueCoverLetterMarkerXYZ123");
     }
 
     // ── Ownership guard: missing and wrong-owner are indistinguishable ─────────

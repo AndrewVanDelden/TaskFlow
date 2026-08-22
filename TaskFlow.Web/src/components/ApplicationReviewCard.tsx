@@ -3,6 +3,7 @@ import type { TaskItem } from '../types'
 import { useApplicationReview } from '../hooks/useApplicationReview'
 import { MarkdownPreview } from './MarkdownPreview'
 import { ReviewActions } from './ReviewActions'
+import { ExportDownloadControls } from './ExportDownloadControls'
 
 // A ReviewReady application's combined review block: the base resume, the tailored resume, and
 // the tailored cover letter, side by side with one Approve/Reject pair for the whole application.
@@ -50,11 +51,13 @@ export function ApplicationReviewCard({
       <section>
         <h4 className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Tailored resume</h4>
         <MarkdownPreview content={resumeTask.tailoredContent ?? ''} />
+        <ExportDownloadControls applicationId={applicationId} kind={resumeTask.kind} />
       </section>
 
       <section>
         <h4 className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Cover letter</h4>
         <MarkdownPreview content={coverLetterTask.tailoredContent ?? ''} />
+        <ExportDownloadControls applicationId={applicationId} kind={coverLetterTask.kind} />
       </section>
 
       {actionError && (

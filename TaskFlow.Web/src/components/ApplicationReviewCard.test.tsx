@@ -99,6 +99,21 @@ describe('ApplicationReviewCard', () => {
     await waitFor(() => expect(capturedBody).toEqual({ reason: 'Needs more detail' }))
   })
 
+  // User report (2026-08-22): a wall of raw markdown text isn't enough to judge real output -
+  // the user wants the actual PDF (or Markdown) file for each artifact, so they can open and read
+  // it exactly as it will really look, before deciding to approve or reject.
+  it('shows PDF/Markdown download controls for both the resume and cover letter', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),
+    )
+
+    render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
+    await screen.findByText('base')
+
+    expect(screen.getAllByRole('button', { name: /download pdf/i })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /download markdown/i })).toHaveLength(2)
+  })
+
   it('shows an error message and does not silently swallow a failed approve', async () => {
     server.use(
       http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),
