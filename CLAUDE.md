@@ -23,6 +23,16 @@
   that specific command/action in the moment.** This is not standing/autonomous permission;
   it does not cover Claude deciding on its own to run one. Absent that explicit in-the-moment
   ask, git/build/test commands still go to the user by default.
+  **Third exception (2026-08-20, standing): Claude creates the sprint/task branch itself,
+  on its own initiative, before starting new implementation work — `git checkout -b
+  feature/<epic>-<sprint>-<short-name>` off `develop` (matching this doc's own branch-naming
+  convention).** Reason: an entire Epic 3.2 Sprint 1 (6 tasks, 36 new tests) was built directly
+  on `develop`, uncommitted, because no branch was ever created first — exactly the
+  "don't work directly on dev" failure mode this exception exists to prevent. Unlike the
+  Second exception, this one does NOT require an in-the-moment ask each time — it is standing,
+  ongoing permission specifically for creating/switching to a new branch. It does not extend to
+  committing, pushing, merging, or any other git-state-changing command — those remain governed
+  by the Second exception (explicit in-the-moment ask) or go to the user by default.
 - **Root convenience commands:** `.\run` (run.cmd) starts the whole app — API + web with the browser
   opening on `:5173` — and `.\test` (test.cmd) runs the full test suite with coverage into
   `test-results.txt`. Both live at the repo root so no folder-changing is needed.
@@ -66,9 +76,11 @@
 - **Do not attempt `git` or `dotnet` from the AI sandbox on your own initiative.** It cannot
   write `.git` and has no `dotnet`; a failed attempt left a stale `.git/index.lock` the user
   had to remove by hand. Hand every git/build/test command to the user by default (see
-  Tooling boundary above) — **except `.\test`, which Claude may always run itself, and except
+  Tooling boundary above) — **except `.\test`, which Claude may always run itself; except
   any specific `git`/`dotnet` command the user explicitly asks Claude to run in the moment
-  (e.g. "commit this," "push it") — both are confirmed exceptions, see Tooling boundary.**
+  (e.g. "commit this," "push it"); and except creating/switching to a new sprint/task branch
+  off `develop`, which is standing permission Claude exercises on its own initiative before
+  starting new work — all three are confirmed exceptions, see Tooling boundary.**
 - **Do not invent scope, and never slip unspecified work into a "next step."** If something is
   missing and should be added, say so explicitly and record it in the active doc as a labeled
   decision before acting. (Violated: dropped "thread a source name into provenance" as if it were

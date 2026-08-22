@@ -10,6 +10,7 @@ using TaskFlow.Api.Common;
 using TaskFlow.Api.Data;
 using TaskFlow.Api.DTOs;
 using TaskFlow.Api.Export;
+using TaskFlow.Api.Ingestion;
 using TaskFlow.Api.Repositories;
 
 namespace TaskFlow.Tests.Integration;
@@ -49,6 +50,41 @@ public class JobApplicationsIntegrationTests
         parse.StatusCode.Should().Be(HttpStatusCode.OK);
         var drafts = await parse.Content.ReadFromJsonAsync<List<DraftDto>>();
         drafts.Should().NotBeNullOrEmpty();
+    }
+
+    // ── Epic 3.2 Sprint 1 (S1.6): POST /api/JobApplications/parse-url ──────────────────────────
+    // IJobPostingUrlFetcher is swapped for a fake at the test boundary (same pattern as
+    // WithFakeTypstCompiler below) so these tests never make a real HTTP/DNS/socket call - the
+    // fetcher's own SSRF mitigations are already covered by UrlValidationTests and
+    // JobPostingUrlFetcherTests. This endpoint does not exist yet, so both tests are expected to
+    // fail with a 404 until the controller action + DI wiring are added.
+
+    [Fact]
+    public async Task ParseUrl_returns_200_with_a_draft_for_a_url_that_resolves_to_a_heading_bearing_posting()
+    {
+        var fakeFactory = WithFakeJobPostingUrlFetcher(_factory,
+            Result<string>.Ok("# Backend Engineer\n## Acme Corp\nBuild things."));
+        var client = await AuthedClientAsync(fakeFactory);
+
+        var parse = await client.PostAsJsonAsync("/api/JobApplications/parse-url",
+            new { url = "https://example.com/job-posting" });
+
+        parse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var drafts = await parse.Content.ReadFromJsonAsync<List<DraftDto>>();
+        drafts.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ParseUrl_with_a_fetcher_rejection_returns_400_not_500()
+    {
+        var fakeFactory = WithFakeJobPostingUrlFetcher(_factory,
+            Result<string>.Invalid("URL rejected: scheme not allowed."));
+        var client = await AuthedClientAsync(fakeFactory);
+
+        var parse = await client.PostAsJsonAsync("/api/JobApplications/parse-url",
+            new { url = "https://example.com/job-posting" });
+
+        parse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -402,6 +438,14 @@ public class JobApplicationsIntegrationTests
             builder.ConfigureTestServices(services =>
                 services.AddScoped<ITypstCompiler, FakeTypstCompiler>()));
 
+    // Epic 3.2 Sprint 1 (S1.6): swaps the real IJobPostingUrlFetcher for a fake whose canned
+    // Result<string> drives the test outcome directly, matching WithFakeTypstCompiler's exact
+    // shape above.
+    private static WebApplicationFactory<Program> WithFakeJobPostingUrlFetcher(TestWebAppFactory factory, Result<string> fetchResult) =>
+        factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+                services.AddScoped<IJobPostingUrlFetcher>(_ => new FakeJobPostingUrlFetcher(fetchResult))));
+
     [Theory]
     [InlineData("resume", "resume.pdf")]
     [InlineData("cover-letter", "cover-letter.pdf")]
@@ -517,6 +561,16 @@ public class JobApplicationsIntegrationTests
     {
         public Task<Result<byte[]>> CompilePdfAsync(string typstSource, CancellationToken ct = default) =>
             Task.FromResult(Result<byte[]>.Ok(new byte[] { 0x25, 0x50, 0x44, 0x46, 0x2D }));
+    }
+
+    // Epic 3.2 Sprint 1 (S1.6): stands in for the real fetcher's entire HTTP/DNS/SSRF-validation
+    // chain, already fully unit-tested by UrlValidationTests and JobPostingUrlFetcherTests. This
+    // fake only proves the controller wires FetchAsync's Result into the right HTTP outcome.
+    private sealed class FakeJobPostingUrlFetcher : IJobPostingUrlFetcher
+    {
+        private readonly Result<string> _result;
+        public FakeJobPostingUrlFetcher(Result<string> result) => _result = result;
+        public Task<Result<string>> FetchAsync(Uri uri, CancellationToken cancellationToken = default) => Task.FromResult(_result);
     }
 
     // Local shapes: Kind as a plain string so the test's default deserializer does not choke.

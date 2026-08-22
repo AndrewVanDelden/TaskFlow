@@ -17,6 +17,7 @@ namespace TaskFlow.Tests.Controllers;
 public class JobApplicationsControllerTests
 {
     private readonly Mock<IJobPostingIngestionParser> _parser = new();
+    private readonly Mock<IJobPostingUrlFetcher> _urlFetcher = new();
     private readonly Mock<IResumeContextService> _resumeContext = new();
     private readonly Mock<IJobApplicationAssemblyService> _assembly = new();
     private readonly Mock<IJobApplicationService> _jobApplicationService = new();
@@ -24,7 +25,7 @@ public class JobApplicationsControllerTests
 
     private JobApplicationsController CreateSut(int? currentUserId = 1)
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object);
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object);
         if (currentUserId is not null)
         {
             controller.ControllerContext = new ControllerContext
@@ -174,7 +175,7 @@ public class JobApplicationsControllerTests
     [Fact]
     public async Task SaveResumeContext_returns_401_when_the_identity_claim_is_missing()
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -196,7 +197,7 @@ public class JobApplicationsControllerTests
     public async Task Assemble_returns_401_when_the_identity_claim_is_not_numeric()
     {
         var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "not-a-number") }, "TestAuth");
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -245,7 +246,7 @@ public class JobApplicationsControllerTests
     [Fact]
     public async Task GetResumeContext_returns_401_when_the_identity_claim_is_missing()
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -319,7 +320,7 @@ public class JobApplicationsControllerTests
     public async Task Approve_returns_401_when_the_identity_claim_is_not_numeric()
     {
         var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "not-a-number") }, "TestAuth");
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -392,7 +393,7 @@ public class JobApplicationsControllerTests
     [Fact]
     public async Task Reject_returns_401_when_the_identity_claim_is_missing()
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -490,7 +491,7 @@ public class JobApplicationsControllerTests
         _exportService.Setup(e => e.ExportResumeAsync(5, 1, ExportFormat.Pdf, cts.Token))
             .ReturnsAsync(Result<ExportedFile>.Ok(file));
 
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -507,7 +508,7 @@ public class JobApplicationsControllerTests
     [Fact]
     public async Task ExportResume_returns_401_when_the_identity_claim_is_missing()
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -584,7 +585,7 @@ public class JobApplicationsControllerTests
         _exportService.Setup(e => e.ExportCoverLetterAsync(5, 1, ExportFormat.Pdf, cts.Token))
             .ReturnsAsync(Result<ExportedFile>.Ok(file));
 
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -602,7 +603,7 @@ public class JobApplicationsControllerTests
     public async Task ExportCoverLetter_returns_401_when_the_identity_claim_is_not_numeric()
     {
         var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "not-a-number") }, "TestAuth");
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
