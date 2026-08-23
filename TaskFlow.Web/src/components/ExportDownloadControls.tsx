@@ -1,6 +1,6 @@
 import type { TaskKind } from '../types'
 import type { ExportFormat } from '../api/jobApplications'
-import { useExportDownload } from '../hooks/useExportDownload'
+import { useExportDownload, type DownloadMode } from '../hooks/useExportDownload'
 import { exportKindFor } from '../lib/taskKind'
 
 const FORMATS: { format: ExportFormat; label: string }[] = [
@@ -8,18 +8,26 @@ const FORMATS: { format: ExportFormat; label: string }[] = [
   { format: 'markdown', label: 'Markdown' },
 ]
 
-// A Done task's own generated-document downloads: PDF and Markdown buttons, each showing its own
-// loading state so one download doesn't block the other, plus a shared error if the last attempt
-// failed (role="alert", matching ApplicationReviewCard's error-display convention).
+// A task's generated-document controls: PDF and Markdown buttons, each showing its own loading
+// state so one action doesn't block the other, plus a shared error if the last attempt failed
+// (role="alert", matching ApplicationReviewCard's error-display convention). mode="download"
+// (default) saves the file to disk (Done/Approved tasks, the original use case); mode="preview"
+// opens it in a new tab instead (ApplicationReviewCard's Review-stage use case, user report
+// 2026-08-22) - button labels read "View"/"Opening…" rather than "Download"/"Downloading…" so they
+// stay honest about what actually happens.
 export function ExportDownloadControls({
   applicationId,
   kind,
+  mode = 'download',
 }: {
   applicationId: number
   kind: TaskKind
+  mode?: DownloadMode
 }) {
   const { downloading, error, download } = useExportDownload(applicationId)
   const exportKind = exportKindFor(kind)
+  const actionLabel = mode === 'preview' ? 'View' : 'Download'
+  const busyLabel = mode === 'preview' ? 'Opening…' : 'Downloading…'
 
   return (
     <div className="mt-2" onPointerDown={(e) => e.stopPropagation()}>
@@ -27,11 +35,11 @@ export function ExportDownloadControls({
         {FORMATS.map(({ format, label }) => (
           <button
             key={format}
-            onClick={() => download(exportKind, format)}
+            onClick={() => download(exportKind, format, mode)}
             disabled={downloading.has(`${exportKind}-${format}`)}
             className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold px-2 py-1 rounded"
           >
-            {downloading.has(`${exportKind}-${format}`) ? 'Downloading…' : `Download ${label}`}
+            {downloading.has(`${exportKind}-${format}`) ? busyLabel : `${actionLabel} ${label}`}
           </button>
         ))}
       </div>

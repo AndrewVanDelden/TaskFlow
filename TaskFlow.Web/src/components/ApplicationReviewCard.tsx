@@ -51,13 +51,13 @@ export function ApplicationReviewCard({
       <section>
         <h4 className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Tailored resume</h4>
         <MarkdownPreview content={resumeTask.tailoredContent ?? ''} />
-        <ExportDownloadControls applicationId={applicationId} kind={resumeTask.kind} />
+        <ExportDownloadControls applicationId={applicationId} kind={resumeTask.kind} mode="preview" />
       </section>
 
       <section>
         <h4 className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Cover letter</h4>
         <MarkdownPreview content={coverLetterTask.tailoredContent ?? ''} />
-        <ExportDownloadControls applicationId={applicationId} kind={coverLetterTask.kind} />
+        <ExportDownloadControls applicationId={applicationId} kind={coverLetterTask.kind} mode="preview" />
       </section>
 
       {actionError && (

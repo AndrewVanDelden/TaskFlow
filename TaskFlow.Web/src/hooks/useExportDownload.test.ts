@@ -131,4 +131,32 @@ describe('useExportDownload', () => {
     expect(result.current.error).not.toBeNull()
     expect(result.current.downloading.size).toBe(0)
   })
+
+  // User report (2026-08-22): the Review-stage controls should let the reviewer inspect the real
+  // file in a new tab, not silently save it to disk - a separate 'preview' mode, opt-in via the
+  // mode param, so the existing (default) download behavior used elsewhere (Done/Approved tasks)
+  // is completely unaffected.
+  it('opens the file in a new tab instead of downloading when mode is preview', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        new HttpResponse('resume bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })),
+    )
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+    const { result } = renderHook(() => useExportDownload(10))
+
+    await act(async () => {
+      await result.current.download('resume', 'pdf', 'preview')
+    })
+
+    expect(openSpy).toHaveBeenCalledWith('blob:mock-url', '_blank')
+    expect(clickSpy).not.toHaveBeenCalled()
+    expect(result.current.error).toBeNull()
+
+    clickSpy.mockRestore()
+    openSpy.mockRestore()
+  })
 })

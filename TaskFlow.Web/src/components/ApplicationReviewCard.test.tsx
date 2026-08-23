@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { ApplicationReviewCard } from './ApplicationReviewCard'
@@ -99,10 +99,12 @@ describe('ApplicationReviewCard', () => {
     await waitFor(() => expect(capturedBody).toEqual({ reason: 'Needs more detail' }))
   })
 
-  // User report (2026-08-22): a wall of raw markdown text isn't enough to judge real output -
-  // the user wants the actual PDF (or Markdown) file for each artifact, so they can open and read
-  // it exactly as it will really look, before deciding to approve or reject.
-  it('shows PDF/Markdown download controls for both the resume and cover letter', async () => {
+  // User report (2026-08-22): a wall of raw markdown text isn't enough to judge real output - the
+  // user wants to open the actual PDF (or Markdown) file for each artifact in a new tab, exactly
+  // as it will really look, before deciding to approve or reject. "View", not "Download": these
+  // controls use ExportDownloadControls' preview mode, which opens a new tab instead of saving a
+  // copy to disk.
+  it('shows PDF/Markdown preview controls for both the resume and cover letter', async () => {
     server.use(
       http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),
     )
@@ -110,8 +112,31 @@ describe('ApplicationReviewCard', () => {
     render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
     await screen.findByText('base')
 
-    expect(screen.getAllByRole('button', { name: /download pdf/i })).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: /download markdown/i })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /view pdf/i })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /view markdown/i })).toHaveLength(2)
+  })
+
+  it('opens the resume PDF in a new tab instead of downloading it', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        new HttpResponse('file bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })),
+    )
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
+    await screen.findByText('base')
+
+    await userEvent.click(screen.getAllByRole('button', { name: /view pdf/i })[0])
+
+    await waitFor(() => expect(openSpy).toHaveBeenCalled())
+    expect(clickSpy).not.toHaveBeenCalled()
+
+    openSpy.mockRestore()
+    clickSpy.mockRestore()
   })
 
   it('shows an error message and does not silently swallow a failed approve', async () => {
