@@ -6,6 +6,12 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    // A fresh id baked into the bundle every time the dev server (or a real build) starts, so
+    // lib/devAuthReset.ts can tell "the dev server just restarted" apart from "the page was
+    // refreshed during an ongoing session" - see that file for why.
+    __APP_BOOT_ID__: JSON.stringify(String(Date.now())),
+  },
   server: {
     port: 5173,
     // Single-origin dev: the browser talks only to :5173, and Vite forwards API calls and the SignalR
