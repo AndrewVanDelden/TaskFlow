@@ -11,7 +11,8 @@ namespace TaskFlow.Api.Export;
 /// markup), ITemplateProvider (template read + cache), and the resume/cover-letter .typ templates.
 /// Ownership and state guards mirror JobApplicationService.ApproveAsync's exact convention (Sprint
 /// 5 "Decisions owned here" in TaskFlow_Epic3_ResumeBuilder.md): missing and wrong-owner both
-/// collapse into NotFound; a non-Approved application is Invalid.
+/// collapse into NotFound; an application that is neither ReviewReady nor Approved is Invalid (PR
+/// #65: ReviewReady was added so a reviewer can preview the real output before approving).
 /// </summary>
 public class ExportService : IExportService
 {

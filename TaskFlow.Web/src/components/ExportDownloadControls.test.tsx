@@ -103,12 +103,15 @@ describe('ExportDownloadControls', () => {
         })),
     )
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    // A realistic (unblocked) window, not null - null now means "blocked", which is its own
+    // dedicated case in useExportDownload.test.ts, not what this test is proving.
+    const fakeWindow = { location: { href: '' }, close: vi.fn() } as unknown as Window
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeWindow)
 
     render(<ExportDownloadControls applicationId={10} kind="ResumeTailoring" mode="preview" />)
     await userEvent.click(screen.getByRole('button', { name: /view pdf/i }))
 
-    await waitFor(() => expect(openSpy).toHaveBeenCalled())
+    await waitFor(() => expect(fakeWindow.location.href).toBe('blob:mock-url'))
     expect(clickSpy).not.toHaveBeenCalled()
 
     clickSpy.mockRestore()

@@ -124,7 +124,13 @@ describe('ApplicationReviewCard', () => {
           headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
         })),
     )
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    // A realistic (unblocked) window, not null - null means "blocked", a separate case covered in
+    // useExportDownload.test.ts, not what this test is proving. jsdom implements createObjectURL
+    // for real (unlike the other export-related test files, which stub it), so it's stubbed here
+    // too for a predictable, assertable URL value.
+    const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url')
+    const fakeWindow = { location: { href: '' }, close: vi.fn() } as unknown as Window
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeWindow)
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
     render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
@@ -132,11 +138,12 @@ describe('ApplicationReviewCard', () => {
 
     await userEvent.click(screen.getAllByRole('button', { name: /view pdf/i })[0])
 
-    await waitFor(() => expect(openSpy).toHaveBeenCalled())
+    await waitFor(() => expect(fakeWindow.location.href).toBe('blob:mock-url'))
     expect(clickSpy).not.toHaveBeenCalled()
 
     openSpy.mockRestore()
     clickSpy.mockRestore()
+    createObjectURLSpy.mockRestore()
   })
 
   it('shows an error message and does not silently swallow a failed approve', async () => {
