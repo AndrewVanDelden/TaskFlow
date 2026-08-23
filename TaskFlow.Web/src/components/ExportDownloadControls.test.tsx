@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { ExportDownloadControls } from './ExportDownloadControls'
@@ -9,6 +9,13 @@ beforeEach(() => {
   URL.createObjectURL = vi.fn(() => 'blob:mock-url') as unknown as typeof URL.createObjectURL
   URL.revokeObjectURL = vi.fn()
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+})
+
+// Without this, HTMLAnchorElement.prototype.click's spy above is never torn down between tests, so
+// its call count silently accumulates across every test in this file - found via the new preview
+// test below, the first one to assert the negative case (.not.toHaveBeenCalled()).
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('ExportDownloadControls', () => {
@@ -83,5 +90,31 @@ describe('ExportDownloadControls', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).not.toHaveTextContent('')
+  })
+
+  // User report (2026-08-22): Review-stage controls open the file in a new tab (mode="preview"),
+  // not a disk download - button labels reflect that ("View", not "Download") and no anchor-click
+  // download is triggered.
+  it('shows "View" labels and opens a new tab instead of downloading when mode is preview', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        new HttpResponse('file bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })),
+    )
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    // A realistic (unblocked) window, not null - null now means "blocked", which is its own
+    // dedicated case in useExportDownload.test.ts, not what this test is proving.
+    const fakeWindow = { location: { href: '' }, close: vi.fn() } as unknown as Window
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeWindow)
+
+    render(<ExportDownloadControls applicationId={10} kind="ResumeTailoring" mode="preview" />)
+    await userEvent.click(screen.getByRole('button', { name: /view pdf/i }))
+
+    await waitFor(() => expect(fakeWindow.location.href).toBe('blob:mock-url'))
+    expect(clickSpy).not.toHaveBeenCalled()
+
+    clickSpy.mockRestore()
+    openSpy.mockRestore()
   })
 })

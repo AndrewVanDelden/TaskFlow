@@ -497,16 +497,21 @@ public class JobApplicationsIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // User report (2026-08-22): a reviewer needs the real file output to judge it before deciding
+    // to approve or reject - export is now allowed for ReviewReady, not just Approved (see
+    // ExportServiceTests for the unit-level coverage of the state guard itself; this proves it end
+    // to end through real routing/auth, matching this file's own convention for the sibling
+    // ReviewReady/Approved export tests below).
     [Theory]
     [InlineData("resume")]
     [InlineData("cover-letter")]
-    public async Task Export_returns_400_for_a_ReviewReady_application(string route)
+    public async Task Export_returns_200_for_a_ReviewReady_application(string route)
     {
         var (client, applicationId) = await ReviewReadyApplicationAsync(_factory);
 
         var response = await client.GetAsync($"/api/JobApplications/{applicationId}/export/{route}?format=markdown");
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Theory]

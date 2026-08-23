@@ -11,7 +11,8 @@ namespace TaskFlow.Api.Export;
 /// markup), ITemplateProvider (template read + cache), and the resume/cover-letter .typ templates.
 /// Ownership and state guards mirror JobApplicationService.ApproveAsync's exact convention (Sprint
 /// 5 "Decisions owned here" in TaskFlow_Epic3_ResumeBuilder.md): missing and wrong-owner both
-/// collapse into NotFound; a non-Approved application is Invalid.
+/// collapse into NotFound; an application that is neither ReviewReady nor Approved is Invalid (PR
+/// #65: ReviewReady was added so a reviewer can preview the real output before approving).
 /// </summary>
 public class ExportService : IExportService
 {
@@ -56,9 +57,14 @@ public class ExportService : IExportService
 
         // The caller is a confirmed owner at this point, so a specific "wrong state" message is
         // fine - nothing to hide from a genuine owner, matching ApproveAsync's own convention.
-        if (application.State != ApplicationState.Approved)
+        // User report (2026-08-22): a reviewer needs the real PDF/Markdown output to judge it
+        // before deciding to approve or reject - ReviewReady is allowed here too, not just
+        // Approved, since the render/compile pipeline below only ever reads TailoredContent, which
+        // already exists once a task reaches Review. Building is still refused: neither sibling has
+        // necessarily finished yet.
+        if (application.State != ApplicationState.Approved && application.State != ApplicationState.ReviewReady)
             return Result<ExportedFile>.Invalid(
-                $"JobApplication {applicationId} is {application.State}; only Approved applications can be exported.");
+                $"JobApplication {applicationId} is {application.State}; only ReviewReady or Approved applications can be exported.");
 
         var siblings = await _tasks.GetByApplicationIdAsync(applicationId, ct);
         var task = siblings.FirstOrDefault(t => t.Kind == kind);

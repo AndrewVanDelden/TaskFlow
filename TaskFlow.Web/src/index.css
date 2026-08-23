@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* Epic 3.1 Sprint 4 (U4.4): TailorButton's busy-state animation. Not built into Tailwind, so these
    are plain @keyframes referenced via Tailwind v4 arbitrary-value utilities
