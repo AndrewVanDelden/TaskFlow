@@ -6,6 +6,7 @@ import {
   getApplicationResumeContext,
   getMostRecentResumeContext,
   parseJobPosting,
+  parseJobPostingUrl,
   assembleApplication,
   approveApplication,
   rejectApplication,
@@ -103,6 +104,33 @@ describe('parseJobPosting', () => {
     )
 
     await expect(parseJobPosting('bad text')).rejects.toThrow()
+  })
+})
+
+describe('parseJobPostingUrl', () => {
+  // Same request-body-capture convention as parseJobPosting above (PR #49 Copilot review
+  // finding): assert on the real posted body, not just the mocked response.
+  it('posts the url and returns the parsed drafts', async () => {
+    let capturedBody: unknown = null
+    server.use(
+      http.post('*/api/JobApplications/parse-url', async ({ request }) => {
+        capturedBody = await request.json()
+        return HttpResponse.json([{ title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' }])
+      }),
+    )
+
+    const result = await parseJobPostingUrl('https://example.com/job-posting')
+
+    expect(capturedBody).toEqual({ url: 'https://example.com/job-posting' })
+    expect(result).toEqual([{ title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' }])
+  })
+
+  it('rejects when the server refuses to parse', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse-url', () => new HttpResponse(null, { status: 500 })),
+    )
+
+    await expect(parseJobPostingUrl('https://example.com/job-posting')).rejects.toThrow()
   })
 })
 

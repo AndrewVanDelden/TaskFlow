@@ -30,6 +30,15 @@ export function parseJobPosting(content: string): Promise<TaskDraft[]> {
   })
 }
 
+// Parses a job posting fetched server-side from a URL (Epic 3.2) into the same TaskDraft[] shape
+// parseJobPosting produces for pasted text.
+export function parseJobPostingUrl(url: string): Promise<TaskDraft[]> {
+  return request<TaskDraft[]>('/api/JobApplications/parse-url', {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  })
+}
+
 // Assembles the parsed posting into a JobApplication with two Todo sibling tasks (resume + cover letter).
 export function assembleApplication(
   ingestionSessionId: string,
