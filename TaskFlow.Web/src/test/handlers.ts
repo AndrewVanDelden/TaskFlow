@@ -63,6 +63,7 @@ export const handlers = [
       dueDate: null, createdAt: '', updatedAt: '', assignedToId: null, assignedToName: null,
       kind: 'Generic', applicationId: null, tailoredContent: null,
     })),
+  http.post('*/api/Files/extract-pdf-text', () => HttpResponse.json('Extracted PDF text')),
   http.post('*/api/Tasks/:id/reject', () =>
     HttpResponse.json({
       id: 1, title: 'Rework', description: null, status: 'Todo', priority: 'High',

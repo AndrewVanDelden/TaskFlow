@@ -192,6 +192,36 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     expect(await screen.findByDisplayValue('My uploaded resume content')).toBeInTheDocument()
   })
 
+  // User report (2026-08-22, second half): a PDF upload set the textarea to garbled raw binary
+  // bytes (a plain UTF-8 decode of PDF bytes via File.text()) instead of readable text. PDFs are
+  // now routed through POST /api/Files/extract-pdf-text (PdfPig, server-side) instead.
+  it('uploads a PDF file and sets the extracted text as the base resume text', async () => {
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () => HttpResponse.json('Real extracted resume text')),
+    )
+    renderIngestDocument()
+
+    const file = new File(['%PDF-1.4 fake bytes'], 'resume.pdf', { type: 'application/pdf' })
+
+    await userEvent.upload(screen.getByLabelText(/or upload a resume file/i), file)
+
+    expect(await screen.findByDisplayValue('Real extracted resume text')).toBeInTheDocument()
+  })
+
+  it('shows an error banner when PDF extraction fails', async () => {
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () =>
+        HttpResponse.json({ message: 'The uploaded file is not a valid PDF.' }, { status: 400 })),
+    )
+    renderIngestDocument()
+
+    const file = new File(['not really a pdf'], 'resume.pdf', { type: 'application/pdf' })
+
+    await userEvent.upload(screen.getByLabelText(/or upload a resume file/i), file)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The uploaded file is not a valid PDF.')
+  })
+
   // Epic 3.1 Sprint 4 (U4.4, engineer A's slice): startTailoring() now navigates to /board on
   // success (a real, intentional behavior change locked in the epic doc). Renamed and re-targeted
   // from its pre-Sprint-4 wording/assertion ("...moves to the building stage" / asserted on
