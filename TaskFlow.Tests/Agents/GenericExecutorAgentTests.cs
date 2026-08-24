@@ -256,4 +256,27 @@ public class GenericExecutorAgentTests
         prompt.Should().NotBeNull();
         prompt!.Should().Contain("The haiku must mention frost."); // the rejection is folded into the prompt
     }
+
+    // User report (2026-08-24): pressing "Enable" should run a cycle immediately instead of waiting
+    // out however much of the interval remains. AgentRunner races Interval against
+    // WaitForWakeSignalAsync, so this agent must delegate that to the switch itself - the thing that
+    // actually knows when a human just re-enabled it.
+    [Fact]
+    public async Task WaitForWakeSignalAsync_delegates_to_the_executor_switch()
+    {
+        var sw = new Mock<IExecutorSwitch>();
+        sw.SetupGet(s => s.IsEnabled).Returns(true);
+        var switchWake = new TaskCompletionSource();
+        sw.Setup(s => s.WaitForWakeAsync(It.IsAny<CancellationToken>())).Returns(switchWake.Task);
+
+        var sut = CreateSut(Mock.Of<IClaudeClient>(), Mock.Of<ITaskRepository>(), Mock.Of<IAgentLogRepository>(), Mock.Of<IAgentNotifier>(), sw: sw.Object);
+
+        var wait = sut.WaitForWakeSignalAsync(CancellationToken.None);
+        wait.IsCompleted.Should().BeFalse();
+
+        switchWake.SetResult();
+
+        await wait.WaitAsync(TimeSpan.FromSeconds(1));
+        wait.IsCompletedSuccessfully.Should().BeTrue();
+    }
 }

@@ -48,6 +48,12 @@ public class GenericExecutorAgent : ClaudeAgentBase
     public override TimeSpan Interval =>
         TimeSpan.FromMinutes(Config.GetValue("Agents:ExecutorIntervalMinutes", 15));
 
+    // User report (2026-08-24): pressing "Enable" (or toggling off then on) should run a cycle right
+    // away, not wait out however much of the interval remains. Delegates to the switch itself, which
+    // is the thing that actually knows when a human just re-enabled it.
+    public override Task WaitForWakeSignalAsync(CancellationToken cancellationToken) =>
+        _switch.WaitForWakeAsync(cancellationToken);
+
     public override async Task RunAsync(CancellationToken cancellationToken)
     {
         // ── GUARDS (run before claiming; each is a separate policy) ─────────────────

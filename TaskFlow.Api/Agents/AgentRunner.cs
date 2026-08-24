@@ -73,8 +73,34 @@ public class AgentRunner : BackgroundService
                 _logger.LogError(ex, "Agent [{Name}] encountered an error. Will retry after interval.", agent.Name);
             }
 
-            // Wait for the agent's configured interval before next run
-            await Task.Delay(agent.Interval, stoppingToken);
+            // Wait for the agent's configured interval before next run - or wake immediately if the
+            // agent signals it should (GenericExecutorAgent does when a human re-enables it), so
+            // that does not sit out however much of the interval remains.
+            await WaitForNextCycleAsync(agent, stoppingToken);
         }
+    }
+
+    // Extracted for direct unit testing (AgentRunnerTests): a BackgroundService's real ExecuteAsync
+    // loop runs on wall-clock time indefinitely, which is not something to drive from a fast,
+    // deterministic test. internal + InternalsVisibleTo (TaskFlow.Tests) lets the interval-vs-wake
+    // race itself be tested with a controllable fake ITaskFlowAgent instead.
+    //
+    // PR #70 review finding (Antigravity/Gemini, independently confirmed by a second manual review):
+    // Task.WhenAny does not cancel its loser. Without the linked CancellationTokenSource below, when
+    // the interval wins (the ordinary case), the wake side's wait (e.g. a SemaphoreSlim.WaitAsync in
+    // ExecutorSwitch) stayed registered forever - every such cycle left one more abandoned waiter
+    // ahead of the next live one, so a later Enable() could end up waking a stale, already-discarded
+    // call instead of the current cycle. Cancelling cts once either side finishes tears down the
+    // loser (removes it from the semaphore's wait queue, or its Task.Delay timer/registration),
+    // so nothing is ever left dangling for a later signal to accidentally satisfy.
+    internal static async Task WaitForNextCycleAsync(ITaskFlowAgent agent, CancellationToken stoppingToken)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+
+        var delayTask = Task.Delay(agent.Interval, cts.Token);
+        var wakeTask = agent.WaitForWakeSignalAsync(cts.Token);
+
+        await Task.WhenAny(delayTask, wakeTask);
+        cts.Cancel();
     }
 }
