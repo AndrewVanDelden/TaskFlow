@@ -76,7 +76,7 @@ describe('KanbanBoard integration', () => {
 
     render(<KanbanBoard />)
 
-    expect(await screen.findByText('Application review')).toBeInTheDocument()
+    expect(await screen.findByText(/^Application review —/)).toBeInTheDocument()
     // The paired tasks must not ALSO render as individual TaskCards.
     expect(screen.queryByText('Tailor resume')).toBeNull()
     expect(screen.queryByText('Tailor cover letter')).toBeNull()

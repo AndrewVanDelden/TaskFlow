@@ -23,6 +23,7 @@ public class ExportServiceTests
     private const int ApplicationId = 5;
     private const int ResumeTaskId = 10;
     private const int CoverLetterTaskId = 11;
+    private const string CallerName = "Andrew Van Delden";
 
     private readonly Mock<IJobApplicationRepository> _applications = new();
     private readonly Mock<ITaskRepository> _tasks = new();
@@ -35,12 +36,13 @@ public class ExportServiceTests
     private ExportService CreateSut(ITemplateProvider? templates = null) =>
         new(_applications.Object, _tasks.Object, _compiler.Object, _renderer, templates ?? new FileTemplateProvider());
 
-    private static JobApplication Application(ApplicationState state, int ownerId = OwnerId) => new()
+    private static JobApplication Application(ApplicationState state, int ownerId = OwnerId, string? company = null) => new()
     {
         Id = ApplicationId,
         OwnerId = ownerId,
         State = state,
-        IngestionSessionId = "session-A"
+        IngestionSessionId = "session-A",
+        Company = company
     };
 
     private static List<TaskItem> Siblings(string resumeContent = "Resume body.", string coverLetterContent = "Cover letter body.") => new()
@@ -49,10 +51,10 @@ public class ExportServiceTests
         new TaskItem { Id = CoverLetterTaskId, Title = "Tailor cover letter", Kind = TaskKind.CoverLetterTailoring, ApplicationId = ApplicationId, Status = WorkflowStatus.Done, TailoredContent = coverLetterContent }
     };
 
-    private void SetUpApprovedApplication(string resumeContent = "Resume body.", string coverLetterContent = "Cover letter body.")
+    private void SetUpApprovedApplication(string resumeContent = "Resume body.", string coverLetterContent = "Cover letter body.", string? company = null)
     {
         _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Application(ApplicationState.Approved));
+            .ReturnsAsync(Application(ApplicationState.Approved, company: company));
         _tasks.Setup(t => t.GetByApplicationIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Siblings(resumeContent, coverLetterContent));
     }
@@ -63,11 +65,11 @@ public class ExportServiceTests
     {
         SetUpApprovedApplication(resumeContent: "UniqueResumeMarkerXYZ123");
 
-        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.ContentType.Should().Be("text/markdown; charset=utf-8");
-        result.Value.FileName.Should().Be("resume.md");
+        result.Value.FileName.Should().Be("Andrew_Van_Delden_Resume.md");
         Encoding.UTF8.GetString(result.Value.Content).Should().Be("UniqueResumeMarkerXYZ123");
         _compiler.Verify(c => c.CompilePdfAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -77,13 +79,48 @@ public class ExportServiceTests
     {
         SetUpApprovedApplication(coverLetterContent: "UniqueCoverLetterMarkerXYZ123");
 
-        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.ContentType.Should().Be("text/markdown; charset=utf-8");
-        result.Value.FileName.Should().Be("cover-letter.md");
+        result.Value.FileName.Should().Be("Andrew_Van_Delden_Cover_Letter.md");
         Encoding.UTF8.GetString(result.Value.Content).Should().Be("UniqueCoverLetterMarkerXYZ123");
         _compiler.Verify(c => c.CompilePdfAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── File name: caller name + company (user report, 2026-08-24) ─────────────
+    // A downloaded file named after a static literal (previously "resume.pdf"/"cover-letter.pdf")
+    // gives no clue which application it belongs to once several are sitting in a Downloads folder.
+    [Fact]
+    public async Task ExportResumeAsync_includes_the_company_in_the_file_name_when_the_application_has_one()
+    {
+        SetUpApprovedApplication(company: "Acme Corp");
+
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
+
+        result.Value!.FileName.Should().Be("Andrew_Van_Delden_Resume_Acme_Corp.md");
+    }
+
+    [Fact]
+    public async Task ExportCoverLetterAsync_includes_the_company_in_the_file_name_when_the_application_has_one()
+    {
+        SetUpApprovedApplication(company: "Acme Corp");
+
+        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
+
+        result.Value!.FileName.Should().Be("Andrew_Van_Delden_Cover_Letter_Acme_Corp.md");
+    }
+
+    // A caller name or a company scraped from a job posting is untrusted free text - characters the
+    // filesystem/Content-Disposition header can't carry must not reach the file name unescaped.
+    [Fact]
+    public async Task ExportResumeAsync_strips_characters_that_are_invalid_in_a_file_name()
+    {
+        SetUpApprovedApplication(company: "Acme/Corp: R&D?");
+
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, "Andrew \"Van\" Delden", ExportFormat.Markdown);
+
+        result.Value!.FileName.Should().Be("Andrew_Van_Delden_Resume_AcmeCorp_R&D.md");
     }
 
     // ── Pdf: template + rendered content composed, compiler invoked ────────────
@@ -97,11 +134,11 @@ public class ExportServiceTests
             .Callback<string, CancellationToken>((source, _) => capturedSource = source)
             .ReturnsAsync(Result<byte[]>.Ok(pdfBytes));
 
-        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Pdf);
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Pdf);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.ContentType.Should().Be("application/pdf");
-        result.Value.FileName.Should().Be("resume.pdf");
+        result.Value.FileName.Should().Be("Andrew_Van_Delden_Resume.pdf");
         result.Value.Content.Should().BeEquivalentTo(pdfBytes);
         capturedSource.Should().Contain("#let document");
         capturedSource.Should().Contain("UniqueResumeMarkerXYZ123");
@@ -117,11 +154,11 @@ public class ExportServiceTests
             .Callback<string, CancellationToken>((source, _) => capturedSource = source)
             .ReturnsAsync(Result<byte[]>.Ok(pdfBytes));
 
-        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, ExportFormat.Pdf);
+        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Pdf);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.ContentType.Should().Be("application/pdf");
-        result.Value.FileName.Should().Be("cover-letter.pdf");
+        result.Value.FileName.Should().Be("Andrew_Van_Delden_Cover_Letter.pdf");
         result.Value.Content.Should().BeEquivalentTo(pdfBytes);
         capturedSource.Should().Contain("#let document");
         capturedSource.Should().Contain("UniqueCoverLetterMarkerXYZ123");
@@ -135,7 +172,7 @@ public class ExportServiceTests
         _compiler.Setup(c => c.CompilePdfAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Result<byte[]>.InternalError("PDF compilation failed."));
 
-        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Pdf);
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Pdf);
 
         result.IsSuccess.Should().BeFalse();
         result.Status.Should().Be(ResultStatus.Error);
@@ -156,7 +193,7 @@ public class ExportServiceTests
         templates.Setup(t => t.GetTemplateText("resume.typ"))
             .Returns(Result<string>.InternalError("Failed to load export template 'resume.typ'."));
 
-        var result = await CreateSut(templates.Object).ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Pdf);
+        var result = await CreateSut(templates.Object).ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Pdf);
 
         result.IsSuccess.Should().BeFalse();
         result.Status.Should().Be(ResultStatus.Error);
@@ -178,7 +215,7 @@ public class ExportServiceTests
         _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Application(state));
 
-        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.GetByApplicationIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -191,7 +228,7 @@ public class ExportServiceTests
         _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Application(state));
 
-        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         result.Status.Should().Be(ResultStatus.Validation);
         _tasks.Verify(t => t.GetByApplicationIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -205,7 +242,7 @@ public class ExportServiceTests
         _tasks.Setup(t => t.GetByApplicationIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Siblings(resumeContent: "UniqueResumeMarkerXYZ123"));
 
-        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         result.IsSuccess.Should().BeTrue();
         Encoding.UTF8.GetString(result.Value!.Content).Should().Be("UniqueResumeMarkerXYZ123");
@@ -219,7 +256,7 @@ public class ExportServiceTests
         _tasks.Setup(t => t.GetByApplicationIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Siblings(coverLetterContent: "UniqueCoverLetterMarkerXYZ123"));
 
-        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var result = await CreateSut().ExportCoverLetterAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         result.IsSuccess.Should().BeTrue();
         Encoding.UTF8.GetString(result.Value!.Content).Should().Be("UniqueCoverLetterMarkerXYZ123");
@@ -231,7 +268,7 @@ public class ExportServiceTests
     {
         _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>())).ReturnsAsync((JobApplication?)null);
 
-        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         result.Status.Should().Be(ResultStatus.NotFound);
     }
@@ -240,11 +277,11 @@ public class ExportServiceTests
     public async Task ExportResumeAsync_missing_and_wrong_owner_produce_the_identical_NotFound_message()
     {
         _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>())).ReturnsAsync((JobApplication?)null);
-        var missingResult = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var missingResult = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         _applications.Setup(a => a.GetByIdAsync(ApplicationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Application(ApplicationState.Approved, ownerId: 999));
-        var wrongOwnerResult = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, ExportFormat.Markdown);
+        var wrongOwnerResult = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
 
         missingResult.Status.Should().Be(ResultStatus.NotFound);
         wrongOwnerResult.Status.Should().Be(ResultStatus.NotFound);

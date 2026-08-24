@@ -7,6 +7,7 @@ import {
   reviewReadyPairs,
   groupSiblingCards,
   canDownloadExport,
+  displayTitle,
 } from './board'
 
 const task = (id: number, status: TaskStatus): TaskItem => ({
@@ -301,5 +302,21 @@ describe('canDownloadExport', () => {
     doneNotApproved.applicationState = 'ReviewReady'
 
     expect(canDownloadExport(doneNotApproved)).toBe(false)
+  })
+})
+
+// User report (2026-08-24): a bare job-posting title on the board gives no indication which
+// company an application is for once several are in flight at once.
+describe('displayTitle', () => {
+  it('appends the company when the task has one', () => {
+    const withCompany: TaskItem = { ...task(1, 'Todo'), title: 'Senior Software Engineer', company: 'Acme Corp' }
+
+    expect(displayTitle(withCompany)).toBe('Senior Software Engineer — Acme Corp')
+  })
+
+  it('falls back to the bare title when there is no company', () => {
+    const noCompany: TaskItem = { ...task(1, 'Todo'), title: 'Senior Software Engineer', company: null }
+
+    expect(displayTitle(noCompany)).toBe('Senior Software Engineer')
   })
 })

@@ -447,8 +447,8 @@ public class JobApplicationsIntegrationTests
                 services.AddScoped<IJobPostingUrlFetcher>(_ => new FakeJobPostingUrlFetcher(fetchResult))));
 
     [Theory]
-    [InlineData("resume", "resume.pdf")]
-    [InlineData("cover-letter", "cover-letter.pdf")]
+    [InlineData("resume", "Resume.pdf")]
+    [InlineData("cover-letter", "Cover_Letter.pdf")]
     public async Task Export_pdf_returns_200_with_correct_headers_for_an_owned_Approved_application(string route, string expectedFileName)
     {
         var fakeFactory = WithFakeTypstCompiler(_factory);
@@ -466,8 +466,8 @@ public class JobApplicationsIntegrationTests
     }
 
     [Theory]
-    [InlineData("resume", "resume.md")]
-    [InlineData("cover-letter", "cover-letter.md")]
+    [InlineData("resume", "Resume.md")]
+    [InlineData("cover-letter", "Cover_Letter.md")]
     public async Task Export_markdown_returns_200_with_correct_headers_for_an_owned_Approved_application(string route, string expectedFileName)
     {
         var (client, applicationId) = await ApprovedApplicationAsync(_factory,
