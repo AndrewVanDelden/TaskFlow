@@ -180,6 +180,18 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     expect(screen.getByLabelText(/base resume/i)).toHaveValue('Reusable resume text')
   })
 
+  // User report (2026-08-22): the base resume could only be pasted, unlike the job-posting and
+  // generic-document inputs, which both already support an upload alongside the textarea.
+  it('uploads a file and sets it as the base resume text', async () => {
+    renderIngestDocument()
+
+    const file = new File(['My uploaded resume content'], 'resume.txt', { type: 'text/plain' })
+
+    await userEvent.upload(screen.getByLabelText(/or upload a resume file/i), file)
+
+    expect(await screen.findByDisplayValue('My uploaded resume content')).toBeInTheDocument()
+  })
+
   // Epic 3.1 Sprint 4 (U4.4, engineer A's slice): startTailoring() now navigates to /board on
   // success (a real, intentional behavior change locked in the epic doc). Renamed and re-targeted
   // from its pre-Sprint-4 wording/assertion ("...moves to the building stage" / asserted on

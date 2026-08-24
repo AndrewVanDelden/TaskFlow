@@ -81,6 +81,11 @@ export function IngestDocument() {
     if (picked) intake.setJobPostingText(picked.text)
   }
 
+  const onBaseResumeFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = await readFileAsText(e)
+    if (picked) intake.setBaseResumeText(picked.text)
+  }
+
   const jobPostingEditable = intake.stage === 'provide' || intake.stage === 'parsing'
   const baseResumeEditable = intake.stage !== 'starting' && intake.stage !== 'building'
 
@@ -229,14 +234,24 @@ export function IngestDocument() {
               placeholder="Paste your base resume"
               className={textareaClasses}
             />
-            <Button
-              variant="primary"
-              className="mt-3"
-              onClick={() => baseResumeCapture.save(ingestionSessionId, intake.baseResumeText)}
-              disabled={baseResumeCapture.loading || !intake.baseResumeText}
-            >
-              {baseResumeCapture.loading ? 'Saving...' : 'Save base resume'}
-            </Button>
+            <div className="flex items-center gap-3 mt-3">
+              <label htmlFor="base-resume-file" className={`text-xs ${textNeutral500}`}>
+                Or upload a resume file
+              </label>
+              <input
+                id="base-resume-file"
+                type="file"
+                onChange={onBaseResumeFile}
+                className={fileInputClasses}
+              />
+              <Button
+                variant="primary"
+                onClick={() => baseResumeCapture.save(ingestionSessionId, intake.baseResumeText)}
+                disabled={baseResumeCapture.loading || !intake.baseResumeText}
+              >
+                {baseResumeCapture.loading ? 'Saving...' : 'Save base resume'}
+              </Button>
+            </div>
 
             {baseResumeCapture.error && (
               <div role="alert" className={errorBannerClasses}>
