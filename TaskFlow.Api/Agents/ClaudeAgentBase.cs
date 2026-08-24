@@ -73,6 +73,14 @@ public abstract class ClaudeAgentBase : ITaskFlowAgent
     public abstract Task RunAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Default: never completes early, so the loop just waits out the full Interval - identical to
+    /// this member not existing at all. Overridden by GenericExecutorAgent, the one agent with a
+    /// human on/off switch worth waking early for.
+    /// </summary>
+    public virtual Task WaitForWakeSignalAsync(CancellationToken cancellationToken) =>
+        Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+
+    /// <summary>
     /// Handles a single tool call Claude requested and returns the tool result
     /// to feed back into the conversation. Implemented by each concrete agent.
     /// </summary>

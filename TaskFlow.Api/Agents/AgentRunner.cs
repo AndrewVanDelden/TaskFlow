@@ -73,8 +73,19 @@ public class AgentRunner : BackgroundService
                 _logger.LogError(ex, "Agent [{Name}] encountered an error. Will retry after interval.", agent.Name);
             }
 
-            // Wait for the agent's configured interval before next run
-            await Task.Delay(agent.Interval, stoppingToken);
+            // Wait for the agent's configured interval before next run - or wake immediately if the
+            // agent signals it should (GenericExecutorAgent does when a human re-enables it), so
+            // that does not sit out however much of the interval remains.
+            await WaitForNextCycleAsync(agent, stoppingToken);
         }
     }
+
+    // Extracted for direct unit testing (AgentRunnerTests): a BackgroundService's real ExecuteAsync
+    // loop runs on wall-clock time indefinitely, which is not something to drive from a fast,
+    // deterministic test. internal + InternalsVisibleTo (TaskFlow.Tests) lets the interval-vs-wake
+    // race itself be tested with a controllable fake ITaskFlowAgent instead.
+    internal static Task WaitForNextCycleAsync(ITaskFlowAgent agent, CancellationToken stoppingToken) =>
+        Task.WhenAny(
+            Task.Delay(agent.Interval, stoppingToken),
+            agent.WaitForWakeSignalAsync(stoppingToken));
 }
