@@ -91,19 +91,33 @@ public class ExportService : IExportService
         };
     }
 
+    // PR #72 review finding: the blank-company check must run on the *sanitized* value - a company
+    // built entirely from characters SanitizeForFileName strips (e.g. "???", plausible from
+    // free-text job-posting parsing) is non-blank going in but sanitizes down to "", and must fall
+    // back the same way a genuinely blank company already does (not a dangling trailing underscore).
     private static string BuildFileNameBase(string callerName, string documentLabel, string? company)
     {
         var namePart = SanitizeForFileName(callerName);
-        var companyPart = string.IsNullOrWhiteSpace(company) ? null : SanitizeForFileName(company);
+        var sanitizedCompany = string.IsNullOrWhiteSpace(company) ? null : SanitizeForFileName(company);
+        var companyPart = string.IsNullOrEmpty(sanitizedCompany) ? null : sanitizedCompany;
         return companyPart is null ? $"{namePart}_{documentLabel}" : $"{namePart}_{documentLabel}_{companyPart}";
     }
+
+    // Filesystem-invalid characters this file name must never carry. Explicit and fixed, not solely
+    // Path.GetInvalidFileNameChars() (PR #72 review finding): that BCL call reflects the *API
+    // server's* host OS, not the client's - on Linux it returns only NUL and '/', so a company/name
+    // containing e.g. ':' or '?' would sail through unsanitized if this API is ever hosted on Linux,
+    // producing a file name that's illegal on the Windows machine actually saving it. Unioned with
+    // Path.GetInvalidFileNameChars() rather than replacing it, so whatever the current host OS also
+    // can't handle keeps being caught - this only ever removes more characters, never fewer.
+    private static readonly char[] WindowsReservedFileNameChars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
 
     // Strips characters the filesystem/Content-Disposition header can't carry (a caller name or
     // company scraped from a job posting is untrusted free text) and turns spaces into underscores,
     // matching this file name scheme's own convention.
     private static string SanitizeForFileName(string value)
     {
-        var invalidChars = Path.GetInvalidFileNameChars();
+        var invalidChars = Path.GetInvalidFileNameChars().Union(WindowsReservedFileNameChars);
         var cleaned = new string(value.Where(c => !invalidChars.Contains(c)).ToArray()).Trim();
         return cleaned.Replace(' ', '_');
     }

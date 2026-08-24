@@ -123,6 +123,36 @@ public class ExportServiceTests
         result.Value!.FileName.Should().Be("Andrew_Van_Delden_Resume_AcmeCorp_R&D.md");
     }
 
+    // PR #72 review finding: the blank-company check ran on the raw company string, before
+    // sanitization. A company built entirely from characters SanitizeForFileName strips (plausible
+    // from free-text job-posting parsing) is non-blank going in but sanitizes down to "" - the old
+    // code still treated that as "present", producing a dangling trailing underscore
+    // ("Andrew_Van_Delden_Resume_.md") instead of falling back cleanly the way a genuinely blank
+    // company already does.
+    [Fact]
+    public async Task ExportResumeAsync_falls_back_to_no_company_segment_when_the_company_sanitizes_to_nothing()
+    {
+        SetUpApprovedApplication(company: "???");
+
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
+
+        result.Value!.FileName.Should().Be("Andrew_Van_Delden_Resume.md");
+    }
+
+    // PR #72 review finding: Path.GetInvalidFileNameChars() reflects the API server's own host OS,
+    // not the client saving the file - on Linux it returns only NUL and '/', so these characters
+    // (illegal in a Windows file name, the overwhelmingly common client target) must be stripped
+    // unconditionally rather than only when the server happens to be running on Windows.
+    [Fact]
+    public async Task ExportResumeAsync_strips_characters_reserved_on_Windows_regardless_of_the_servers_own_host_OS()
+    {
+        SetUpApprovedApplication(company: "R&D: Ops*Team?");
+
+        var result = await CreateSut().ExportResumeAsync(ApplicationId, OwnerId, CallerName, ExportFormat.Markdown);
+
+        result.Value!.FileName.Should().Be("Andrew_Van_Delden_Resume_R&D_OpsTeam.md");
+    }
+
     // ── Pdf: template + rendered content composed, compiler invoked ────────────
     [Fact]
     public async Task ExportResumeAsync_Pdf_composes_the_resume_template_with_rendered_content_and_returns_compiled_bytes()
