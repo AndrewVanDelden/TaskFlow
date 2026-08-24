@@ -192,4 +192,35 @@ describe('useExportDownload', () => {
 
     openSpy.mockRestore()
   })
+
+  // User report (2026-08-24): opened a preview tab, read the resume for a few minutes, then tried
+  // to save it from the browser's own PDF viewer - it failed ("Check internet connection", Chrome's
+  // generic error for a dead blob: URL). Root cause: a fixed 60-second setTimeout revoked the
+  // object URL regardless of whether the user was still using the tab. Fix: don't revoke it at all
+  // for a preview - a blob URL's underlying data is already released by the browser when the
+  // document that created it (the preview tab) is unloaded, so an app-level timer was never needed
+  // and only added a race against however long the user actually spends on that tab.
+  it('never revokes the preview blob URL on a timer, so it stays valid for as long as the tab is open', async () => {
+    vi.useFakeTimers()
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        new HttpResponse('resume bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })),
+    )
+    const fakeWindow = { location: { href: '' }, close: vi.fn() } as unknown as Window
+    vi.spyOn(window, 'open').mockReturnValue(fakeWindow)
+
+    const { result } = renderHook(() => useExportDownload(10))
+
+    await act(async () => {
+      await result.current.download('resume', 'pdf', 'preview')
+    })
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+
+    vi.useRealTimers()
+  })
 })

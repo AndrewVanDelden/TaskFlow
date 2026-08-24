@@ -70,11 +70,13 @@ function triggerBrowserDownload(blob: Blob, filename: string): void {
 }
 
 // Navigates an already-open window to the file, via the browser's own viewer (e.g. its native PDF
-// viewer) instead of saving it to disk. The object URL is revoked after a delay, not immediately:
-// the window still needs to load the content asynchronously, so revoking synchronously here would
-// race it.
+// viewer) instead of saving it to disk. Deliberately never revoked: a prior version revoked it on a
+// fixed 60-second timer, which raced how long the user actually spends reading the tab before
+// trying to save it - a user report (2026-08-24) hit exactly that, saving 5+ minutes after opening
+// the preview and getting a dead blob: URL. The browser already releases a blob URL's underlying
+// data when the document that created it (this preview tab) is unloaded, so no app-level timer is
+// needed - closing the tab is what should end its lifetime, not a guess at how long reading takes.
 function navigateWindowToBlob(win: Window, blob: Blob): void {
   const url = URL.createObjectURL(blob)
   win.location.href = url
-  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
