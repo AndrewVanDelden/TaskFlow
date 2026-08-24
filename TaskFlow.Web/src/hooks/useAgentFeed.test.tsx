@@ -88,4 +88,41 @@ describe('useAgentFeed', () => {
 
     vi.useRealTimers()
   })
+
+  // PR #71 review finding (Antigravity/Gemini, independently confirmed by a second manual review):
+  // pendingTimeouts was a flat array, not keyed per agent, so a fast second cycle's immediate
+  // 'started' apply could later be clobbered by the *first* cycle's still-pending delayed
+  // 'completed' timeout firing on its own original schedule - the badge would show stale
+  // 'completed' data while the agent was actually mid-cycle again.
+  it('does not let an earlier cycles delayed completion clobber a later cycle already in progress', async () => {
+    vi.useFakeTimers()
+    const connection = makeFakeConnection()
+
+    const { result } = renderHook(() => useAgentFeed(), { wrapper: makeWrapper(connection) })
+
+    // Cycle 1: started then completed immediately - schedules a delayed apply ~500ms out.
+    act(() => {
+      connection.emit(HubEvents.AgentCycle, { agentName: 'TaskPrioritizer', phase: 'started', at: new Date().toISOString() })
+      connection.emit(HubEvents.AgentCycle, { agentName: 'TaskPrioritizer', phase: 'completed', at: new Date().toISOString() })
+    })
+
+    // Before that delayed apply fires, cycle 2 starts.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    act(() => {
+      connection.emit(HubEvents.AgentCycle, { agentName: 'TaskPrioritizer', phase: 'started', at: new Date().toISOString() })
+    })
+
+    expect(result.current.cycles.TaskPrioritizer.phase).toBe('started')
+
+    // Advance past the point where cycle 1's original delayed 'completed' would have fired.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(450)
+    })
+
+    expect(result.current.cycles.TaskPrioritizer.phase).toBe('started') // still cycle 2, not cycle 1's stale completion
+
+    vi.useRealTimers()
+  })
 })

@@ -37,10 +37,24 @@ export function useAgentFeed(maxItems = 50) {
 
     // Per-agent 'started' timestamps and pending timeouts for the minimum-visible-duration hold
     // below (see MIN_VISIBLE_CYCLE_MS) - local to this effect run, cleared on cleanup.
+    //
+    // PR #71 review finding (Antigravity/Gemini, independently confirmed by a second manual
+    // review): pendingTimeouts was a flat array, not keyed per agent, so a fast second cycle's
+    // immediate 'started' apply could later be clobbered by the *first* cycle's still-pending
+    // delayed 'completed' timeout firing on its own original schedule. Keying by agentName and
+    // clearing any existing timeout for that agent whenever a new event arrives - whether it's a
+    // fresh 'started' or a fresh non-started - means only the most recent event for an agent can
+    // ever apply, and the map never grows past one entry per agent.
     const startedAt: Record<string, number> = {}
-    const pendingTimeouts: ReturnType<typeof setTimeout>[] = []
+    const pendingTimeouts: Record<string, ReturnType<typeof setTimeout>> = {}
 
     const onCycle = (evt: CycleEvent) => {
+      const existingTimeout = pendingTimeouts[evt.agentName]
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+        delete pendingTimeouts[evt.agentName]
+      }
+
       if (evt.phase === 'started') {
         startedAt[evt.agentName] = Date.now()
         setCycles((prev) => ({ ...prev, [evt.agentName]: evt }))
@@ -49,7 +63,10 @@ export function useAgentFeed(maxItems = 50) {
 
       const elapsedSinceStarted = Date.now() - (startedAt[evt.agentName] ?? 0)
       const delay = Math.max(0, MIN_VISIBLE_CYCLE_MS - elapsedSinceStarted)
-      pendingTimeouts.push(setTimeout(() => setCycles((prev) => ({ ...prev, [evt.agentName]: evt })), delay))
+      pendingTimeouts[evt.agentName] = setTimeout(() => {
+        delete pendingTimeouts[evt.agentName]
+        setCycles((prev) => ({ ...prev, [evt.agentName]: evt }))
+      }, delay)
     }
 
     connection.on(HubEvents.AgentAction, onAction)
@@ -58,7 +75,7 @@ export function useAgentFeed(maxItems = 50) {
     return () => {
       connection.off(HubEvents.AgentAction, onAction)
       connection.off(HubEvents.AgentCycle, onCycle)
-      pendingTimeouts.forEach(clearTimeout)
+      Object.values(pendingTimeouts).forEach(clearTimeout)
     }
   }, [connection, maxItems])
 
