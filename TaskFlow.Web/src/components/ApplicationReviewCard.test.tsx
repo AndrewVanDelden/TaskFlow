@@ -31,34 +31,57 @@ const coverLetterTask: TaskItem = {
 }
 
 describe('ApplicationReviewCard', () => {
-  it('renders the base resume, tailored resume, and cover letter markdown sections', async () => {
+  // User report (2026-08-22): this card was rendering all three artifacts' full raw content
+  // inline, making it enormous - many screen-heights tall on the board, next to a compact one-line
+  // Done card. The card should be compact like every other card; each artifact gets a "View"
+  // control that opens the real content in a new tab, not a wall of text dumped into the card.
+  it('shows compact preview controls for all three artifacts, with no raw content rendered inline', async () => {
     server.use(
-      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('My base resume')),
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('My base resume text')),
     )
 
     render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
 
-    expect(await screen.findByText('My base resume')).toBeInTheDocument()
-    expect(screen.getByText('Tailored Resume')).toBeInTheDocument()
-    expect(screen.getByText('Tailored Cover Letter')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /view base resume/i })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /view pdf/i })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: /view markdown/i })).toHaveLength(2)
+
+    // The whole point of this change: none of the raw content is dumped into the card itself.
+    expect(screen.queryByText('My base resume text')).not.toBeInTheDocument()
+    expect(screen.queryByText('Some resume content.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Dear hiring manager.')).not.toBeInTheDocument()
   })
 
-  it('renders a script-tag payload inert', async () => {
+  it('opens the base resume in a new tab when "View base resume" is clicked', async () => {
     server.use(
-      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('My base resume text')),
     )
-    const withScript: TaskItem = {
-      ...resumeTask,
-      tailoredContent: "# Title\n\n<script>alert('xss')</script>\n\nSafe text.",
-    }
+    const writeSpy = vi.fn()
+    const fakeWindow = { document: { write: writeSpy, close: vi.fn() } } as unknown as Window
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeWindow)
 
-    const { container } = render(
-      <ApplicationReviewCard applicationId={10} resumeTask={withScript} coverLetterTask={coverLetterTask} />,
+    render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
+    await userEvent.click(await screen.findByRole('button', { name: /view base resume/i }))
+
+    expect(openSpy).toHaveBeenCalledWith('', '_blank')
+    expect(writeSpy).toHaveBeenCalledWith(expect.stringContaining('My base resume text'))
+
+    openSpy.mockRestore()
+  })
+
+  it('shows an error when the browser blocks the base resume preview window', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('My base resume text')),
     )
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
 
-    await screen.findByText('Safe text.')
-    expect(container.querySelector('script')).toBeNull()
-    expect(container.innerHTML).not.toContain('<script>')
+    render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
+    await userEvent.click(await screen.findByRole('button', { name: /view base resume/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/blocked the preview/i)
+
+    openSpy.mockRestore()
   })
 
   it('approves and shows a success indication', async () => {
@@ -71,7 +94,7 @@ describe('ApplicationReviewCard', () => {
     )
 
     render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
-    await screen.findByText('base')
+    await screen.findByRole('button', { name: /view base resume/i })
 
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
 
@@ -91,29 +114,12 @@ describe('ApplicationReviewCard', () => {
     )
 
     render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
-    await screen.findByText('base')
+    await screen.findByRole('button', { name: /view base resume/i })
 
     await userEvent.type(screen.getByPlaceholderText(/reason/i), 'Needs more detail')
     await userEvent.click(screen.getByRole('button', { name: 'Reject' }))
 
     await waitFor(() => expect(capturedBody).toEqual({ reason: 'Needs more detail' }))
-  })
-
-  // User report (2026-08-22): a wall of raw markdown text isn't enough to judge real output - the
-  // user wants to open the actual PDF (or Markdown) file for each artifact in a new tab, exactly
-  // as it will really look, before deciding to approve or reject. "View", not "Download": these
-  // controls use ExportDownloadControls' preview mode, which opens a new tab instead of saving a
-  // copy to disk.
-  it('shows PDF/Markdown preview controls for both the resume and cover letter', async () => {
-    server.use(
-      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('base')),
-    )
-
-    render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
-    await screen.findByText('base')
-
-    expect(screen.getAllByRole('button', { name: /view pdf/i })).toHaveLength(2)
-    expect(screen.getAllByRole('button', { name: /view markdown/i })).toHaveLength(2)
   })
 
   it('opens the resume PDF in a new tab instead of downloading it', async () => {
@@ -134,7 +140,7 @@ describe('ApplicationReviewCard', () => {
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
     render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
-    await screen.findByText('base')
+    await screen.findByRole('button', { name: /view base resume/i })
 
     await userEvent.click(screen.getAllByRole('button', { name: /view pdf/i })[0])
 
@@ -153,7 +159,7 @@ describe('ApplicationReviewCard', () => {
     )
 
     render(<ApplicationReviewCard applicationId={10} resumeTask={resumeTask} coverLetterTask={coverLetterTask} />)
-    await screen.findByText('base')
+    await screen.findByRole('button', { name: /view base resume/i })
 
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
 
