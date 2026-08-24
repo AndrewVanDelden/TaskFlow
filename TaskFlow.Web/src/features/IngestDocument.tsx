@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useParams } from 'react-router-dom'
+import { extractPdfText } from '../api/files'
 import { useIngestion } from '../hooks/useIngestion'
 import { useBaseResumeCapture } from '../hooks/useBaseResumeCapture'
 import { useBaseResumeReuse } from '../hooks/useBaseResumeReuse'
@@ -46,11 +47,19 @@ const textareaClasses = `w-full h-48 p-3 ${inputSurfaceClasses}`
 // new category decision - the error banners themselves stay untouched otherwise).
 const errorBannerClasses = 'mt-3 text-sm text-red-300 bg-red-500/10 border border-red-500/30 rounded px-3 py-2'
 
-// Reads a picked file's contents (and name) as text. Shared by the guided job-posting input and
-// the generic document input below, so the read-to-text behavior isn't duplicated between them.
+function isPdfFile(file: File): boolean {
+  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+}
+
+// Reads a picked file's contents (and name) as text. Shared by the guided job-posting input, the
+// base-resume input, and the generic document input below, so the read-to-text behavior isn't
+// duplicated between them. A PDF is a binary format - File.text() (a raw UTF-8 decode) produces
+// garbage for it, so PDFs are routed through server-side extraction (PdfPig) instead.
 async function readFileAsText(e: ChangeEvent<HTMLInputElement>): Promise<{ text: string; name: string } | null> {
   const file = e.target.files?.[0]
-  return file ? { text: await file.text(), name: file.name } : null
+  if (!file) return null
+  const text = isPdfFile(file) ? await extractPdfText(file) : await file.text()
+  return { text, name: file.name }
 }
 
 // The guided job-application flow (Sprint 6): paste a job posting + a base resume, parse the
@@ -76,14 +85,33 @@ export function IngestDocument() {
     stageHeadingRef.current?.focus()
   }, [intake.stage])
 
+  // PR #68 review finding: a single shared error state disconnected the message from whichever
+  // upload section actually failed (e.g. a bad file in the collapsed generic-document section would
+  // show its error at the top of the page, next to job-posting). Scoped per section instead, each
+  // rendered next to its own input, matching this file's existing convention of co-locating errors
+  // with their control (intake.error, baseResumeCapture.error, generic.error).
+  const [jobPostingFileError, setJobPostingFileError] = useState<string | null>(null)
+  const [baseResumeFileError, setBaseResumeFileError] = useState<string | null>(null)
+  const [genericFileError, setGenericFileError] = useState<string | null>(null)
+
   const onJobPostingFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const picked = await readFileAsText(e)
-    if (picked) intake.setJobPostingText(picked.text)
+    setJobPostingFileError(null)
+    try {
+      const picked = await readFileAsText(e)
+      if (picked) intake.setJobPostingText(picked.text)
+    } catch (err) {
+      setJobPostingFileError(err instanceof Error ? err.message : 'Failed to read that file.')
+    }
   }
 
   const onBaseResumeFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const picked = await readFileAsText(e)
-    if (picked) intake.setBaseResumeText(picked.text)
+    setBaseResumeFileError(null)
+    try {
+      const picked = await readFileAsText(e)
+      if (picked) intake.setBaseResumeText(picked.text)
+    } catch (err) {
+      setBaseResumeFileError(err instanceof Error ? err.message : 'Failed to read that file.')
+    }
   }
 
   const jobPostingEditable = intake.stage === 'provide' || intake.stage === 'parsing'
@@ -100,10 +128,15 @@ export function IngestDocument() {
   const generic = useIngestion()
 
   const onGenericFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const picked = await readFileAsText(e)
-    if (picked) {
-      setGenericText(picked.text)
-      setGenericSourceName(picked.name)
+    setGenericFileError(null)
+    try {
+      const picked = await readFileAsText(e)
+      if (picked) {
+        setGenericText(picked.text)
+        setGenericSourceName(picked.name)
+      }
+    } catch (err) {
+      setGenericFileError(err instanceof Error ? err.message : 'Failed to read that file.')
     }
   }
 
@@ -131,6 +164,12 @@ export function IngestDocument() {
       {intake.error && (
         <div role="alert" className={errorBannerClasses}>
           {intake.error}
+        </div>
+      )}
+
+      {jobPostingFileError && (
+        <div role="alert" className={errorBannerClasses}>
+          {jobPostingFileError}
         </div>
       )}
 
@@ -253,6 +292,12 @@ export function IngestDocument() {
               </Button>
             </div>
 
+            {baseResumeFileError && (
+              <div role="alert" className={errorBannerClasses}>
+                {baseResumeFileError}
+              </div>
+            )}
+
             {baseResumeCapture.error && (
               <div role="alert" className={errorBannerClasses}>
                 {baseResumeCapture.error}
@@ -331,6 +376,12 @@ export function IngestDocument() {
               {generic.loading ? 'Parsing...' : 'Parse'}
             </Button>
           </div>
+
+          {genericFileError && (
+            <div role="alert" className={errorBannerClasses}>
+              {genericFileError}
+            </div>
+          )}
 
           {generic.error && (
             <div role="alert" className={errorBannerClasses}>
