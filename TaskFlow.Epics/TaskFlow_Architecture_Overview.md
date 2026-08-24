@@ -103,14 +103,19 @@ wait doesn't leak in the semaphore's queue — a real bug fixed in PR #70).
 to a caller-supplied dispatcher, and provides `RecordActionAsync`/`RecordCycleSummaryAsync`
 (persist `AgentLog` + broadcast over SignalR) and cycle-started/completed notifications.
 
-Five registered agents, each a `ClaudeAgentBase` subclass with its own prompt/tool set:
+Five registered agents, each ultimately a `ClaudeAgentBase` subclass with its own prompt/tool set:
 `GenericExecutorAgent` (claims the oldest Todo+Generic task, works it, hands to Review — never
-Done, approval stays human-only), `ResumeTailoringAgent` / `CoverLetterAgent` (Epic 3's paired
-tailoring agents), `TaskPrioritizerAgent`, `StaleTaskAgent`.
+Done, approval stays human-only), `TaskPrioritizerAgent`, `StaleTaskAgent` extend `ClaudeAgentBase`
+directly. `ResumeTailoringAgent` / `CoverLetterAgent` (Epic 3's paired tailoring agents) extend an
+intermediate `TailoringAgentBase : ClaudeAgentBase` that holds logic shared only between the two —
+add a sixth tailoring agent against `TailoringAgentBase`, not `ClaudeAgentBase` directly, or its
+shared logic gets duplicated.
 
 Three additional plain `BackgroundService`s (not `ITaskFlowAgent`s, no Claude involved) run
-best-effort recovery sweeps: `StaleClaimReaperService`, `JobApplicationPromotionReconcilerService`,
-`JobApplicationApprovalReconcilerService`.
+best-effort recovery sweeps — `StaleClaimReaperService`, `JobApplicationPromotionReconcilerService`,
+`JobApplicationApprovalReconcilerService` — all three extending a shared intermediate
+`PeriodicSweepBackgroundService : BackgroundService`, the same one-shared-base-for-siblings pattern
+as the tailoring agents.
 
 ### Real-time: SignalR
 `Hubs/AgentHub.cs` (`/hubs/agents`, `[Authorize]`) is server-push only — no client-invokable RPCs
@@ -130,8 +135,8 @@ One `DbContext` (`Data/AppDbContext.cs`) with five `DbSet`s: `Users`, `Tasks`, `
 `JobApplications`, `ResumeContexts`. Notable model configuration: `TaskItem.Status`/`Priority`/
 `Kind` and `JobApplication.State` are stored as strings (not int enums) for readability in raw
 queries; `TaskItem → JobApplication` cascades on delete, `TaskItem → User` (assignee) sets null;
-`JobApplication` and `ResumeContext` both carry a unique composite index on
-`(IngestionSessionId, OwnerId)`. `TaskItem.OwnerId` is a computed, non-mapped property that reads
+`JobApplication` carries a (non-unique) composite index on `(IngestionSessionId, OwnerId)`;
+`ResumeContext` carries the same pair as a *unique* index. `TaskItem.OwnerId` is a computed, non-mapped property that reads
 through `Application.OwnerId` and throws if the caller forgot to `.Include(Application)` —
 deliberately loud rather than silently wrong.
 
@@ -196,7 +201,7 @@ named PDF or Markdown file via `ExportService`.
 - **Cost control:** `DailyExecutorSpendGuard` gates every Claude-backed agent cycle behind a daily
   spend cap, checked before any paid call is made.
 - **SSRF safety:** any server-side fetch of a user-supplied URL (job-posting URL import) goes
-  through DNS-resolution validation and a custom `SocketsHttpHandler.ConnectCallback**
+  through DNS-resolution validation and a custom `SocketsHttpHandler.ConnectCallback`
   (`SsrfSafeConnectCallback`) that re-checks the resolved IP at actual connection time, closing the
   classic "resolve-then-check" DNS-rebinding gap.
 - **Resilience in the agent loop:** one agent's exception doesn't stop its own future cycles or any
