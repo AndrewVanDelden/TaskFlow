@@ -131,4 +131,128 @@ describe('useExportDownload', () => {
     expect(result.current.error).not.toBeNull()
     expect(result.current.downloading.size).toBe(0)
   })
+
+  // User report (2026-08-22): the Review-stage controls should let the reviewer inspect the real
+  // file in a new tab, not silently save it to disk - a separate 'preview' mode, opt-in via the
+  // mode param, so the existing (default) download behavior used elsewhere (Done/Approved tasks)
+  // is completely unaffected.
+  //
+  // PR #65 review finding: window.open() must be called synchronously, before the awaited fetch
+  // below - calling it AFTER an await is a well-known popup-blocker trigger (Safari in particular
+  // enforces this strictly), since the click's "user activation" window can expire during the
+  // await. So a blank window is opened immediately and only navigated to the real blob afterward,
+  // rather than opening the already-resolved blob URL in one step.
+  it('opens a window immediately (before the fetch resolves) and navigates it to the file when mode is preview', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        new HttpResponse('resume bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })),
+    )
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const fakeWindow = { location: { href: '' }, close: vi.fn() } as unknown as Window
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(fakeWindow)
+
+    const { result } = renderHook(() => useExportDownload(10))
+
+    await act(async () => {
+      await result.current.download('resume', 'pdf', 'preview')
+    })
+
+    // Called with '' (a blank window), not the blob URL - the URL doesn't exist yet at the point
+    // window.open() must be called for the activation window to still be open.
+    expect(openSpy).toHaveBeenCalledWith('', '_blank')
+    expect(fakeWindow.location.href).toBe('blob:mock-url')
+    expect(clickSpy).not.toHaveBeenCalled()
+    expect(result.current.error).toBeNull()
+
+    clickSpy.mockRestore()
+    openSpy.mockRestore()
+  })
+
+  // PR #65 review finding (found independently by two reviewers): window.open()'s return value was
+  // never checked - a popup-blocked preview silently did nothing, with no feedback to the reviewer
+  // that anything went wrong.
+  it('surfaces a clear error when the browser blocks the preview window', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        new HttpResponse('resume bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })),
+    )
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+
+    const { result } = renderHook(() => useExportDownload(10))
+
+    await act(async () => {
+      await result.current.download('resume', 'pdf', 'preview')
+    })
+
+    expect(result.current.error).toMatch(/blocked the preview/i)
+
+    openSpy.mockRestore()
+  })
+
+  // User report (2026-08-24): opened a preview tab, read the resume for a few minutes, then tried
+  // to save it from the browser's own PDF viewer - it failed ("Check internet connection", Chrome's
+  // generic error for a dead blob: URL). Root cause: a fixed 60-second setTimeout revoked the
+  // object URL regardless of whether the user was still using the tab.
+  //
+  // PR #69 review finding (Antigravity/Gemini, independently confirmed by a second manual review):
+  // a first attempt at this fix removed revocation entirely, which is a real, unbounded memory leak
+  // - URL.createObjectURL(blob) ties the object URL's lifetime to the *global that created it* (this
+  // SPA's main tab), not whatever document win.location.href later navigates the popup to, so
+  // closing the preview tab was never going to release it on its own. The fix is to revoke on the
+  // real signal (the preview tab actually closing, polled via win.closed - readable cross-origin
+  // even once win has navigated to a blob: URL) instead of either a guessed duration or never at all.
+  it('does not revoke the preview blob URL while the tab is still open, even after a long time', async () => {
+    vi.useFakeTimers()
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        new HttpResponse('resume bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })),
+    )
+    const fakeWindow = { location: { href: '' }, close: vi.fn(), closed: false } as unknown as Window
+    vi.spyOn(window, 'open').mockReturnValue(fakeWindow)
+
+    const { result } = renderHook(() => useExportDownload(10))
+
+    await act(async () => {
+      await result.current.download('resume', 'pdf', 'preview')
+    })
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+
+    vi.useRealTimers()
+  })
+
+  it('revokes the preview blob URL once the tab is actually closed', async () => {
+    vi.useFakeTimers()
+    server.use(
+      http.get('*/api/JobApplications/10/export/resume', () =>
+        new HttpResponse('resume bytes', {
+          headers: { 'Content-Disposition': 'attachment; filename="resume.pdf"' },
+        })),
+    )
+    const fakeWindow = { location: { href: '' }, close: vi.fn(), closed: false } as unknown as Window
+    vi.spyOn(window, 'open').mockReturnValue(fakeWindow)
+
+    const { result } = renderHook(() => useExportDownload(10))
+
+    await act(async () => {
+      await result.current.download('resume', 'pdf', 'preview')
+    })
+
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+
+    ;(fakeWindow as unknown as { closed: boolean }).closed = true
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
+
+    vi.useRealTimers()
+  })
 })

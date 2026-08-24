@@ -17,14 +17,19 @@ namespace TaskFlow.Tests.Controllers;
 public class JobApplicationsControllerTests
 {
     private readonly Mock<IJobPostingIngestionParser> _parser = new();
+    private readonly Mock<IJobPostingUrlFetcher> _urlFetcher = new();
     private readonly Mock<IResumeContextService> _resumeContext = new();
     private readonly Mock<IJobApplicationAssemblyService> _assembly = new();
     private readonly Mock<IJobApplicationService> _jobApplicationService = new();
     private readonly Mock<IExportService> _exportService = new();
 
+    // The JWT's real Name claim (JwtService sets it from User.Name at token issuance) - used by
+    // GetCurrentUserName() for a human-readable export filename.
+    private const string TestUserName = "Andrew Van Delden";
+
     private JobApplicationsController CreateSut(int? currentUserId = 1)
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object);
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object);
         if (currentUserId is not null)
         {
             controller.ControllerContext = new ControllerContext
@@ -39,7 +44,8 @@ public class JobApplicationsControllerTests
     {
         var identity = new ClaimsIdentity(new[]
         {
-            new Claim(ClaimTypes.NameIdentifier, userId.ToString())
+            new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
+            new Claim(ClaimTypes.Name, TestUserName)
         }, "TestAuth");
         return new ClaimsPrincipal(identity);
     }
@@ -174,7 +180,7 @@ public class JobApplicationsControllerTests
     [Fact]
     public async Task SaveResumeContext_returns_401_when_the_identity_claim_is_missing()
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -196,7 +202,7 @@ public class JobApplicationsControllerTests
     public async Task Assemble_returns_401_when_the_identity_claim_is_not_numeric()
     {
         var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "not-a-number") }, "TestAuth");
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -245,7 +251,7 @@ public class JobApplicationsControllerTests
     [Fact]
     public async Task GetResumeContext_returns_401_when_the_identity_claim_is_missing()
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -319,7 +325,7 @@ public class JobApplicationsControllerTests
     public async Task Approve_returns_401_when_the_identity_claim_is_not_numeric()
     {
         var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "not-a-number") }, "TestAuth");
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -392,7 +398,7 @@ public class JobApplicationsControllerTests
     [Fact]
     public async Task Reject_returns_401_when_the_identity_claim_is_missing()
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -412,7 +418,7 @@ public class JobApplicationsControllerTests
     public async Task ExportResume_returns_200_file_content_and_forwards_the_current_user_id_and_parsed_format()
     {
         var file = new ExportedFile(new byte[] { 1, 2, 3 }, "application/pdf", "resume.pdf");
-        _exportService.Setup(e => e.ExportResumeAsync(5, 1, ExportFormat.Pdf, It.IsAny<CancellationToken>()))
+        _exportService.Setup(e => e.ExportResumeAsync(5, 1, TestUserName, ExportFormat.Pdf, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Result<ExportedFile>.Ok(file));
 
         var controller = CreateSut(currentUserId: 1);
@@ -423,13 +429,13 @@ public class JobApplicationsControllerTests
         fileResult.FileContents.Should().BeEquivalentTo(file.Content);
         fileResult.ContentType.Should().Be("application/pdf");
         fileResult.FileDownloadName.Should().Be("resume.pdf");
-        _exportService.Verify(e => e.ExportResumeAsync(5, 1, ExportFormat.Pdf, It.IsAny<CancellationToken>()), Times.Once);
+        _exportService.Verify(e => e.ExportResumeAsync(5, 1, TestUserName, ExportFormat.Pdf, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task ExportResume_returns_404_when_the_service_reports_not_found()
     {
-        _exportService.Setup(e => e.ExportResumeAsync(5, 1, ExportFormat.Markdown, It.IsAny<CancellationToken>()))
+        _exportService.Setup(e => e.ExportResumeAsync(5, 1, TestUserName, ExportFormat.Markdown, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Result<ExportedFile>.NotFound("JobApplication 5 not found."));
 
         var controller = CreateSut(currentUserId: 1);
@@ -442,7 +448,7 @@ public class JobApplicationsControllerTests
     [Fact]
     public async Task ExportResume_returns_400_when_the_service_reports_invalid()
     {
-        _exportService.Setup(e => e.ExportResumeAsync(5, 1, ExportFormat.Markdown, It.IsAny<CancellationToken>()))
+        _exportService.Setup(e => e.ExportResumeAsync(5, 1, TestUserName, ExportFormat.Markdown, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Result<ExportedFile>.Invalid("JobApplication 5 is Building; only Approved applications can be exported."));
 
         var controller = CreateSut(currentUserId: 1);
@@ -460,7 +466,7 @@ public class JobApplicationsControllerTests
         var result = await controller.ExportResume(5, "docx");
 
         result.Should().BeOfType<BadRequestObjectResult>();
-        _exportService.Verify(e => e.ExportResumeAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+        _exportService.Verify(e => e.ExportResumeAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // Copilot review finding (PR #48): Enum.TryParse<ExportFormat> also accepts the numeric backing
@@ -474,7 +480,7 @@ public class JobApplicationsControllerTests
         var result = await controller.ExportResume(5, "0");
 
         result.Should().BeOfType<BadRequestObjectResult>();
-        _exportService.Verify(e => e.ExportResumeAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+        _exportService.Verify(e => e.ExportResumeAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // Copilot review finding (PR #48): the export call used the default CancellationToken, so a
@@ -487,10 +493,10 @@ public class JobApplicationsControllerTests
     {
         var file = new ExportedFile(new byte[] { 1 }, "application/pdf", "resume.pdf");
         using var cts = new CancellationTokenSource();
-        _exportService.Setup(e => e.ExportResumeAsync(5, 1, ExportFormat.Pdf, cts.Token))
+        _exportService.Setup(e => e.ExportResumeAsync(5, 1, TestUserName, ExportFormat.Pdf, cts.Token))
             .ReturnsAsync(Result<ExportedFile>.Ok(file));
 
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -501,13 +507,13 @@ public class JobApplicationsControllerTests
         var result = await controller.ExportResume(5, "pdf");
 
         result.Should().BeOfType<FileContentResult>();
-        _exportService.Verify(e => e.ExportResumeAsync(5, 1, ExportFormat.Pdf, cts.Token), Times.Once);
+        _exportService.Verify(e => e.ExportResumeAsync(5, 1, TestUserName, ExportFormat.Pdf, cts.Token), Times.Once);
     }
 
     [Fact]
     public async Task ExportResume_returns_401_when_the_identity_claim_is_missing()
     {
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -518,14 +524,14 @@ public class JobApplicationsControllerTests
         var result = await controller.ExportResume(5, "pdf");
 
         result.Should().BeOfType<UnauthorizedObjectResult>();
-        _exportService.Verify(e => e.ExportResumeAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+        _exportService.Verify(e => e.ExportResumeAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task ExportCoverLetter_returns_200_file_content_and_forwards_the_current_user_id_and_parsed_format()
     {
         var file = new ExportedFile(new byte[] { 4, 5, 6 }, "text/markdown; charset=utf-8", "cover-letter.md");
-        _exportService.Setup(e => e.ExportCoverLetterAsync(5, 1, ExportFormat.Markdown, It.IsAny<CancellationToken>()))
+        _exportService.Setup(e => e.ExportCoverLetterAsync(5, 1, TestUserName, ExportFormat.Markdown, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Result<ExportedFile>.Ok(file));
 
         var controller = CreateSut(currentUserId: 1);
@@ -536,13 +542,13 @@ public class JobApplicationsControllerTests
         fileResult.FileContents.Should().BeEquivalentTo(file.Content);
         fileResult.ContentType.Should().Be("text/markdown; charset=utf-8");
         fileResult.FileDownloadName.Should().Be("cover-letter.md");
-        _exportService.Verify(e => e.ExportCoverLetterAsync(5, 1, ExportFormat.Markdown, It.IsAny<CancellationToken>()), Times.Once);
+        _exportService.Verify(e => e.ExportCoverLetterAsync(5, 1, TestUserName, ExportFormat.Markdown, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task ExportCoverLetter_returns_404_when_the_service_reports_not_found()
     {
-        _exportService.Setup(e => e.ExportCoverLetterAsync(5, 1, ExportFormat.Pdf, It.IsAny<CancellationToken>()))
+        _exportService.Setup(e => e.ExportCoverLetterAsync(5, 1, TestUserName, ExportFormat.Pdf, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Result<ExportedFile>.NotFound("JobApplication 5 not found."));
 
         var controller = CreateSut(currentUserId: 1);
@@ -560,7 +566,7 @@ public class JobApplicationsControllerTests
         var result = await controller.ExportCoverLetter(5, "docx");
 
         result.Should().BeOfType<BadRequestObjectResult>();
-        _exportService.Verify(e => e.ExportCoverLetterAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+        _exportService.Verify(e => e.ExportCoverLetterAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // Copilot review finding (PR #48): same numeric-alias gap as ExportResume - "1" would otherwise
@@ -573,7 +579,7 @@ public class JobApplicationsControllerTests
         var result = await controller.ExportCoverLetter(5, "1");
 
         result.Should().BeOfType<BadRequestObjectResult>();
-        _exportService.Verify(e => e.ExportCoverLetterAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+        _exportService.Verify(e => e.ExportCoverLetterAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -581,10 +587,10 @@ public class JobApplicationsControllerTests
     {
         var file = new ExportedFile(new byte[] { 1 }, "application/pdf", "cover-letter.pdf");
         using var cts = new CancellationTokenSource();
-        _exportService.Setup(e => e.ExportCoverLetterAsync(5, 1, ExportFormat.Pdf, cts.Token))
+        _exportService.Setup(e => e.ExportCoverLetterAsync(5, 1, TestUserName, ExportFormat.Pdf, cts.Token))
             .ReturnsAsync(Result<ExportedFile>.Ok(file));
 
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -595,14 +601,14 @@ public class JobApplicationsControllerTests
         var result = await controller.ExportCoverLetter(5, "pdf");
 
         result.Should().BeOfType<FileContentResult>();
-        _exportService.Verify(e => e.ExportCoverLetterAsync(5, 1, ExportFormat.Pdf, cts.Token), Times.Once);
+        _exportService.Verify(e => e.ExportCoverLetterAsync(5, 1, TestUserName, ExportFormat.Pdf, cts.Token), Times.Once);
     }
 
     [Fact]
     public async Task ExportCoverLetter_returns_401_when_the_identity_claim_is_not_numeric()
     {
         var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, "not-a-number") }, "TestAuth");
-        var controller = new JobApplicationsController(_parser.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
+        var controller = new JobApplicationsController(_parser.Object, _urlFetcher.Object, _resumeContext.Object, _assembly.Object, _jobApplicationService.Object, _exportService.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -613,6 +619,6 @@ public class JobApplicationsControllerTests
         var result = await controller.ExportCoverLetter(5, "pdf");
 
         result.Should().BeOfType<UnauthorizedObjectResult>();
-        _exportService.Verify(e => e.ExportCoverLetterAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
+        _exportService.Verify(e => e.ExportCoverLetterAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<ExportFormat>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

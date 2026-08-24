@@ -10,6 +10,11 @@
   <ItemGroup>
     <PackageReference Include="Anthropic.SDK" Version="5.10.0" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+    <!-- Epic 3.2 S1.5: HTML-to-text extraction for the job-posting URL fetcher. Latest stable per
+         nuget.org as of this addition (2026-08-20); the alternative (a hand-rolled regex tag
+         stripper) is well-documented to be fragile and wrong at edge cases, so a mature parser is
+         used instead. -->
+    <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
     <PackageReference Include="Markdig" Version="0.37.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.8">
@@ -19,6 +24,16 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.8" />
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+    <!-- Base-resume/job-posting/generic-document PDF uploads: server-side text extraction (a PDF is a
+         binary format - reading it as text client-side produces garbage, not real content). Latest
+         stable per nuget.org as of this addition (2026-08-22); Apache-2.0, pure C#, no native/binary
+         dependency, same "don't hand-roll a binary format parser" reasoning as HtmlAgilityPack above.
+         The NuGet package ID is "PdfPig" (not "UglyToad.PdfPig", despite the GitHub org being
+         UglyToad and the C# namespace being UglyToad.PdfPig) - confirmed directly against nuget.org's
+         real flatcontainer index after an initial wrong guess (UglyToad.PdfPig) turned out to be an
+         unrelated, suspiciously-metadata'd listing (owner "grinay", placeholder description, a
+         "1.7.0-custom-5" version) that 404s on `dotnet restore`, not the real package. -->
+    <PackageReference Include="PdfPig" Version="0.1.16" />
   </ItemGroup>
 
   <ItemGroup>

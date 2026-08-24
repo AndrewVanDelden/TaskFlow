@@ -4,8 +4,24 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+// PR #66 review finding: Vite restarts its dev server (re-evaluating this file) whenever
+// vite.config.ts or a watched .env file changes, WITHOUT relaunching the Node process or the
+// `.\run`/`npm run dev` invocation that started it. A bare `Date.now()` here would treat every one
+// of those internal restarts as a fresh `.\run` too, force-logging out an actively-iterating
+// developer just for tweaking a plugin option. process.env persists across that kind of restart
+// (same OS process, same env) but not across a genuinely new invocation (a new process each time),
+// so it doubles as a once-per-process cache: computed on first evaluation, reused on every
+// config-triggered restart within that same process.
+const bootId = process.env.APP_BOOT_ID ?? (process.env.APP_BOOT_ID = String(Date.now()))
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    // A fresh id baked into the bundle once per real dev-server invocation (see bootId above), so
+    // lib/devAuthReset.ts can tell "the dev server just restarted" apart from "the page was
+    // refreshed during an ongoing session" - see that file for why.
+    __APP_BOOT_ID__: JSON.stringify(bootId),
+  },
   server: {
     port: 5173,
     // Single-origin dev: the browser talks only to :5173, and Vite forwards API calls and the SignalR

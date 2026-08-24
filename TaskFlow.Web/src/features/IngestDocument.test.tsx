@@ -180,6 +180,67 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     expect(screen.getByLabelText(/base resume/i)).toHaveValue('Reusable resume text')
   })
 
+  // User report (2026-08-22): the base resume could only be pasted, unlike the job-posting and
+  // generic-document inputs, which both already support an upload alongside the textarea.
+  it('uploads a file and sets it as the base resume text', async () => {
+    renderIngestDocument()
+
+    const file = new File(['My uploaded resume content'], 'resume.txt', { type: 'text/plain' })
+
+    await userEvent.upload(screen.getByLabelText(/or upload a resume file/i), file)
+
+    expect(await screen.findByDisplayValue('My uploaded resume content')).toBeInTheDocument()
+  })
+
+  // User report (2026-08-22, second half): a PDF upload set the textarea to garbled raw binary
+  // bytes (a plain UTF-8 decode of PDF bytes via File.text()) instead of readable text. PDFs are
+  // now routed through POST /api/Files/extract-pdf-text (PdfPig, server-side) instead.
+  it('uploads a PDF file and sets the extracted text as the base resume text', async () => {
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () => HttpResponse.json('Real extracted resume text')),
+    )
+    renderIngestDocument()
+
+    const file = new File(['%PDF-1.4 fake bytes'], 'resume.pdf', { type: 'application/pdf' })
+
+    await userEvent.upload(screen.getByLabelText(/or upload a resume file/i), file)
+
+    expect(await screen.findByDisplayValue('Real extracted resume text')).toBeInTheDocument()
+  })
+
+  it('shows an error banner when base-resume PDF extraction fails', async () => {
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () =>
+        HttpResponse.json({ message: 'The uploaded file is not a valid PDF.' }, { status: 400 })),
+    )
+    renderIngestDocument()
+
+    const file = new File(['not really a pdf'], 'resume.pdf', { type: 'application/pdf' })
+
+    await userEvent.upload(screen.getByLabelText(/or upload a resume file/i), file)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The uploaded file is not a valid PDF.')
+  })
+
+  // PR #68 review finding: a single shared error state disconnected the message from whichever
+  // upload section actually failed. A generic-document upload failure must not leave the base-resume
+  // section (or any other section) with a stray error, and vice versa - proven here by triggering a
+  // failure in the generic-document section only.
+  it('shows an error banner when the generic-document PDF extraction fails, independent of the other sections', async () => {
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () =>
+        HttpResponse.json({ message: 'The uploaded file is not a valid PDF.' }, { status: 400 })),
+    )
+    renderIngestDocument()
+
+    const file = new File(['not really a pdf'], 'document.pdf', { type: 'application/pdf' })
+
+    await userEvent.upload(screen.getByLabelText(/or upload a document file/i), file)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The uploaded file is not a valid PDF.')
+    expect(screen.getByLabelText(/^base resume$/i)).toHaveValue('')
+  })
+
   // Epic 3.1 Sprint 4 (U4.4, engineer A's slice): startTailoring() now navigates to /board on
   // success (a real, intentional behavior change locked in the epic doc). Renamed and re-targeted
   // from its pre-Sprint-4 wording/assertion ("...moves to the building stage" / asserted on
@@ -255,6 +316,65 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     // Provide-stage controls are interactive again after the failure.
     expect(screen.getByRole('button', { name: /parse posting/i })).toBeEnabled()
     expect(screen.getByLabelText(/^job posting$/i)).toBeEnabled()
+  })
+})
+
+describe('IngestDocument - URL input (Epic 3.2 S2.2/S2.3)', () => {
+  it('renders a labeled job-posting URL input alongside the existing textarea at the provide stage', () => {
+    renderIngestDocument()
+
+    expect(screen.getByLabelText(/job posting url/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^job posting$/i)).toBeInTheDocument()
+  })
+
+  it('parsing a URL shows the drafts and collapses the job-posting input to a summary', async () => {
+    renderIngestDocument()
+
+    await userEvent.type(screen.getByLabelText(/job posting url/i), 'https://example.com/job-posting')
+    await userEvent.click(screen.getByRole('button', { name: /^parse url$/i }))
+
+    expect(await screen.findByText(/job posting:\s*Backend Engineer/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/job posting url/i)).not.toBeInTheDocument()
+  })
+
+  it('shows an error banner when URL parsing fails', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse-url', () => new HttpResponse(null, { status: 500 })),
+    )
+
+    renderIngestDocument()
+
+    await userEvent.type(screen.getByLabelText(/job posting url/i), 'https://example.com/job-posting')
+    await userEvent.click(screen.getByRole('button', { name: /^parse url$/i }))
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    // Provide-stage controls are interactive again after the failure.
+    expect(screen.getByRole('button', { name: /^parse url$/i })).toBeEnabled()
+    expect(screen.getByLabelText(/job posting url/i)).toBeEnabled()
+  })
+
+  // PR #64 review finding: the textarea signals its async state to assistive technology via
+  // aria-busy (line 162); the URL input didn't. The response is delayed so the transient
+  // 'parsing' stage stays observable long enough to assert on, matching the pattern the existing
+  // 'starting stage' axe test already uses for the same reason.
+  it('the URL input has aria-busy while parsing, matching the textarea', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse-url', async () => {
+        await delay(50)
+        return HttpResponse.json([
+          { title: 'Backend Engineer', description: 'Build things.', kind: 'ResumeTailoring', section: 'Job Posting' },
+        ])
+      }),
+    )
+
+    renderIngestDocument()
+
+    await userEvent.type(screen.getByLabelText(/job posting url/i), 'https://example.com/job-posting')
+    await userEvent.click(screen.getByRole('button', { name: /^parse url$/i }))
+
+    expect(screen.getByLabelText(/job posting url/i)).toHaveAttribute('aria-busy', 'true')
+
+    await screen.findByText(/job posting:\s*Backend Engineer/i)
   })
 })
 

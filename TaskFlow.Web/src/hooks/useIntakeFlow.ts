@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { TaskDraft } from '../types'
-import { parseJobPosting, saveResumeContext, assembleApplication } from '../api/jobApplications'
+import { parseJobPosting, parseJobPostingUrl, saveResumeContext, assembleApplication } from '../api/jobApplications'
 
 // T6.2's stage model: one discriminated field, not several booleans. Owned entirely here, with no
 // dependency on Slice D's live-progress data - 'building' is this hook's own terminal state.
@@ -18,11 +18,13 @@ export function useIntakeFlow(sessionId: string) {
   const [resumeTaskId, setResumeTaskId] = useState<number | null>(null)
   const [coverLetterTaskId, setCoverLetterTaskId] = useState<number | null>(null)
 
-  const parse = async () => {
+  // Shared stage-transition/error-handling logic for both parse entry points (paste-text and
+  // URL, Epic 3.2 S2.1) - the only difference between them is which API call produces the drafts.
+  const parseFrom = async (fetchDrafts: () => Promise<TaskDraft[]>) => {
     setStage('parsing')
     setError(null)
     try {
-      const result = await parseJobPosting(jobPostingText)
+      const result = await fetchDrafts()
       // An empty list is a legitimate, successful HTTP response (no Anthropic key configured,
       // and/or the posting has no heading the free parser recognizes) - not a server error, but
       // still nothing usable to review or assemble. Treated the same as a parse failure so the
@@ -37,6 +39,9 @@ export function useIntakeFlow(sessionId: string) {
       setStage('provide')
     }
   }
+
+  const parse = () => parseFrom(() => parseJobPosting(jobPostingText))
+  const parseUrl = (url: string) => parseFrom(() => parseJobPostingUrl(url))
 
   const startTailoring = async () => {
     setStage('starting')
@@ -68,6 +73,6 @@ export function useIntakeFlow(sessionId: string) {
 
   return {
     stage, jobPostingText, setJobPostingText, baseResumeText, setBaseResumeText,
-    drafts, error, applicationId, resumeTaskId, coverLetterTaskId, parse, startTailoring,
+    drafts, error, applicationId, resumeTaskId, coverLetterTaskId, parse, parseUrl, startTailoring,
   }
 }

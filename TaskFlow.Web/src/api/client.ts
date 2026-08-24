@@ -118,3 +118,18 @@ export async function requestBlob(path: string, options: RequestInit = {}): Prom
   const filename = extractFilename(response.headers.get('Content-Disposition')) ?? 'download'
   return { blob, filename }
 }
+
+// Sibling to request() for multipart file uploads: same auth header and error handling, but takes a
+// FormData body and deliberately does NOT set Content-Type - the browser sets it itself (including
+// the multipart boundary), which a manual 'multipart/form-data' header would break.
+export async function requestFormData<T>(path: string, formData: FormData): Promise<T> {
+  const headers = buildHeaders()
+
+  const response = await fetch(`${BASE_URL}${path}`, { method: 'POST', body: formData, headers })
+
+  if (!response.ok) {
+    await throwForErrorResponse(response)
+  }
+
+  return response.json() as Promise<T>
+}

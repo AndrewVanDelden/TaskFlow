@@ -5,7 +5,7 @@ import { ReviewActions } from './ReviewActions'
 import { ExportDownloadControls } from './ExportDownloadControls'
 import { Button } from './ui/Button'
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion'
-import { canDownloadExport } from '../lib/board'
+import { canDownloadExport, displayTitle } from '../lib/board'
 import {
   bgSurface,
   borderDivider,
@@ -41,7 +41,7 @@ export function TaskCardView({
       className={`relative ${bgSurface} border ${borderDivider} rounded-xl p-4 cursor-grab active:cursor-grabbing hover:border-slate-600`}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
-        <h3 className="text-sm font-medium text-white leading-snug">{task.title}</h3>
+        <h3 className="text-sm font-medium text-white leading-snug">{displayTitle(task)}</h3>
         <div className="flex items-center gap-1 shrink-0">
           {task.kind !== 'Generic' && (
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border border-indigo-700 bg-indigo-950 text-indigo-300">

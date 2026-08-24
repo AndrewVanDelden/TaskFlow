@@ -67,6 +67,15 @@ export function taskStage(logs: AgentLog[], taskId: number): TaskStage {
   return 'in-progress'
 }
 
+// User report (2026-08-24): a bare job-posting title on the board gives no indication which
+// company an application is for once several are in flight at once - appends the company when the
+// task has one (free-text parsing or a manually-entered posting can leave it blank). Shared by
+// TaskCardView's card title and ApplicationReviewCard's heading, so both name an application the
+// same way.
+export function displayTitle(task: TaskItem): string {
+  return task.company ? `${task.title} — ${task.company}` : task.title
+}
+
 // Shared by TaskCardView's card-level export controls and ArchivedTaskList's archived-row export
 // controls (PR #61 review finding: the condition was duplicated verbatim in both files). An
 // application's generated documents are only downloadable once its task has reached Done AND the

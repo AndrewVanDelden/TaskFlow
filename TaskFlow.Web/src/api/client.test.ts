@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
-import { setToken, getToken, requestBlob } from './client'
+import { setToken, getToken, requestBlob, requestFormData } from './client'
 import { getTasks } from './tasks'
 
 describe('401 handling', () => {
@@ -100,5 +100,59 @@ describe('requestBlob', () => {
       status: 400,
       message: 'JobApplication 10 is ReviewReady; only Approved applications can be exported.',
     })
+  })
+})
+
+describe('requestFormData', () => {
+  it('attaches the Authorization header but does not set Content-Type, leaving the browser to set the multipart boundary', async () => {
+    setToken('a.b.c')
+    let capturedAuth: string | null = null
+    let capturedContentType: string | null = null
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', ({ request }) => {
+        capturedAuth = request.headers.get('Authorization')
+        capturedContentType = request.headers.get('Content-Type')
+        return HttpResponse.json('extracted text')
+      }),
+    )
+
+    const formData = new FormData()
+    formData.append('file', new Blob(['pdf bytes']), 'resume.pdf')
+    await requestFormData<string>('/api/Files/extract-pdf-text', formData)
+
+    expect(capturedAuth).toBe('Bearer a.b.c')
+    expect(capturedContentType).toMatch(/^multipart\/form-data/)
+  })
+
+  it('returns the parsed JSON response', async () => {
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () => HttpResponse.json('extracted resume text')),
+    )
+
+    const result = await requestFormData<string>('/api/Files/extract-pdf-text', new FormData())
+
+    expect(result).toBe('extracted resume text')
+  })
+
+  it('throws the same ApiError shape (status + message) as request() on a non-OK response', async () => {
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () =>
+        HttpResponse.json({ message: 'Only PDF files are supported.' }, { status: 400 })),
+    )
+
+    await expect(requestFormData('/api/Files/extract-pdf-text', new FormData())).rejects.toMatchObject({
+      status: 400,
+      message: 'Only PDF files are supported.',
+    })
+  })
+
+  it('clears the token and throws on 401, same as request()', async () => {
+    setToken('stale.token')
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () => new HttpResponse(null, { status: 401 })),
+    )
+
+    await expect(requestFormData('/api/Files/extract-pdf-text', new FormData())).rejects.toThrow()
+    expect(getToken()).toBeNull()
   })
 })

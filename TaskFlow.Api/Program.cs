@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -121,6 +122,29 @@ builder.Services.AddScoped<ClaudeJobPostingParser>();
 builder.Services.AddScoped<IJobPostingIngestionParser>(sp => new JobPostingIngestionParser(
     free: sp.GetRequiredService<JobPostingParser>(),
     paid: sp.GetRequiredService<ClaudeJobPostingParser>()));
+builder.Services.AddSingleton<IDnsResolver, DnsResolver>();
+builder.Services.AddHttpClient("JobPostingUrlFetcher", client =>
+{
+    // JobPostingUrlFetcher owns its own internal 10-second timeout (a single
+    // CancellationTokenSource spanning every redirect hop) -- HttpClient.Timeout is set to
+    // Infinite here so there is exactly one timeout mechanism in effect, not two competing ones.
+    client.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
+})
+.ConfigurePrimaryHttpMessageHandler(sp =>
+{
+    var connectCallback = new SsrfSafeConnectCallback(sp.GetRequiredService<IDnsResolver>());
+    return new SocketsHttpHandler
+    {
+        // Manual, re-validated redirect handling lives in JobPostingUrlFetcher (mitigation 7) --
+        // the handler must not auto-follow redirects itself, or an unvalidated hop could be
+        // followed before the fetcher ever sees it.
+        AllowAutoRedirect = false,
+        // DNS-rebinding-safe connect-time IP validation (mitigation 6) -- see SsrfSafeConnectCallback.
+        ConnectCallback = connectCallback.ConnectAsync,
+    };
+});
+builder.Services.AddScoped<IJobPostingUrlFetcher>(sp =>
+    new JobPostingUrlFetcher(sp.GetRequiredService<IHttpClientFactory>().CreateClient("JobPostingUrlFetcher")));
 builder.Services.AddScoped<IDraftCommitService, DraftCommitService>();
 builder.Services.AddScoped<IResumeContextService, ResumeContextService>();
 builder.Services.AddScoped<IJobApplicationAssemblyService, JobApplicationAssemblyService>();

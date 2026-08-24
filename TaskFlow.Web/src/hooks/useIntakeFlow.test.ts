@@ -88,6 +88,49 @@ describe('useIntakeFlow', () => {
     expect(result.current.error).not.toBeNull()
   })
 
+  it('parseUrl() moves provide -> parsing -> review and populates drafts on success', async () => {
+    const { result } = renderHook(() => useIntakeFlow('session-1'), { wrapper })
+    expect(result.current.stage).toBe('provide')
+
+    await act(async () => {
+      await result.current.parseUrl('https://example.com/job-posting')
+    })
+
+    await waitFor(() => expect(result.current.stage).toBe('review'))
+    expect(result.current.drafts).toHaveLength(1)
+    expect(result.current.drafts[0].title).toBe('Backend Engineer')
+    expect(result.current.error).toBeNull()
+  })
+
+  it('parseUrl() reverts to provide with an error when the server returns an empty draft list', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse-url', () => HttpResponse.json([])),
+    )
+    const { result } = renderHook(() => useIntakeFlow('session-1'), { wrapper })
+
+    await act(async () => {
+      await result.current.parseUrl('https://example.com/job-posting')
+    })
+
+    await waitFor(() => expect(result.current.stage).toBe('provide'))
+    expect(result.current.error).not.toBeNull()
+    expect(result.current.drafts).toHaveLength(0)
+  })
+
+  it('parseUrl() reverts to provide with an error on failure', async () => {
+    server.use(
+      http.post('*/api/JobApplications/parse-url', () => new HttpResponse(null, { status: 500 })),
+    )
+    const { result } = renderHook(() => useIntakeFlow('session-1'), { wrapper })
+
+    await act(async () => {
+      await result.current.parseUrl('https://example.com/job-posting')
+    })
+
+    await waitFor(() => expect(result.current.stage).toBe('provide'))
+    expect(result.current.error).not.toBeNull()
+  })
+
   // Gets the hook to the 'review' stage via a real, successful parse() call, since useIntakeFlow
   // owns the transition itself rather than exposing a way to set stage directly.
   async function reachReview(sessionId = 'session-1') {

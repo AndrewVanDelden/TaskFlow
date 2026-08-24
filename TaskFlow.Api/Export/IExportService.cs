@@ -10,6 +10,6 @@ namespace TaskFlow.Api.Export;
 /// </summary>
 public interface IExportService
 {
-    Task<Result<ExportedFile>> ExportResumeAsync(int applicationId, int callerId, ExportFormat format, CancellationToken ct = default);
-    Task<Result<ExportedFile>> ExportCoverLetterAsync(int applicationId, int callerId, ExportFormat format, CancellationToken ct = default);
+    Task<Result<ExportedFile>> ExportResumeAsync(int applicationId, int callerId, string callerName, ExportFormat format, CancellationToken ct = default);
+    Task<Result<ExportedFile>> ExportCoverLetterAsync(int applicationId, int callerId, string callerName, ExportFormat format, CancellationToken ct = default);
 }
