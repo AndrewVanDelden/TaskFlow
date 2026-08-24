@@ -70,13 +70,25 @@ function triggerBrowserDownload(blob: Blob, filename: string): void {
 }
 
 // Navigates an already-open window to the file, via the browser's own viewer (e.g. its native PDF
-// viewer) instead of saving it to disk. Deliberately never revoked: a prior version revoked it on a
-// fixed 60-second timer, which raced how long the user actually spends reading the tab before
-// trying to save it - a user report (2026-08-24) hit exactly that, saving 5+ minutes after opening
-// the preview and getting a dead blob: URL. The browser already releases a blob URL's underlying
-// data when the document that created it (this preview tab) is unloaded, so no app-level timer is
-// needed - closing the tab is what should end its lifetime, not a guess at how long reading takes.
+// viewer) instead of saving it to disk.
+//
+// Revocation: URL.createObjectURL(blob) ties the object URL's lifetime to the *global that created
+// it* - this SPA's main tab, not the popup `win` it gets navigated into (PR #69 review finding,
+// independently confirmed by two reviews after a first attempt here removed revocation entirely,
+// assuming closing the preview tab would release it on its own - it would not have; that was a real,
+// unbounded per-click memory leak until the main tab was refreshed). A prior version before that
+// used a fixed 60-second timer instead, which raced however long the user actually spent reading
+// the tab (user report, 2026-08-24: saved 5+ minutes in, got a dead blob: URL). Polling win.closed
+// - safely readable across origins even once win has navigated to a blob: URL - ties cleanup to the
+// real event (the user closing the preview tab) instead of either extreme.
 function navigateWindowToBlob(win: Window, blob: Blob): void {
   const url = URL.createObjectURL(blob)
   win.location.href = url
+
+  const pollId = setInterval(() => {
+    if (win.closed) {
+      clearInterval(pollId)
+      URL.revokeObjectURL(url)
+    }
+  }, 1000)
 }
