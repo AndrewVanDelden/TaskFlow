@@ -36,17 +36,18 @@ public class ExportService : IExportService
         _templates = templates;
     }
 
-    public Task<Result<ExportedFile>> ExportResumeAsync(int applicationId, int callerId, ExportFormat format, CancellationToken ct = default) =>
-        ExportAsync(applicationId, callerId, format, TaskKind.ResumeTailoring, "resume.typ", "resume", ct);
+    public Task<Result<ExportedFile>> ExportResumeAsync(int applicationId, int callerId, string callerName, ExportFormat format, CancellationToken ct = default) =>
+        ExportAsync(applicationId, callerId, callerName, format, TaskKind.ResumeTailoring, "resume.typ", "Resume", ct);
 
-    public Task<Result<ExportedFile>> ExportCoverLetterAsync(int applicationId, int callerId, ExportFormat format, CancellationToken ct = default) =>
-        ExportAsync(applicationId, callerId, format, TaskKind.CoverLetterTailoring, "cover-letter.typ", "cover-letter", ct);
+    public Task<Result<ExportedFile>> ExportCoverLetterAsync(int applicationId, int callerId, string callerName, ExportFormat format, CancellationToken ct = default) =>
+        ExportAsync(applicationId, callerId, callerName, format, TaskKind.CoverLetterTailoring, "cover-letter.typ", "Cover_Letter", ct);
 
     // Shared by both public methods so the ownership/state guard and sibling-fetch logic lives in
     // exactly one place (DRY) - the only differences between a resume and a cover-letter export
-    // are which sibling TaskKind to pick, which template to compose with, and the base file name.
+    // are which sibling TaskKind to pick, which template to compose with, and the document label
+    // that goes into the file name.
     private async Task<Result<ExportedFile>> ExportAsync(
-        int applicationId, int callerId, ExportFormat format, TaskKind kind, string templateFileName, string baseFileName, CancellationToken ct)
+        int applicationId, int callerId, string callerName, ExportFormat format, TaskKind kind, string templateFileName, string documentLabel, CancellationToken ct)
     {
         var application = await _jobApplications.GetByIdAsync(applicationId, ct);
 
@@ -75,12 +76,50 @@ public class ExportService : IExportService
         if (task is null)
             return Result<ExportedFile>.NotFound($"JobApplication {applicationId} has no {kind} task.");
 
+        // User report (2026-08-24): a downloaded file named after a GUID/generic literal gives no
+        // clue which application it belongs to once it's sitting in a Downloads folder next to
+        // several others. "Andrew_Van_Delden_Resume_Acme_Corp.pdf" is self-identifying; the company
+        // segment is only appended when the application actually has one (free-text parsing or a
+        // manually-entered posting can leave it blank).
+        var baseFileName = BuildFileNameBase(callerName, documentLabel, application.Company);
+
         return format switch
         {
             ExportFormat.Markdown => Result<ExportedFile>.Ok(BuildMarkdownFile(task, baseFileName)),
             ExportFormat.Pdf => await BuildPdfFileAsync(task, templateFileName, baseFileName, ct),
             _ => Result<ExportedFile>.Invalid($"Unsupported export format '{format}'.")
         };
+    }
+
+    // PR #72 review finding: the blank-company check must run on the *sanitized* value - a company
+    // built entirely from characters SanitizeForFileName strips (e.g. "???", plausible from
+    // free-text job-posting parsing) is non-blank going in but sanitizes down to "", and must fall
+    // back the same way a genuinely blank company already does (not a dangling trailing underscore).
+    private static string BuildFileNameBase(string callerName, string documentLabel, string? company)
+    {
+        var namePart = SanitizeForFileName(callerName);
+        var sanitizedCompany = string.IsNullOrWhiteSpace(company) ? null : SanitizeForFileName(company);
+        var companyPart = string.IsNullOrEmpty(sanitizedCompany) ? null : sanitizedCompany;
+        return companyPart is null ? $"{namePart}_{documentLabel}" : $"{namePart}_{documentLabel}_{companyPart}";
+    }
+
+    // Filesystem-invalid characters this file name must never carry. Explicit and fixed, not solely
+    // Path.GetInvalidFileNameChars() (PR #72 review finding): that BCL call reflects the *API
+    // server's* host OS, not the client's - on Linux it returns only NUL and '/', so a company/name
+    // containing e.g. ':' or '?' would sail through unsanitized if this API is ever hosted on Linux,
+    // producing a file name that's illegal on the Windows machine actually saving it. Unioned with
+    // Path.GetInvalidFileNameChars() rather than replacing it, so whatever the current host OS also
+    // can't handle keeps being caught - this only ever removes more characters, never fewer.
+    private static readonly char[] WindowsReservedFileNameChars = ['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+
+    // Strips characters the filesystem/Content-Disposition header can't carry (a caller name or
+    // company scraped from a job posting is untrusted free text) and turns spaces into underscores,
+    // matching this file name scheme's own convention.
+    private static string SanitizeForFileName(string value)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars().Union(WindowsReservedFileNameChars);
+        var cleaned = new string(value.Where(c => !invalidChars.Contains(c)).ToArray()).Trim();
+        return cleaned.Replace(' ', '_');
     }
 
     // Markdown export is a trivial pass-through of the raw TailoredContent - no renderer, no

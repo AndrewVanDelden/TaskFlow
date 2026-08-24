@@ -4,6 +4,7 @@ import { useApplicationReview } from '../hooks/useApplicationReview'
 import { ReviewActions } from './ReviewActions'
 import { ExportDownloadControls } from './ExportDownloadControls'
 import { openTextInNewTab } from '../lib/openTextInNewTab'
+import { displayTitle } from '../lib/board'
 
 // A ReviewReady application's combined review block: the base resume, the tailored resume, and
 // the tailored cover letter, side by side with one Approve/Reject pair for the whole application.
@@ -50,7 +51,10 @@ export function ApplicationReviewCard({
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-2 space-y-4">
       <div>
-        <h3 className="text-sm font-semibold text-white mb-2">Application review</h3>
+        {/* User report (2026-08-24): a generic "Application review" heading gives no clue which
+            application this card is for once several are open at once - names it after the same
+            job title/company shown on the board card, via the shared displayTitle helper. */}
+        <h3 className="text-sm font-semibold text-white mb-2">Application review — {displayTitle(resumeTask)}</h3>
       </div>
 
       {/* User report (2026-08-22): this card used to render all three artifacts' full raw content

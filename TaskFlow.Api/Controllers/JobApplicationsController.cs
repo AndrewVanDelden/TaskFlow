@@ -134,7 +134,7 @@ public class JobApplicationsController : ControllerBase
         if (!TryParseFormat(format, out var parsedFormat))
             return BadRequest(new { message = $"Invalid format '{format}'. Valid values: pdf, markdown." });
 
-        return (await _exportService.ExportResumeAsync(id, callerId, parsedFormat, HttpContext.RequestAborted)).ToFileActionResult();
+        return (await _exportService.ExportResumeAsync(id, callerId, this.GetCurrentUserName(), parsedFormat, HttpContext.RequestAborted)).ToFileActionResult();
     }
 
     // Downloadable PDF/Markdown of the approved tailored cover letter (Sprint 5, T5.2).
@@ -147,7 +147,7 @@ public class JobApplicationsController : ControllerBase
         if (!TryParseFormat(format, out var parsedFormat))
             return BadRequest(new { message = $"Invalid format '{format}'. Valid values: pdf, markdown." });
 
-        return (await _exportService.ExportCoverLetterAsync(id, callerId, parsedFormat, HttpContext.RequestAborted)).ToFileActionResult();
+        return (await _exportService.ExportCoverLetterAsync(id, callerId, this.GetCurrentUserName(), parsedFormat, HttpContext.RequestAborted)).ToFileActionResult();
     }
 
     // Shared by both export actions (DRY - was duplicated verbatim). Enum.TryParse alone also

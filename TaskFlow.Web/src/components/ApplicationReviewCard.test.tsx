@@ -52,6 +52,19 @@ describe('ApplicationReviewCard', () => {
     expect(screen.queryByText('Dear hiring manager.')).not.toBeInTheDocument()
   })
 
+  // User report (2026-08-24): a generic "Application review" heading gives no clue which
+  // application this card is for once several are open at once.
+  it('names the heading after the job title and company, not a generic label', async () => {
+    server.use(
+      http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('My base resume text')),
+    )
+    const namedResumeTask: TaskItem = { ...resumeTask, title: 'Senior Software Engineer', company: 'Acme Corp' }
+
+    render(<ApplicationReviewCard applicationId={10} resumeTask={namedResumeTask} coverLetterTask={coverLetterTask} />)
+
+    expect(screen.getByRole('heading', { name: /application review — senior software engineer — acme corp/i })).toBeInTheDocument()
+  })
+
   it('opens the base resume in a new tab when "View base resume" is clicked', async () => {
     server.use(
       http.get('*/api/JobApplications/10/resume-context', () => HttpResponse.json('My base resume text')),
