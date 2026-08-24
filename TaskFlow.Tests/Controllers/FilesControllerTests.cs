@@ -65,6 +65,23 @@ public class FilesControllerTests
         result.Should().BeOfType<BadRequestObjectResult>();
     }
 
+    // PR #68 review finding: PdfTextExtractor.ExtractText buffers the whole upload into a
+    // MemoryStream and parses it with no size/page bound - a resource-exhaustion vector this
+    // codebase already guards against one file over, in JobPostingUrlFetcher's 5MB response cap
+    // (PR #63). FilesController must reject an oversized file before ever touching the stream, so
+    // this uses an IFormFile double that reports a huge Length but throws if its stream is actually
+    // read - proving the guard runs first.
+    [Fact]
+    public async Task ExtractPdfText_returns_400_when_the_file_exceeds_the_size_limit()
+    {
+        IFormFile file = new OversizedFormFile(FilesController.MaxPdfBytes + 1);
+        var controller = new FilesController();
+
+        IActionResult result = await controller.ExtractPdfText(file);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
     private static FormFile BuildFormFile(byte[] content, string fileName, string contentType)
     {
         var stream = new MemoryStream(content);
@@ -73,5 +90,20 @@ public class FilesControllerTests
             Headers = new HeaderDictionary(),
             ContentType = contentType
         };
+    }
+
+    private sealed class OversizedFormFile(long length) : IFormFile
+    {
+        public string ContentType => "application/pdf";
+        public string ContentDisposition => string.Empty;
+        public IHeaderDictionary Headers { get; } = new HeaderDictionary();
+        public long Length { get; } = length;
+        public string Name => "file";
+        public string FileName => "huge-resume.pdf";
+
+        public Stream OpenReadStream() => throw new InvalidOperationException("The size guard should reject this file before its stream is ever opened.");
+        public void CopyTo(Stream target) => throw new InvalidOperationException("The size guard should reject this file before it is ever copied.");
+        public Task CopyToAsync(Stream target, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The size guard should reject this file before it is ever copied.");
     }
 }

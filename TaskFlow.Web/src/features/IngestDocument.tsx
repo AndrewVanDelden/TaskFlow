@@ -85,25 +85,32 @@ export function IngestDocument() {
     stageHeadingRef.current?.focus()
   }, [intake.stage])
 
-  const [fileReadError, setFileReadError] = useState<string | null>(null)
+  // PR #68 review finding: a single shared error state disconnected the message from whichever
+  // upload section actually failed (e.g. a bad file in the collapsed generic-document section would
+  // show its error at the top of the page, next to job-posting). Scoped per section instead, each
+  // rendered next to its own input, matching this file's existing convention of co-locating errors
+  // with their control (intake.error, baseResumeCapture.error, generic.error).
+  const [jobPostingFileError, setJobPostingFileError] = useState<string | null>(null)
+  const [baseResumeFileError, setBaseResumeFileError] = useState<string | null>(null)
+  const [genericFileError, setGenericFileError] = useState<string | null>(null)
 
   const onJobPostingFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    setFileReadError(null)
+    setJobPostingFileError(null)
     try {
       const picked = await readFileAsText(e)
       if (picked) intake.setJobPostingText(picked.text)
     } catch (err) {
-      setFileReadError(err instanceof Error ? err.message : 'Failed to read that file.')
+      setJobPostingFileError(err instanceof Error ? err.message : 'Failed to read that file.')
     }
   }
 
   const onBaseResumeFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    setFileReadError(null)
+    setBaseResumeFileError(null)
     try {
       const picked = await readFileAsText(e)
       if (picked) intake.setBaseResumeText(picked.text)
     } catch (err) {
-      setFileReadError(err instanceof Error ? err.message : 'Failed to read that file.')
+      setBaseResumeFileError(err instanceof Error ? err.message : 'Failed to read that file.')
     }
   }
 
@@ -121,7 +128,7 @@ export function IngestDocument() {
   const generic = useIngestion()
 
   const onGenericFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    setFileReadError(null)
+    setGenericFileError(null)
     try {
       const picked = await readFileAsText(e)
       if (picked) {
@@ -129,7 +136,7 @@ export function IngestDocument() {
         setGenericSourceName(picked.name)
       }
     } catch (err) {
-      setFileReadError(err instanceof Error ? err.message : 'Failed to read that file.')
+      setGenericFileError(err instanceof Error ? err.message : 'Failed to read that file.')
     }
   }
 
@@ -160,9 +167,9 @@ export function IngestDocument() {
         </div>
       )}
 
-      {fileReadError && (
+      {jobPostingFileError && (
         <div role="alert" className={errorBannerClasses}>
-          {fileReadError}
+          {jobPostingFileError}
         </div>
       )}
 
@@ -285,6 +292,12 @@ export function IngestDocument() {
               </Button>
             </div>
 
+            {baseResumeFileError && (
+              <div role="alert" className={errorBannerClasses}>
+                {baseResumeFileError}
+              </div>
+            )}
+
             {baseResumeCapture.error && (
               <div role="alert" className={errorBannerClasses}>
                 {baseResumeCapture.error}
@@ -363,6 +376,12 @@ export function IngestDocument() {
               {generic.loading ? 'Parsing...' : 'Parse'}
             </Button>
           </div>
+
+          {genericFileError && (
+            <div role="alert" className={errorBannerClasses}>
+              {genericFileError}
+            </div>
+          )}
 
           {generic.error && (
             <div role="alert" className={errorBannerClasses}>

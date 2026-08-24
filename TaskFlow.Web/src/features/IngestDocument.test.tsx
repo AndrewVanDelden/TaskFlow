@@ -208,7 +208,7 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     expect(await screen.findByDisplayValue('Real extracted resume text')).toBeInTheDocument()
   })
 
-  it('shows an error banner when PDF extraction fails', async () => {
+  it('shows an error banner when base-resume PDF extraction fails', async () => {
     server.use(
       http.post('*/api/Files/extract-pdf-text', () =>
         HttpResponse.json({ message: 'The uploaded file is not a valid PDF.' }, { status: 400 })),
@@ -220,6 +220,25 @@ describe('IngestDocument - guided job-application flow (Sprint 6)', () => {
     await userEvent.upload(screen.getByLabelText(/or upload a resume file/i), file)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('The uploaded file is not a valid PDF.')
+  })
+
+  // PR #68 review finding: a single shared error state disconnected the message from whichever
+  // upload section actually failed. A generic-document upload failure must not leave the base-resume
+  // section (or any other section) with a stray error, and vice versa - proven here by triggering a
+  // failure in the generic-document section only.
+  it('shows an error banner when the generic-document PDF extraction fails, independent of the other sections', async () => {
+    server.use(
+      http.post('*/api/Files/extract-pdf-text', () =>
+        HttpResponse.json({ message: 'The uploaded file is not a valid PDF.' }, { status: 400 })),
+    )
+    renderIngestDocument()
+
+    const file = new File(['not really a pdf'], 'document.pdf', { type: 'application/pdf' })
+
+    await userEvent.upload(screen.getByLabelText(/or upload a document file/i), file)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The uploaded file is not a valid PDF.')
+    expect(screen.getByLabelText(/^base resume$/i)).toHaveValue('')
   })
 
   // Epic 3.1 Sprint 4 (U4.4, engineer A's slice): startTailoring() now navigates to /board on
